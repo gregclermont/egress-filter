@@ -51,25 +51,11 @@ class ConnectionLogger:
         url = flow.request.pretty_url
         logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url}")
 
-    def response(self, flow: http.HTTPFlow) -> None:
-        # Log response status
-        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
-        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
-        url = flow.request.pretty_url
-        status = flow.response.status_code
-        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} status={status}")
-
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
-        # Non-HTTP TCP connection started
+        # Non-HTTP TCP connection
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
-        logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port} event=start")
-
-    def tcp_end(self, flow: tcp.TCPFlow) -> None:
-        # Non-HTTP TCP connection ended
-        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
-        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
-        logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port} event=end")
+        logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port}")
 
 
 addons = [ConnectionLogger()]
