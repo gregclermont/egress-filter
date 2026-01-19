@@ -19,7 +19,7 @@ jobs:
         run: uname -r
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbpf-dev
+        run: sudo apt-get update && sudo apt-get install -y libbpf-dev bpftool
 
       - name: Install dependencies
         run: uv sync
@@ -36,23 +36,46 @@ jobs:
           echo "Python: $PYTHON"
           echo "Site packages: $SITE_PACKAGES"
 
+          # Check cgroup structure
+          echo "=== Cgroup structure ==="
+          cat /proc/self/cgroup
+          ls -la /sys/fs/cgroup/
+
           # Run tracker in background with proper paths
           sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
             $PYTHON main.py run --interval 1 2>&1 | tee /tmp/tracker.log &
           TRACKER_PID=$!
 
           # Wait for startup
-          sleep 3
-          echo "=== Initial tracker output ==="
-          cat /tmp/tracker.log
+          sleep 2
+
+          # Check BPF program attachment
+          echo "=== BPF programs attached ==="
+          sudo bpftool prog list | head -30 || true
+          echo "=== BPF maps ==="
+          sudo bpftool map list | head -20 || true
+
+          # Check cgroup attachments
+          echo "=== Cgroup BPF attachments ==="
+          sudo bpftool cgroup tree /sys/fs/cgroup 2>/dev/null | head -50 || true
 
           # Make test connections
-          echo "Making test connections..."
-          curl -s https://example.com > /dev/null
-          sleep 3
+          echo "=== Making test connections ==="
+          curl -v https://example.com 2>&1 | head -20 || true
 
-          # Show what we captured
-          echo "=== Tracker output after curl ==="
+          sleep 2
+
+          # Dump map contents directly
+          echo "=== Direct map dump (conn_to_pid_v4) ==="
+          MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v4 | awk '{print $1}' | tr -d ':')
+          if [ -n "$MAP_ID" ]; then
+            sudo bpftool map dump id $MAP_ID 2>&1 | head -30 || true
+          else
+            echo "Map not found"
+          fi
+
+          # Show tracker output
+          echo "=== Tracker output ==="
           cat /tmp/tracker.log
 
           # Cleanup
@@ -62,5 +85,5 @@ jobs:
           if grep -q "PID=" /tmp/tracker.log; then
             echo "SUCCESS: Captured connections!"
           else
-            echo "No PIDs captured (tracker may have started but didn't track curl)"
+            echo "WARNING: No PIDs captured"
           fi
