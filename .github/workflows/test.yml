@@ -87,8 +87,15 @@ jobs:
           # Check results
           if grep -q "PID=" /tmp/tracker.log; then
             echo "SUCCESS: Captured connections!"
-            exit 0
           else
             echo "FAILED: No PIDs captured"
             exit 1
           fi
+
+      - name: Test IPv6 blocker
+        run: |
+          PYTHON=$(uv python find)
+          SITE_PACKAGES=$(dirname $PYTHON)/../lib/python3.12/site-packages
+
+          echo "=== Testing IPv6 blocker ==="
+          sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON test_ipv6_blocker.py
