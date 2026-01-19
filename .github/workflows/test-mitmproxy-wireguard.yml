@@ -53,9 +53,19 @@ jobs:
 
           # Start mitmproxy
           log "Starting mitmproxy..."
-          sudo -u mitmproxy mitmdump --mode wireguard --set block_global=false > /tmp/mitm.log 2>&1 &
+          sudo -u mitmproxy bash -c 'mitmdump --mode wireguard --set block_global=false > /tmp/mitm.log 2>&1' &
           MITM_PID=$!
           log "✓ Started mitmproxy (PID: $MITM_PID)"
+          sleep 2
+
+          # Check if process is still running
+          if ps -p $MITM_PID > /dev/null 2>&1; then
+            log "✓ mitmproxy process is running"
+          else
+            log "✗ mitmproxy process exited early!"
+            cat /tmp/mitm.log || echo "No log file"
+            exit 1
+          fi
 
           # Wait for WireGuard config to appear
           log "Waiting for WireGuard config..."
@@ -63,6 +73,12 @@ jobs:
             if grep -q "\[Interface\]" /tmp/mitm.log; then
               log "✓ WireGuard config appeared (attempt $i)"
               break
+            fi
+            # Show progress every 5 seconds
+            if [ $((i % 5)) -eq 0 ]; then
+              log "Still waiting... ($i/30)"
+              wc -l /tmp/mitm.log || true
+              tail -5 /tmp/mitm.log || true
             fi
             sleep 1
           done
