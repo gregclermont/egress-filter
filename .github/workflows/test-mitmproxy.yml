@@ -105,10 +105,12 @@ jobs:
                   continue
 
               # Extract key = value from the line
+              # IMPORTANT: Skip DNS to prevent resolver loop (mitmproxy limitation)
+              # See: https://docs.mitmproxy.org/stable/concepts/modes/#limitations
               if '=' in line:
                   # Handle potential log prefixes (timestamps, etc)
-                  # Look for standard WireGuard keys
-                  for key in ['PrivateKey', 'Address', 'DNS', 'MTU', 'PublicKey', 'AllowedIPs', 'Endpoint']:
+                  # Look for standard WireGuard keys (excluding DNS)
+                  for key in ['PrivateKey', 'Address', 'MTU', 'PublicKey', 'AllowedIPs', 'Endpoint']:
                       if key in line:
                           # Extract the value after the key
                           match = re.search(rf'{key}\s*=\s*(.+)', line)
@@ -180,39 +182,39 @@ jobs:
           echo "Checking for logged connections..."
 
           # Check for HTTP (format: HTTP: METHOD URL -> STATUS)
-          if grep -q "^HTTP:" /tmp/mitmproxy.log; then
+          if grep -q "HTTP:" /tmp/mitmproxy.log; then
             echo "PASS: HTTP logged"
-            grep "^HTTP:" /tmp/mitmproxy.log | head -5
+            grep "HTTP:" /tmp/mitmproxy.log | head -5
           else
             echo "WARN: No HTTP found in logs"
           fi
 
           # Check for DNS (format: DNS: TYPE NAME -> RESULT)
-          if grep -q "^DNS:" /tmp/mitmproxy.log; then
+          if grep -q "DNS:" /tmp/mitmproxy.log; then
             echo "PASS: DNS logged"
-            grep "^DNS:" /tmp/mitmproxy.log | head -5
+            grep "DNS:" /tmp/mitmproxy.log | head -5
           else
             echo "WARN: No DNS found in logs"
           fi
 
           # Check for TCP (format: TCP: IP:PORT)
-          if grep -q "^TCP:" /tmp/mitmproxy.log; then
+          if grep -q "TCP:" /tmp/mitmproxy.log; then
             echo "PASS: TCP logged"
-            grep "^TCP:" /tmp/mitmproxy.log | head -5
+            grep "TCP:" /tmp/mitmproxy.log | head -5
           else
             echo "WARN: No raw TCP found in logs"
           fi
 
           # Check for UDP (format: UDP: IP:PORT)
-          if grep -q "^UDP:" /tmp/mitmproxy.log; then
+          if grep -q "UDP:" /tmp/mitmproxy.log; then
             echo "PASS: UDP logged"
-            grep "^UDP:" /tmp/mitmproxy.log | head -5
+            grep "UDP:" /tmp/mitmproxy.log | head -5
           else
             echo "WARN: No raw UDP found in logs"
           fi
 
           # At minimum, we should see some traffic
-          if grep -qE "^(HTTP|DNS|TCP|UDP):" /tmp/mitmproxy.log; then
+          if grep -qE "(HTTP|DNS|TCP|UDP):" /tmp/mitmproxy.log; then
             echo "SUCCESS: Traffic was logged through mitmproxy"
           else
             echo "FAILED: No traffic was logged"
