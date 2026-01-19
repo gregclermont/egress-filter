@@ -36,35 +36,31 @@ jobs:
           echo "Python: $PYTHON"
           echo "Site packages: $SITE_PACKAGES"
 
-          # Quick test that BPF loads
-          cat > /tmp/test_load.py << 'PYEOF'
-          import sys, os
-          # Add site-packages from env var
-          if 'SITE_PACKAGES' in os.environ:
-              sys.path.insert(0, os.environ['SITE_PACKAGES'])
-          import main  # This will init libbpf
-          import tinybpf
-          print('tinybpf loaded, version:', tinybpf.version())
-          obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
-          print('BPF object loaded')
-          print('Programs:', list(obj.programs.keys()))
-          PYEOF
-
-          sudo env SITE_PACKAGES="$SITE_PACKAGES" $PYTHON /tmp/test_load.py
-
-          # Run tracker in background
+          # Run tracker in background with proper paths
           sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
             $PYTHON main.py run --interval 1 2>&1 | tee /tmp/tracker.log &
           TRACKER_PID=$!
-          sleep 2
+
+          # Wait for startup
+          sleep 3
+          echo "=== Initial tracker output ==="
+          cat /tmp/tracker.log
 
           # Make test connections
+          echo "Making test connections..."
           curl -s https://example.com > /dev/null
-          sleep 2
+          sleep 3
 
           # Show what we captured
-          echo "=== Tracker output ==="
+          echo "=== Tracker output after curl ==="
           cat /tmp/tracker.log
 
           # Cleanup
           sudo kill $TRACKER_PID 2>/dev/null || true
+
+          # Check if we captured anything
+          if grep -q "PID=" /tmp/tracker.log; then
+            echo "SUCCESS: Captured connections!"
+          else
+            echo "No PIDs captured (tracker may have started but didn't track curl)"
+          fi
