@@ -2,5 +2,5 @@
 
 ## Next Steps
 
-- [ ] DNS interception: mitmproxy `--mode dns@8053` receives queries but doesn't forward upstream (`dst=unknown:0`). Need to investigate upstream DNS configuration.
+- [ ] DNS PID tracking: queries are logged but `pid=?` because BPF tracks sendmsg to 127.0.0.53, not the redirected port. Need to track original dest or use different approach.
 - [ ] Do something about non-DNS UDP traffic
