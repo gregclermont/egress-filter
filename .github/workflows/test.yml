@@ -29,9 +29,12 @@ jobs:
 
       - name: Test BPF load and tracking
         run: |
+          set -x  # Debug output
+
           # Start tracker in background using tinybpf run-elevated
           uv run tinybpf run-elevated main.py -- run --interval 1 > /tmp/tracker.log 2>&1 &
           TRACKER_PID=$!
+          echo "Started tracker with PID $TRACKER_PID"
           sleep 3
 
           # Check if tracker started
@@ -41,25 +44,34 @@ jobs:
             exit 1
           fi
 
+          echo "Tracker is running, initial log:"
+          cat /tmp/tracker.log
+          echo "---"
+
           # Make some test connections
           echo "Making test connections..."
-          curl -s https://api.github.com > /dev/null &
-          CURL_PID=$!
+          curl -s https://api.github.com > /dev/null
+          curl -s https://example.com > /dev/null
 
-          # Give it time to connect and be tracked
-          sleep 3
+          # Give it time to be tracked
+          sleep 2
 
-          # Dump current state
-          echo "=== Tracker output ==="
+          echo "=== Tracker output after curl ==="
           cat /tmp/tracker.log
+          echo "---"
 
           # Stop tracker
           sudo kill $TRACKER_PID 2>/dev/null || true
-          wait $CURL_PID 2>/dev/null || true
+          sleep 1
 
-          # Check if we captured the curl connection
-          if grep -q "curl" /tmp/tracker.log; then
-            echo "SUCCESS: Captured curl connection!"
+          echo "=== Final tracker output ==="
+          cat /tmp/tracker.log
+
+          # Check if we captured any connection with PID
+          if grep -qE "PID=[0-9]+" /tmp/tracker.log; then
+            echo "SUCCESS: Captured connections with PIDs!"
+            exit 0
           else
-            echo "WARNING: Did not capture curl in output (may need more time)"
+            echo "No connections captured - checking if BPF programs loaded correctly"
+            exit 1
           fi
