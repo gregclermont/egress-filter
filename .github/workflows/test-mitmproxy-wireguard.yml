@@ -128,6 +128,9 @@ jobs:
           echo "Testing DNS..."
           dig +short example.com
 
+          echo "Testing UDP to external IP (should be tracked)..."
+          python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.sendto(b'test', ('8.8.8.8', 53)); print('sent UDP to 8.8.8.8:53')"
+
           echo "All tests passed!"
 
       - name: Stop proxy gracefully
