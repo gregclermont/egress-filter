@@ -31,15 +31,24 @@ jobs:
 
           # Start mitmproxy container with privileged mode for WireGuard
           # (NET_ADMIN alone may not be enough for creating wg interfaces)
+          # Use explicit DNS to avoid Docker DNS resolution issues
           docker run -d --name mitmproxy \
             --network mitmproxy-net \
             --ip 172.30.0.2 \
             --privileged \
+            --dns 8.8.8.8 \
+            --dns 8.8.4.4 \
             -p 51820:51820/udp \
             -v "$(pwd)/mitmproxy_wg_logger.py:/app/mitmproxy_wg_logger.py:ro" \
             -e PYTHONUNBUFFERED=1 \
             mitmproxy/mitmproxy:latest \
             mitmdump --mode wireguard --set block_global=false -s /app/mitmproxy_wg_logger.py
+
+          # Verify container can reach the internet
+          echo "=== Testing container connectivity ==="
+          sleep 2
+          docker exec mitmproxy ping -c 2 8.8.8.8 || echo "WARN: Cannot ping 8.8.8.8"
+          docker exec mitmproxy nslookup example.com || echo "WARN: DNS lookup failed"
 
           # Wait for mitmproxy to start
           echo "Waiting for mitmproxy to start..."
