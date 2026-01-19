@@ -53,7 +53,7 @@ jobs:
 
           # Start mitmproxy
           log "Starting mitmproxy..."
-          sudo -u mitmproxy mitmdump --mode wireguard --set block_global=false 2>&1 > /tmp/mitm.log &
+          sudo -u mitmproxy mitmdump --mode wireguard --set block_global=false > /tmp/mitm.log 2>&1 &
           MITM_PID=$!
           log "✓ Started mitmproxy (PID: $MITM_PID)"
 
