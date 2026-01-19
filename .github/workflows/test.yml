@@ -32,133 +32,39 @@ jobs:
 
       - name: Test BPF load and tracking
         run: |
-          # Run tracker with sudo, preserving PYTHONPATH for venv packages
           PYTHON=$(uv python find)
           SITE_PACKAGES=$(dirname $PYTHON)/../lib/python3.12/site-packages
 
-          echo "Python: $PYTHON"
-          echo "Site packages: $SITE_PACKAGES"
-
-          # Check cgroup structure
-          echo "=== Cgroup structure ==="
+          # Show cgroup info
+          echo "=== Process cgroup ==="
           cat /proc/self/cgroup
-          ls -la /sys/fs/cgroup/
 
-          # Load BPF programs and keep them pinned for manual attach test
-          echo "=== Loading BPF programs ==="
-          sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON -c "
-          import tinybpf
-          from pathlib import Path
-          for p in ['/usr/lib/x86_64-linux-gnu/libbpf.so.1', '/usr/lib/libbpf.so.1']:
-              if Path(p).exists():
-                  tinybpf.init(p)
-                  break
-          obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
-          print('Object loaded')
-          print('Programs:', list(obj.programs.keys()))
-
-          # Get FDs by keeping programs loaded
-          sockops = obj.program('handle_sockops')
-          sendmsg4 = obj.program('handle_sendmsg4')
-          sendmsg6 = obj.program('handle_sendmsg6')
-          print(f'sockops: {sockops}')
-          print(f'sendmsg4: {sendmsg4}')
-          print(f'sendmsg6: {sendmsg6}')
-
-          # Keep loaded
-          import time
-          time.sleep(30)
-          " &
-          LOAD_PID=$!
+          # Run tracker in background (now auto-detects cgroup)
+          echo "=== Starting tracker ==="
+          sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
+            $PYTHON main.py run --interval 1 2>&1 | tee /tmp/tracker.log &
+          TRACKER_PID=$!
           sleep 2
 
+          # Verify BPF programs loaded
           echo "=== Loaded BPF programs ==="
           sudo bpftool prog list | grep -E "handle_sockops|handle_sendmsg" || true
 
-          # Get program IDs
-          SOCKOPS_ID=$(sudo bpftool prog list | grep handle_sockops | awk '{print $1}' | tr -d ':')
-          SENDMSG4_ID=$(sudo bpftool prog list | grep handle_sendmsg4 | awk '{print $1}' | tr -d ':')
-          SENDMSG6_ID=$(sudo bpftool prog list | grep handle_sendmsg6 | awk '{print $1}' | tr -d ':')
-
-          echo "Program IDs: sockops=$SOCKOPS_ID sendmsg4=$SENDMSG4_ID sendmsg6=$SENDMSG6_ID"
-
-          # Get the cgroup path for this process
+          # Check cgroup attachment
           CGROUP_PATH="/sys/fs/cgroup$(cat /proc/self/cgroup | cut -d: -f3)"
-          echo "Attaching to cgroup: $CGROUP_PATH"
-
-          # Try manual bpftool attach to the specific cgroup
-          echo "=== Trying manual bpftool attach ==="
-          if [ -n "$SOCKOPS_ID" ]; then
-            echo "Attaching sock_ops ($SOCKOPS_ID) to $CGROUP_PATH..."
-            sudo bpftool cgroup attach "$CGROUP_PATH" sock_ops id $SOCKOPS_ID 2>&1 || echo "Failed to attach sock_ops"
-          fi
-          if [ -n "$SENDMSG4_ID" ]; then
-            echo "Attaching sendmsg4 ($SENDMSG4_ID) to $CGROUP_PATH..."
-            sudo bpftool cgroup attach "$CGROUP_PATH" sendmsg4 id $SENDMSG4_ID 2>&1 || echo "Failed to attach sendmsg4"
-          fi
-          if [ -n "$SENDMSG6_ID" ]; then
-            echo "Attaching sendmsg6 ($SENDMSG6_ID) to $CGROUP_PATH..."
-            sudo bpftool cgroup attach "$CGROUP_PATH" sendmsg6 id $SENDMSG6_ID 2>&1 || echo "Failed to attach sendmsg6"
-          fi
-
-          # Check what got attached
-          echo "=== Cgroup attachments after manual attach ==="
+          echo "=== Cgroup attachments at $CGROUP_PATH ==="
           sudo bpftool cgroup show "$CGROUP_PATH" 2>/dev/null || true
 
           # Make test connection
           echo "=== Making test connection ==="
-          curl -s https://example.com > /dev/null || true
-          sleep 1
+          curl -s https://example.com > /dev/null
+          sleep 2
 
           # Check map contents
-          echo "=== Map contents after curl ==="
+          echo "=== Map contents ==="
           MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v4 | awk '{print $1}' | tr -d ':')
           if [ -n "$MAP_ID" ]; then
             sudo bpftool map dump id $MAP_ID 2>&1 || true
-          fi
-
-          # Cleanup test
-          kill $LOAD_PID 2>/dev/null || true
-
-          # Now run the tracker for real test
-          echo ""
-          echo "=== Running full tracker test ==="
-
-          # Run tracker in background with proper paths
-          sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
-            $PYTHON main.py run --interval 1 2>&1 | tee /tmp/tracker.log &
-          TRACKER_PID=$!
-
-          # Wait for startup
-          sleep 2
-
-          # Check BPF program attachment
-          echo "=== ALL BPF programs ==="
-          sudo bpftool prog list || true
-          echo "=== Looking for our programs ==="
-          sudo bpftool prog list | grep -E "handle_sockops|handle_sendmsg" || echo "Our programs not found in list"
-          echo "=== BPF maps ==="
-          sudo bpftool map list || true
-
-          # Check cgroup attachments at root
-          echo "=== Cgroup BPF attachments at root ==="
-          sudo bpftool cgroup show /sys/fs/cgroup 2>/dev/null || true
-          echo "=== Full cgroup tree ==="
-          sudo bpftool cgroup tree /sys/fs/cgroup 2>/dev/null || true
-
-          # Make test connections
-          echo "=== Making test connections ==="
-          curl -v https://example.com 2>&1 | head -20 || true
-
-          sleep 2
-
-          # Dump map contents directly
-          echo "=== Direct map dump (conn_to_pid_v4) ==="
-          MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v4 | awk '{print $1}' | tr -d ':')
-          if [ -n "$MAP_ID" ]; then
-            sudo bpftool map dump id $MAP_ID 2>&1 | head -30 || true
-          else
-            echo "Map not found"
           fi
 
           # Show tracker output
@@ -168,9 +74,11 @@ jobs:
           # Cleanup
           sudo kill $TRACKER_PID 2>/dev/null || true
 
-          # Check if we captured anything
+          # Check results
           if grep -q "PID=" /tmp/tracker.log; then
             echo "SUCCESS: Captured connections!"
+            exit 0
           else
-            echo "WARNING: No PIDs captured"
+            echo "FAILED: No PIDs captured"
+            exit 1
           fi

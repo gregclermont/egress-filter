@@ -8,8 +8,10 @@ Loads port_tracker BPF programs and provides lookup of PIDs by connection tuple.
 import argparse
 import ctypes
 import ipaddress
+import os
 import signal
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -26,7 +28,17 @@ IPPROTO_TCP = 6
 IPPROTO_UDP = 17
 
 BPF_PATH = Path(__file__).parent / "src" / "bpf" / "port_tracker.bpf.o"
-DEFAULT_CGROUP = "/sys/fs/cgroup"
+
+
+def get_self_cgroup() -> str:
+    """Get the cgroup path for the current process."""
+    cgroup_info = Path("/proc/self/cgroup").read_text().strip()
+    # Format: "0::/system.slice/foo.service"
+    cgroup_rel = cgroup_info.split(":")[-1]
+    return f"/sys/fs/cgroup{cgroup_rel}"
+
+
+DEFAULT_CGROUP = get_self_cgroup()
 
 
 class ConnKeyV4(ctypes.Structure):
@@ -110,6 +122,7 @@ class ConnectionTracker:
         self.bpf_path = bpf_path
         self.cgroup_path = cgroup_path
         self._obj = None
+        self._links = []  # Must keep links alive to maintain attachment
         self._map_v4 = None
         self._map_v6 = None
 
@@ -117,9 +130,10 @@ class ConnectionTracker:
         self._obj = tinybpf.load(str(self.bpf_path))
         self._obj.__enter__()
 
-        self._obj.program("handle_sockops").attach_cgroup(self.cgroup_path)
-        self._obj.program("handle_sendmsg4").attach_cgroup(self.cgroup_path)
-        self._obj.program("handle_sendmsg6").attach_cgroup(self.cgroup_path)
+        # Store links to keep attachments alive (they detach when garbage collected)
+        self._links.append(self._obj.program("handle_sockops").attach_cgroup(self.cgroup_path))
+        self._links.append(self._obj.program("handle_sendmsg4").attach_cgroup(self.cgroup_path))
+        self._links.append(self._obj.program("handle_sendmsg6").attach_cgroup(self.cgroup_path))
 
         self._map_v4 = self._obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ConnInfo)
         self._map_v6 = self._obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=ConnInfo)
@@ -127,6 +141,10 @@ class ConnectionTracker:
         return self
 
     def __exit__(self, *args):
+        # Destroy links first (detach programs)
+        for link in self._links:
+            link.destroy()
+        self._links.clear()
         if self._obj:
             self._obj.__exit__(*args)
 

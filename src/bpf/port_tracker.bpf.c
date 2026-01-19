@@ -98,7 +98,8 @@ int handle_sockops(struct bpf_sock_ops *skops) {
     if (src_port == 0)
         return 1;
 
-    u16 dst_port = bpf_ntohl(skops->remote_port) >> 16;
+    // remote_port has port in upper 16 bits, in network byte order
+    u16 dst_port = bpf_ntohs(skops->remote_port >> 16);
 
     // ---- IPv4 ----
     if (skops->family == AF_INET) {
