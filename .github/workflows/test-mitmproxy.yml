@@ -21,6 +21,42 @@ jobs:
       - name: Install Python dependencies for tests
         run: uv sync
 
+      - name: Inspect cgroup structure
+        run: |
+          echo "=== Cgroup mount points ==="
+          mount | grep cgroup
+
+          echo ""
+          echo "=== /sys/fs/cgroup contents ==="
+          ls -la /sys/fs/cgroup/
+
+          echo ""
+          echo "=== Cgroup version check ==="
+          if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+            echo "cgroup v2 (unified hierarchy)"
+            cat /sys/fs/cgroup/cgroup.controllers
+          else
+            echo "cgroup v1 or hybrid"
+          fi
+
+          echo ""
+          echo "=== net_cls cgroup (v1) ==="
+          ls -la /sys/fs/cgroup/net_cls/ 2>/dev/null || echo "net_cls not available"
+
+          echo ""
+          echo "=== Current process cgroup ==="
+          cat /proc/self/cgroup
+
+          echo ""
+          echo "=== iptables cgroup module ==="
+          sudo iptables -m cgroup --help 2>&1 | head -20 || echo "cgroup match not available"
+
+          echo ""
+          echo "=== Kernel config for cgroup ==="
+          zcat /proc/config.gz 2>/dev/null | grep -i cgroup | head -20 || \
+            grep -i cgroup /boot/config-$(uname -r) 2>/dev/null | head -20 || \
+            echo "Kernel config not available"
+
       - name: Setup mitmproxy user with dedicated uv install
         run: |
           # Create dedicated user for mitmproxy
