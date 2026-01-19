@@ -85,6 +85,10 @@ jobs:
         run: |
           LOGFILE=/home/mitmproxy-user/mitmproxy.log
 
+          # Give mitmproxy-user's Python the network admin capability
+          # This allows creating WireGuard interfaces without full root
+          sudo setcap 'cap_net_admin+ep cap_net_bind_service+ep' /home/mitmproxy-user/venv/bin/python3.12
+
           # Start mitmproxy as dedicated user using the pre-installed venv
           sudo -i -u mitmproxy-user bash -c '/home/mitmproxy-user/venv/bin/mitmdump \
             --mode wireguard \
