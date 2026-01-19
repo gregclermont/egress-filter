@@ -10,6 +10,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -33,30 +34,41 @@ jobs:
           sudo pip install mitmproxy --break-system-packages --ignore-installed -q
           log "✓ mitmproxy installed"
 
-          # Verify it's accessible system-wide
-          which mitmdump
-          sudo -u nobody mitmdump --version
-          log "✓ mitmproxy accessible system-wide"
+          # Create network namespace for mitmproxy
+          log "Setting up network namespace..."
+          sudo ip netns add mitmns
 
-          # Create mitmproxy user with home dir
-          sudo useradd -r -m mitmproxy
-          log "✓ Created user"
+          # Create veth pair to connect namespaces
+          sudo ip link add veth-host type veth peer name veth-mitm
+          sudo ip link set veth-mitm netns mitmns
 
-          # Setup routing bypass for mitmproxy user
-          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner mitmproxy -j MARK --set-mark 0x1
-          sudo ip rule add fwmark 0x1 lookup main priority 100
-          log "✓ Routing bypass configured"
+          # Configure host side
+          sudo ip addr add 10.200.0.1/24 dev veth-host
+          sudo ip link set veth-host up
 
-          # Verify mitmproxy user can reach internet
-          sudo -u mitmproxy curl -sI https://example.com | head -1
-          log "✓ mitmproxy user can reach internet"
+          # Configure namespace side
+          sudo ip netns exec mitmns ip addr add 10.200.0.2/24 dev veth-mitm
+          sudo ip netns exec mitmns ip link set veth-mitm up
+          sudo ip netns exec mitmns ip link set lo up
+          sudo ip netns exec mitmns ip route add default via 10.200.0.1
 
-          # Start mitmproxy
-          log "Starting mitmproxy..."
-          sudo -u mitmproxy bash -c 'PYTHONUNBUFFERED=1 mitmdump --mode wireguard --set block_global=false > /tmp/mitm.log 2>&1' &
+          # Enable forwarding and NAT for the namespace
+          sudo sysctl -w net.ipv4.ip_forward=1
+          sudo iptables -t nat -A POSTROUTING -s 10.200.0.0/24 -j MASQUERADE
+          sudo iptables -A FORWARD -i veth-host -o eth0 -j ACCEPT
+          sudo iptables -A FORWARD -i eth0 -o veth-host -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+          log "✓ Network namespace configured"
+
+          # Test namespace connectivity
+          sudo ip netns exec mitmns ping -c 1 8.8.8.8 || log "WARN: namespace can't ping external"
+
+          # Start mitmproxy in the namespace
+          log "Starting mitmproxy in namespace..."
+          sudo ip netns exec mitmns bash -c 'PYTHONUNBUFFERED=1 mitmdump --mode wireguard --set block_global=false -p 51820 > /tmp/mitm.log 2>&1' &
           MITM_PID=$!
           log "✓ Started mitmproxy (PID: $MITM_PID)"
-          sleep 2
+          sleep 3
 
           # Check if process is still running
           if ps -p $MITM_PID > /dev/null 2>&1; then
@@ -70,30 +82,36 @@ jobs:
           # Wait for WireGuard config to appear
           log "Waiting for WireGuard config..."
           for i in {1..30}; do
-            if grep -q "\[Interface\]" /tmp/mitm.log; then
+            if grep -q "\[Interface\]" /tmp/mitm.log 2>/dev/null; then
               log "✓ WireGuard config appeared (attempt $i)"
               break
             fi
-            # Show progress every 5 seconds
             if [ $((i % 5)) -eq 0 ]; then
               log "Still waiting... ($i/30)"
-              wc -l /tmp/mitm.log || true
-              tail -5 /tmp/mitm.log || true
+              wc -l /tmp/mitm.log 2>/dev/null || echo "No log yet"
+              tail -3 /tmp/mitm.log 2>/dev/null || true
             fi
             sleep 1
           done
 
           echo "=== mitmproxy output ==="
-          cat /tmp/mitm.log
+          cat /tmp/mitm.log || echo "No log file"
           echo "========================"
 
-          # Extract config
+          # Check if we got the config
+          if ! grep -q "\[Interface\]" /tmp/mitm.log 2>/dev/null; then
+            log "✗ WireGuard config not found in output"
+            exit 1
+          fi
+
+          # Extract config - update endpoint to point to namespace IP
           log "Extracting config..."
-          sed -n '/\[Interface\]/,/^---/p' /tmp/mitm.log | grep -v '^---' > /tmp/wg.conf
+          sed -n '/\[Interface\]/,/^---/p' /tmp/mitm.log | grep -v '^---' | \
+            sed 's/Endpoint = [^:]*/Endpoint = 10.200.0.2/' > /tmp/wg.conf
           cat /tmp/wg.conf
           log "✓ Config extracted"
 
-          # Bring up wireguard
+          # Bring up wireguard on host
           log "Bringing up wg0..."
           sudo cp /tmp/wg.conf /etc/wireguard/wg0.conf
           sudo wg-quick up wg0
@@ -101,7 +119,7 @@ jobs:
 
           sudo wg show
 
-          # Test
+          # Test connectivity through mitmproxy
           log "Testing connectivity..."
           curl -v --max-time 10 https://example.com 2>&1 | head -20
           log "✓ curl completed"
