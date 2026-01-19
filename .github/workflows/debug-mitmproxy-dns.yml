@@ -101,7 +101,7 @@ jobs:
 
           cat /tmp/wg-full.log
 
-          # Extract config
+          # Extract config - IMPORTANT: Skip DNS to avoid resolver loop
           python3 << 'EOF'
           import re
           with open("/tmp/wg-full.log") as f:
@@ -116,7 +116,8 @@ jobs:
               elif in_config:
                   if line.strip().startswith('---'):
                       break
-                  for key in ['PrivateKey', 'Address', 'DNS', 'PublicKey', 'AllowedIPs', 'Endpoint']:
+                  # Skip DNS to prevent resolv.conf modification that causes loop
+                  for key in ['PrivateKey', 'Address', 'PublicKey', 'AllowedIPs', 'Endpoint']:
                       if key in line and '=' in line:
                           match = re.search(rf'{key}\s*=\s*(.+)', line)
                           if match:
@@ -125,6 +126,8 @@ jobs:
                       config.append('')
                       config.append('[Peer]')
 
+          print("Config (DNS removed to prevent loop):")
+          print('\n'.join(config))
           with open('/tmp/wg.conf', 'w') as f:
               f.write('\n'.join(config))
           EOF
