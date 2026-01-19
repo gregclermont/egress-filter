@@ -19,7 +19,10 @@ jobs:
         run: uname -r
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbpf-dev bpftool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbpf-dev linux-tools-common linux-tools-$(uname -r) || \
+            sudo apt-get install -y libbpf-dev linux-tools-common
 
       - name: Install dependencies
         run: uv sync
