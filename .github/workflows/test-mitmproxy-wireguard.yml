@@ -1,0 +1,91 @@
+name: Test mitmproxy WireGuard (simple)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup and test mitmproxy wireguard
+        run: |
+          set -ex
+
+          log() {
+            echo "[$(date +%H:%M:%S.%3N)] $*"
+          }
+
+          log "Starting"
+
+          # Install deps
+          log "Installing wireguard-tools..."
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools
+          log "✓ wireguard-tools installed"
+
+          log "Installing mitmproxy..."
+          sudo pip install mitmproxy --break-system-packages
+          log "✓ mitmproxy installed"
+
+          # Verify it's accessible system-wide
+          which mitmdump
+          sudo -u nobody mitmdump --version
+          log "✓ mitmproxy accessible system-wide"
+
+          # Create mitmproxy user with home dir
+          sudo useradd -r -m mitmproxy
+          log "✓ Created user"
+
+          # Setup routing bypass for mitmproxy user
+          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner mitmproxy -j MARK --set-mark 0x1
+          sudo ip rule add fwmark 0x1 lookup main priority 100
+          log "✓ Routing bypass configured"
+
+          # Verify mitmproxy user can reach internet
+          sudo -u mitmproxy curl -sI https://example.com | head -1
+          log "✓ mitmproxy user can reach internet"
+
+          # Start mitmproxy
+          log "Starting mitmproxy..."
+          sudo -u mitmproxy mitmdump --mode wireguard --set block_global=false 2>&1 > /tmp/mitm.log &
+          MITM_PID=$!
+          log "✓ Started mitmproxy (PID: $MITM_PID)"
+
+          # Wait for WireGuard config to appear
+          log "Waiting for WireGuard config..."
+          for i in {1..30}; do
+            if grep -q "\[Interface\]" /tmp/mitm.log; then
+              log "✓ WireGuard config appeared (attempt $i)"
+              break
+            fi
+            sleep 1
+          done
+
+          echo "=== mitmproxy output ==="
+          cat /tmp/mitm.log
+          echo "========================"
+
+          # Extract config
+          log "Extracting config..."
+          sed -n '/\[Interface\]/,/^---/p' /tmp/mitm.log | grep -v '^---' > /tmp/wg.conf
+          cat /tmp/wg.conf
+          log "✓ Config extracted"
+
+          # Bring up wireguard
+          log "Bringing up wg0..."
+          sudo cp /tmp/wg.conf /etc/wireguard/wg0.conf
+          sudo wg-quick up wg0
+          log "✓ WireGuard interface up"
+
+          sudo wg show
+
+          # Test
+          log "Testing connectivity..."
+          curl -v --max-time 10 https://example.com 2>&1 | head -20
+          log "✓ curl completed"
+
+          echo "=== mitmproxy logs ==="
+          cat /tmp/mitm.log
+          log "Done"
