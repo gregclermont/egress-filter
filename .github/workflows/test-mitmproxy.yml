@@ -22,6 +22,8 @@ jobs:
         run: |
           uv sync
           uv pip install mitmproxy
+          # Make venv accessible to mitmproxy-user
+          chmod -R a+rX .venv
 
       - name: Setup mitmproxy user with fwmark bypass
         run: |
