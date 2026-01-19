@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+
+# BPF compiled objects (built by workflow)
+*.bpf.o
+
+# IDE
+.idea/
+.vscode/
+
+# Local settings
+.claude/
