@@ -23,49 +23,29 @@ jobs:
           uv sync
           uv pip install mitmproxy
 
-      - name: Setup network namespace for mitmproxy
+      - name: Setup mitmproxy user with fwmark bypass
         run: |
-          # Create a network namespace for mitmproxy to avoid the host loop problem
-          # See: https://docs.mitmproxy.org/stable/concepts/modes/#limitations
+          # Create a dedicated user for mitmproxy
+          # Traffic from this user will bypass the WireGuard tunnel
+          sudo useradd -r -s /bin/false mitmproxy-user
 
-          # Create namespace
-          sudo ip netns add mitmproxy-ns
+          # Mark packets from mitmproxy user to skip WireGuard routing
+          # This prevents the loop where mitmproxy's traffic goes through its own tunnel
+          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner mitmproxy-user -j MARK --set-mark 0x1
 
-          # Create veth pair to connect namespaces
-          sudo ip link add veth-host type veth peer name veth-mitm
+          # Add routing rule: marked packets use main table (bypass WireGuard)
+          sudo ip rule add fwmark 0x1 lookup main priority 100
 
-          # Move one end to the mitmproxy namespace
-          sudo ip link set veth-mitm netns mitmproxy-ns
+          echo "fwmark bypass configured for mitmproxy-user"
 
-          # Configure the host side
-          sudo ip addr add 192.168.100.1/24 dev veth-host
-          sudo ip link set veth-host up
-
-          # Configure the mitmproxy namespace side
-          sudo ip netns exec mitmproxy-ns ip addr add 192.168.100.2/24 dev veth-mitm
-          sudo ip netns exec mitmproxy-ns ip link set veth-mitm up
-          sudo ip netns exec mitmproxy-ns ip link set lo up
-
-          # Add default route in mitmproxy namespace to go through host
-          sudo ip netns exec mitmproxy-ns ip route add default via 192.168.100.1
-
-          # Enable IP forwarding and NAT on host
-          sudo sysctl -w net.ipv4.ip_forward=1
-          sudo iptables -t nat -A POSTROUTING -s 192.168.100.0/24 -o eth0 -j MASQUERADE
-          sudo iptables -A FORWARD -i veth-host -o eth0 -j ACCEPT
-          sudo iptables -A FORWARD -i eth0 -o veth-host -m state --state RELATED,ESTABLISHED -j ACCEPT
-
-          # Test connectivity from namespace
-          echo "Testing namespace connectivity..."
-          sudo ip netns exec mitmproxy-ns ping -c 1 8.8.8.8 || echo "Ping failed (might be blocked)"
-
-      - name: Start mitmproxy in network namespace
+      - name: Start mitmproxy
         run: |
           VENV_BIN=$(dirname $(uv python find))
 
-          # Start mitmproxy in the isolated namespace
-          sudo ip netns exec mitmproxy-ns env \
+          # Run mitmproxy as the dedicated user so its traffic bypasses WireGuard
+          sudo -u mitmproxy-user env \
             PATH="$VENV_BIN:$PATH" \
+            HOME=/tmp \
             PYTHONUNBUFFERED=1 \
             $VENV_BIN/mitmdump \
               --mode wireguard \
@@ -122,10 +102,6 @@ jobs:
                       match = re.search(rf'{key}\s*=\s*(.+)', line)
                       if match:
                           value = match.group(1).strip()
-                          # Replace endpoint IP with the namespace IP
-                          if key == 'Endpoint':
-                              # mitmproxy's endpoint needs to be the namespace IP
-                              value = re.sub(r'^[\d.]+:', '192.168.100.2:', value)
                           config_lines.append(f'{key} = {value}')
                           break
 
@@ -181,5 +157,5 @@ jobs:
         if: always()
         run: |
           sudo wg-quick down wg0 || true
-          sudo ip netns del mitmproxy-ns || true
           sudo pkill -f mitmdump || true
+          sudo userdel mitmproxy-user || true
