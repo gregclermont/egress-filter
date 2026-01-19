@@ -16,6 +16,12 @@ from pathlib import Path
 
 import tinybpf
 
+# Initialize with system libbpf if bundled isn't available
+for libbpf_path in ["/usr/lib/x86_64-linux-gnu/libbpf.so.1", "/usr/lib/libbpf.so.1"]:
+    if Path(libbpf_path).exists():
+        tinybpf.init(libbpf_path)
+        break
+
 IPPROTO_TCP = 6
 IPPROTO_UDP = 17
 
