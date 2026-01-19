@@ -39,6 +39,10 @@ jobs:
           echo "=== Process cgroup ==="
           cat /proc/self/cgroup
 
+          # Check IPv6 connectivity
+          echo "=== IPv6 connectivity ==="
+          curl -6 -s --max-time 3 http://example.com > /dev/null && echo "IPv6: available" || echo "IPv6: not available"
+
           # Run tracker in background (now auto-detects cgroup)
           echo "=== Starting tracker ==="
           sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
@@ -55,14 +59,20 @@ jobs:
           echo "=== Cgroup attachments at $CGROUP_PATH ==="
           sudo bpftool cgroup show "$CGROUP_PATH" 2>/dev/null || true
 
-          # Make test connection
-          echo "=== Making test connection ==="
-          curl -s https://example.com > /dev/null
+          # Make test connections (exercises all code paths)
+          echo "=== Making test connections ==="
+          python3 test_connections.py
           sleep 2
 
           # Check map contents
-          echo "=== Map contents ==="
+          echo "=== IPv4 map contents ==="
           MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v4 | awk '{print $1}' | tr -d ':')
+          if [ -n "$MAP_ID" ]; then
+            sudo bpftool map dump id $MAP_ID 2>&1 || true
+          fi
+
+          echo "=== IPv6 map contents ==="
+          MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v6 | awk '{print $1}' | tr -d ':')
           if [ -n "$MAP_ID" ]; then
             sudo bpftool map dump id $MAP_ID 2>&1 || true
           fi

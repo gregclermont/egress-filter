@@ -63,15 +63,6 @@ class ConnKeyV6(ctypes.Structure):
     ]
 
 
-class ConnInfo(ctypes.Structure):
-    _fields_ = [
-        ("pid", ctypes.c_uint32),
-        ("_pad", ctypes.c_uint32),
-        ("timestamp_ns", ctypes.c_uint64),
-        ("comm", ctypes.c_char * 16),
-    ]
-
-
 def ip_to_int(ip_str: str) -> int | tuple[int, int, int, int]:
     """Convert IP string to integer(s) for map lookup."""
     addr = ipaddress.ip_address(ip_str)
@@ -103,14 +94,10 @@ def protocol_name(proto: int) -> str:
     return "TCP" if proto == IPPROTO_TCP else "UDP" if proto == IPPROTO_UDP else str(proto)
 
 
-def get_comm(info) -> str:
-    """Get command name from BPF data or fall back to /proc."""
-    comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
-    if comm:
-        return comm
-    # Fall back to /proc if BPF didn't capture comm
+def get_comm(pid: int) -> str:
+    """Get command name from /proc."""
     try:
-        return Path(f"/proc/{info.pid}/comm").read_text().strip()
+        return Path(f"/proc/{pid}/comm").read_text().strip()
     except (OSError, FileNotFoundError):
         return "?"
 
@@ -135,8 +122,8 @@ class ConnectionTracker:
         self._links.append(self._obj.program("handle_sendmsg4").attach_cgroup(self.cgroup_path))
         self._links.append(self._obj.program("handle_sendmsg6").attach_cgroup(self.cgroup_path))
 
-        self._map_v4 = self._obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ConnInfo)
-        self._map_v6 = self._obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=ConnInfo)
+        self._map_v4 = self._obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ctypes.c_uint32)
+        self._map_v6 = self._obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=ctypes.c_uint32)
 
         return self
 
@@ -150,7 +137,7 @@ class ConnectionTracker:
 
     def lookup(
         self, dst_ip: str, src_port: int, dst_port: int, protocol: int = IPPROTO_TCP
-    ) -> ConnInfo | None:
+    ) -> int | None:
         """Look up PID info for a connection tuple."""
         addr = ipaddress.ip_address(dst_ip)
 
@@ -181,18 +168,18 @@ class ConnectionTracker:
     def dump_all(self):
         """Print all tracked connections."""
         print("IPv4 connections:")
-        for key, info in self._map_v4.items():
+        for key, pid in self._map_v4.items():
             print(
                 f"  {format_ipv4(key.dst_ip)}:{key.dst_port} <- :{key.src_port} "
-                f"[{protocol_name(key.protocol)}] PID={info.pid} ({get_comm(info)})"
+                f"[{protocol_name(key.protocol)}] PID={pid} ({get_comm(pid)})"
             )
 
         print("\nIPv6 connections:")
-        for key, info in self._map_v6.items():
+        for key, pid in self._map_v6.items():
             ip_tuple = tuple(key.dst_ip[i] for i in range(4))
             print(
                 f"  [{format_ipv6(ip_tuple)}]:{key.dst_port} <- :{key.src_port} "
-                f"[{protocol_name(key.protocol)}] PID={info.pid} ({get_comm(info)})"
+                f"[{protocol_name(key.protocol)}] PID={pid} ({get_comm(pid)})"
             )
 
 
@@ -224,11 +211,10 @@ def cmd_lookup(args):
     protocol = IPPROTO_TCP if args.protocol.lower() == "tcp" else IPPROTO_UDP
 
     with ConnectionTracker(Path(args.bpf), args.cgroup) as tracker:
-        info = tracker.lookup(args.dst_ip, args.src_port, args.dst_port, protocol)
-        if info:
-            print(f"PID: {info.pid}")
-            print(f"Command: {get_comm(info)}")
-            print(f"Timestamp: {info.timestamp_ns}")
+        pid = tracker.lookup(args.dst_ip, args.src_port, args.dst_port, protocol)
+        if pid:
+            print(f"PID: {pid}")
+            print(f"Command: {get_comm(pid)}")
         else:
             print("Connection not found in tracker")
             sys.exit(1)

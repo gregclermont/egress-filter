@@ -36,7 +36,7 @@ tinybpf docker-compile src/bpf/*.bpf.c
 
 **conn_to_pid_v4** (LRU_HASH, 65K entries):
 - Key: `{dst_ip, src_port, dst_port, protocol}` (12 bytes, packed)
-- Value: `{pid, _pad, timestamp_ns, comm[16]}` (32 bytes)
+- Value: `{pid}` (4 bytes)
 
 **conn_to_pid_v6** (LRU_HASH, 16K entries):
 - Key: `{dst_ip[4], src_port, dst_port, protocol}` (24 bytes, packed)
@@ -83,6 +83,7 @@ uv run tinybpf run-elevated main.py lookup 142.250.80.46 54321 443 --protocol tc
 ## tinybpf API Reference
 
 ```python
+import ctypes
 import tinybpf
 
 with tinybpf.load("port_tracker.bpf.o") as obj:
@@ -92,9 +93,9 @@ with tinybpf.load("port_tracker.bpf.o") as obj:
     obj.program("handle_sendmsg6").attach_cgroup("/sys/fs/cgroup")
 
     # Typed map access
-    map_v4 = obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ConnInfo)
-    for key, info in map_v4.items():
-        print(f"{key.src_port} -> {key.dst_ip}:{key.dst_port} = PID {info.pid} ({info.comm})")
+    map_v4 = obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ctypes.c_uint32)
+    for key, pid in map_v4.items():
+        print(f"{key.src_port} -> {key.dst_ip}:{key.dst_port} = PID {pid}")
 ```
 
 See https://raw.githubusercontent.com/gregclermont/tinybpf/main/llms.txt for full API.
@@ -124,11 +125,5 @@ class ConnKeyV6(ctypes.Structure):
         ("pad", ctypes.c_uint8 * 3),
     ]
 
-class ConnInfo(ctypes.Structure):
-    _fields_ = [
-        ("pid", ctypes.c_uint32),
-        ("_pad", ctypes.c_uint32),
-        ("timestamp_ns", ctypes.c_uint64),
-        ("comm", ctypes.c_char * 16),
-    ]
+# Map value is just ctypes.c_uint32 (the PID)
 ```

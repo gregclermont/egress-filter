@@ -47,13 +47,6 @@ struct conn_key_v6 {
     u8  pad[3];
 } __attribute__((packed));
 
-struct conn_info {
-    u32 pid;
-    u32 _pad;
-    u64 timestamp_ns;
-    char comm[16];
-};
-
 // ============================================
 // Maps
 // ============================================
@@ -61,27 +54,20 @@ struct conn_info {
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, struct conn_key_v4);
-    __type(value, struct conn_info);
+    __type(value, u32);
     __uint(max_entries, 65536);
 } conn_to_pid_v4 SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, struct conn_key_v6);
-    __type(value, struct conn_info);
+    __type(value, u32);
     __uint(max_entries, 16384);
 } conn_to_pid_v6 SEC(".maps");
 
 // ============================================
 // Helpers
 // ============================================
-
-static __always_inline void fill_conn_info(struct conn_info *info) {
-    info->pid = bpf_get_current_pid_tgid() >> 32;
-    info->timestamp_ns = bpf_ktime_get_ns();
-    // Note: bpf_get_current_comm not available in sock_ops on some kernels
-    // Userspace can look up comm via /proc/[pid]/comm
-}
 
 // Check if IPv6 address is v4-mapped (::ffff:x.x.x.x)
 // Must access context fields directly to satisfy verifier
@@ -112,9 +98,8 @@ int handle_sockops(struct bpf_sock_ops *skops) {
             .dst_port = dst_port,
             .protocol = IPPROTO_TCP,
         };
-        struct conn_info info = {};
-        fill_conn_info(&info);
-        bpf_map_update_elem(&conn_to_pid_v4, &key, &info, BPF_ANY);
+        u32 pid = bpf_get_current_pid_tgid() >> 32;
+        bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
         return 1;
     }
 
@@ -132,9 +117,8 @@ int handle_sockops(struct bpf_sock_ops *skops) {
                 .dst_port = dst_port,
                 .protocol = IPPROTO_TCP,
             };
-            struct conn_info info = {};
-            fill_conn_info(&info);
-            bpf_map_update_elem(&conn_to_pid_v4, &key, &info, BPF_ANY);
+            u32 pid = bpf_get_current_pid_tgid() >> 32;
+            bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
             return 1;
         }
 
@@ -150,9 +134,8 @@ int handle_sockops(struct bpf_sock_ops *skops) {
         key.dst_ip[2] = skops->remote_ip6[2];
         key.dst_ip[3] = skops->remote_ip6[3];
 
-        struct conn_info info = {};
-        fill_conn_info(&info);
-        bpf_map_update_elem(&conn_to_pid_v6, &key, &info, BPF_ANY);
+        u32 pid = bpf_get_current_pid_tgid() >> 32;
+        bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
         return 1;
     }
 
@@ -179,11 +162,8 @@ int handle_sendmsg4(struct bpf_sock_addr *ctx) {
         .dst_port = bpf_ntohs(ctx->user_port),
         .protocol = IPPROTO_UDP,
     };
-
-    struct conn_info info = {};
-    fill_conn_info(&info);
-
-    bpf_map_update_elem(&conn_to_pid_v4, &key, &info, BPF_ANY);
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
     return 1;
 }
 
@@ -201,8 +181,7 @@ int handle_sendmsg6(struct bpf_sock_addr *ctx) {
     if (src_port == 0)
         return 1;
 
-    struct conn_info info = {};
-    fill_conn_info(&info);
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
 
     // Check for IPv4-mapped address
     if (IS_V4_MAPPED(ctx->user_ip6[0], ctx->user_ip6[1], ctx->user_ip6[2])) {
@@ -212,7 +191,7 @@ int handle_sendmsg6(struct bpf_sock_addr *ctx) {
             .dst_port = bpf_ntohs(ctx->user_port),
             .protocol = IPPROTO_UDP,
         };
-        bpf_map_update_elem(&conn_to_pid_v4, &key, &info, BPF_ANY);
+        bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
         return 1;
     }
 
@@ -227,7 +206,7 @@ int handle_sendmsg6(struct bpf_sock_addr *ctx) {
     key.dst_ip[1] = ctx->user_ip6[1];
     key.dst_ip[2] = ctx->user_ip6[2];
     key.dst_ip[3] = ctx->user_ip6[3];
-    bpf_map_update_elem(&conn_to_pid_v6, &key, &info, BPF_ANY);
+    bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
     return 1;
 }
 
