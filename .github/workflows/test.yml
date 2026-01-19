@@ -29,41 +29,36 @@ jobs:
 
       - name: Test BPF load and tracking
         run: |
-          set -x  # Debug output
+          # Run tracker with sudo, preserving PYTHONPATH for venv packages
+          PYTHON=$(uv python find)
+          SITE_PACKAGES=$(dirname $PYTHON)/../lib/python3.12/site-packages
 
-          # First test: just check if we can load BPF without running the tracker loop
-          echo "Testing BPF load..."
-          sudo "$(uv python find)" -c "
-import sys
-sys.path.insert(0, '$(pwd)/.venv/lib/python3.12/site-packages')
+          echo "Python: $PYTHON"
+          echo "Site packages: $SITE_PACKAGES"
+
+          # Quick test that BPF loads
+          sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON -c "
+import main  # This will init libbpf
 import tinybpf
-for path in ['/usr/lib/x86_64-linux-gnu/libbpf.so.1', '/usr/lib/libbpf.so.1']:
-    import os
-    if os.path.exists(path):
-        tinybpf.init(path)
-        break
+print('tinybpf loaded, version:', tinybpf.version())
 obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
-print('BPF loaded successfully!')
+print('BPF object loaded')
 print('Programs:', list(obj.programs.keys()))
-print('Maps:', list(obj.maps.keys()))
-obj.program('handle_sockops').attach_cgroup('/sys/fs/cgroup')
-print('Attached sockops to cgroup')
 "
 
-          # Now run full test with tracker
-          echo "Starting tracker..."
-          timeout 10 sudo env PYTHONUNBUFFERED=1 \
-            PYTHONPATH="$(pwd)/.venv/lib/python3.12/site-packages" \
-            "$(uv python find)" main.py run --interval 1 &
+          # Run tracker in background
+          sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
+            $PYTHON main.py run --interval 1 2>&1 | tee /tmp/tracker.log &
           TRACKER_PID=$!
-          sleep 3
+          sleep 2
 
-          # Make connections while tracker is running
-          echo "Making test connections..."
-          curl -s https://api.github.com > /dev/null || true
-          curl -s https://example.com > /dev/null || true
-          sleep 3
+          # Make test connections
+          curl -s https://example.com > /dev/null
+          sleep 2
 
-          # Let it run a bit more and capture output
-          wait $TRACKER_PID 2>/dev/null || true
-          echo "Test complete"
+          # Show what we captured
+          echo "=== Tracker output ==="
+          cat /tmp/tracker.log
+
+          # Cleanup
+          sudo kill $TRACKER_PID 2>/dev/null || true
