@@ -47,44 +47,43 @@ jobs:
 
       - name: Start mitmproxy
         run: |
-          # Create log file with proper permissions
-          touch /tmp/mitmproxy.log
-          chmod 666 /tmp/mitmproxy.log
+          LOGFILE=/home/mitmproxy-user/mitmproxy.log
 
           # Start mitmproxy as dedicated user using the pre-installed venv
-          # Note: nohup and explicit output redirection to ensure logs are captured
           sudo -i -u mitmproxy-user bash -c '/home/mitmproxy-user/venv/bin/mitmdump \
             --mode wireguard \
             --set block_global=false \
             -s /home/mitmproxy-user/mitmproxy_wg_logger.py \
-            >> /tmp/mitmproxy.log 2>&1' &
+            > /home/mitmproxy-user/mitmproxy.log 2>&1' &
 
           MITMPROXY_PID=$!
           echo "MITMPROXY_PID=$MITMPROXY_PID" >> $GITHUB_ENV
+          echo "LOGFILE=$LOGFILE" >> $GITHUB_ENV
           echo "Started mitmproxy wrapper with PID $MITMPROXY_PID"
 
           # Wait for mitmproxy to start
           echo "Waiting for mitmproxy to start..."
           for i in {1..60}; do
-            if grep -q "WireGuard server listening" /tmp/mitmproxy.log 2>/dev/null; then
+            if sudo cat $LOGFILE 2>/dev/null | grep -q "WireGuard server listening"; then
               echo "mitmproxy started"
               break
             fi
             # Check if the process is still running
             if ! ps -p $MITMPROXY_PID > /dev/null 2>&1; then
               echo "ERROR: mitmproxy process died"
-              cat /tmp/mitmproxy.log
+              sudo cat $LOGFILE || echo "No log file"
               exit 1
             fi
             sleep 1
           done
 
           echo "=== mitmproxy log at startup ==="
-          cat /tmp/mitmproxy.log
+          sudo cat $LOGFILE
 
       - name: Extract and setup WireGuard client
         run: |
           # Extract WireGuard config from mitmproxy output
+          sudo cat $LOGFILE > /tmp/mitmproxy.log
           python3 << 'PYEOF'
           import re
 
@@ -146,11 +145,12 @@ jobs:
         if: always()
         run: |
           echo "=== mitmproxy logs ==="
-          cat /tmp/mitmproxy.log || echo "No logs found"
+          sudo cat $LOGFILE || echo "No logs found"
 
       - name: Verify logged connections
         run: |
           echo "Checking for logged connections..."
+          sudo cat $LOGFILE > /tmp/mitmproxy.log
 
           for pattern in "HTTP:" "DNS:" "TCP:" "UDP:"; do
             if grep -q "$pattern" /tmp/mitmproxy.log; then
