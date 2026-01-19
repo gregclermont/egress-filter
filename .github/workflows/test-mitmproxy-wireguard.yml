@@ -36,21 +36,15 @@ jobs:
           }
           trap cleanup ERR
 
-          # Get site-packages path for sudo
-          PYTHON=$(uv python find)
-          SITE_PACKAGES=$(dirname $PYTHON)/../lib/python*/site-packages
-          export PYTHONPATH="$SITE_PACKAGES"
-
           # Start proxy as root (needed for BPF), exclude root's traffic via iptables
           echo "Starting proxy..."
-          MITMDUMP=$(dirname $PYTHON)/mitmdump
-          sudo env PYTHONPATH="$PYTHONPATH" PROXY_LOG_FILE=/tmp/proxy.log \
-            $MITMDUMP -s proxy.py --mode transparent --showhost --set block_global=false &
+          sudo env PROXY_LOG_FILE=/tmp/proxy.log \
+            $(which uv) run --with mitmproxy --with tinybpf mitmdump -s proxy.py --mode transparent --showhost --set block_global=false &
           PROXY_PID=$!
 
-          # Wait for proxy to generate CA certificate
+          # Wait for proxy to generate CA certificate (root's home = /root)
           counter=0
-          while [ ! -f ~/.mitmproxy/mitmproxy-ca-cert.pem ]; do
+          while [ ! -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; do
             sleep 1
             counter=$((counter+1))
             if [ $counter -gt 120 ]; then
@@ -74,14 +68,14 @@ jobs:
 
           # Install mitmproxy certificate as system CA
           sudo mkdir -p /usr/local/share/ca-certificates/extra
-          sudo openssl x509 -in ~/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out ~/mitmproxy-ca-cert.crt
-          sudo cp ~/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
+          sudo openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt
+          sudo cp /tmp/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
           sudo dpkg-reconfigure -p critical ca-certificates
           sudo update-ca-certificates
 
           # Set CA env vars for tools that don't use system store
-          echo "NODE_EXTRA_CA_CERTS=$HOME/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
-          echo "REQUESTS_CA_BUNDLE=$HOME/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
+          echo "NODE_EXTRA_CA_CERTS=/root/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
+          echo "REQUESTS_CA_BUNDLE=/root/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
 
           echo "--all done--"
 
