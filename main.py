@@ -91,6 +91,18 @@ def protocol_name(proto: int) -> str:
     return "TCP" if proto == IPPROTO_TCP else "UDP" if proto == IPPROTO_UDP else str(proto)
 
 
+def get_comm(info) -> str:
+    """Get command name from BPF data or fall back to /proc."""
+    comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
+    if comm:
+        return comm
+    # Fall back to /proc if BPF didn't capture comm
+    try:
+        return Path(f"/proc/{info.pid}/comm").read_text().strip()
+    except (OSError, FileNotFoundError):
+        return "?"
+
+
 class ConnectionTracker:
     """Manages BPF programs and provides connection-to-PID lookups."""
 
@@ -152,19 +164,17 @@ class ConnectionTracker:
         """Print all tracked connections."""
         print("IPv4 connections:")
         for key, info in self._map_v4.items():
-            comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
             print(
                 f"  {format_ipv4(key.dst_ip)}:{key.dst_port} <- :{key.src_port} "
-                f"[{protocol_name(key.protocol)}] PID={info.pid} ({comm})"
+                f"[{protocol_name(key.protocol)}] PID={info.pid} ({get_comm(info)})"
             )
 
         print("\nIPv6 connections:")
         for key, info in self._map_v6.items():
-            comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
             ip_tuple = tuple(key.dst_ip[i] for i in range(4))
             print(
                 f"  [{format_ipv6(ip_tuple)}]:{key.dst_port} <- :{key.src_port} "
-                f"[{protocol_name(key.protocol)}] PID={info.pid} ({comm})"
+                f"[{protocol_name(key.protocol)}] PID={info.pid} ({get_comm(info)})"
             )
 
 
@@ -198,9 +208,8 @@ def cmd_lookup(args):
     with ConnectionTracker(Path(args.bpf), args.cgroup) as tracker:
         info = tracker.lookup(args.dst_ip, args.src_port, args.dst_port, protocol)
         if info:
-            comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
             print(f"PID: {info.pid}")
-            print(f"Command: {comm}")
+            print(f"Command: {get_comm(info)}")
             print(f"Timestamp: {info.timestamp_ns}")
         else:
             print("Connection not found in tracker")

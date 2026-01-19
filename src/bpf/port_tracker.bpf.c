@@ -79,7 +79,8 @@ struct {
 static __always_inline void fill_conn_info(struct conn_info *info) {
     info->pid = bpf_get_current_pid_tgid() >> 32;
     info->timestamp_ns = bpf_ktime_get_ns();
-    bpf_get_current_comm(&info->comm, sizeof(info->comm));
+    // Note: bpf_get_current_comm not available in sock_ops on some kernels
+    // Userspace can look up comm via /proc/[pid]/comm
 }
 
 static __always_inline bool is_v4_mapped(u32 *ip6) {
