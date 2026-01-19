@@ -44,6 +44,52 @@ jobs:
           cat /proc/self/cgroup
           ls -la /sys/fs/cgroup/
 
+          # First, test direct BPF loading with explicit error output
+          echo "=== Direct BPF load test ==="
+          sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON -c "
+          import tinybpf
+          print('tinybpf loaded')
+          obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
+          print('Object loaded')
+          print('Programs:', list(obj.programs.keys()))
+          print('Maps:', list(obj.maps.keys()))
+
+          # Try to attach
+          try:
+              prog = obj.program('handle_sockops')
+              print(f'handle_sockops program: {prog}')
+              prog.attach_cgroup('/sys/fs/cgroup')
+              print('handle_sockops attached')
+          except Exception as e:
+              print(f'handle_sockops attach error: {e}')
+
+          try:
+              prog = obj.program('handle_sendmsg4')
+              print(f'handle_sendmsg4 program: {prog}')
+              prog.attach_cgroup('/sys/fs/cgroup')
+              print('handle_sendmsg4 attached')
+          except Exception as e:
+              print(f'handle_sendmsg4 attach error: {e}')
+
+          try:
+              prog = obj.program('handle_sendmsg6')
+              print(f'handle_sendmsg6 program: {prog}')
+              prog.attach_cgroup('/sys/fs/cgroup')
+              print('handle_sendmsg6 attached')
+          except Exception as e:
+              print(f'handle_sendmsg6 attach error: {e}')
+
+          print('Test complete - keeping object loaded')
+          import time
+          time.sleep(5)  # Keep loaded for bpftool inspection
+          "
+
+          # Check what got attached
+          echo "=== After direct test - BPF programs ==="
+          sudo bpftool prog list | tail -20 || true
+          echo "=== After direct test - cgroup attachments ==="
+          sudo bpftool cgroup show /sys/fs/cgroup 2>/dev/null || true
+
           # Run tracker in background with proper paths
           sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
             $PYTHON main.py run --interval 1 2>&1 | tee /tmp/tracker.log &
@@ -53,14 +99,18 @@ jobs:
           sleep 2
 
           # Check BPF program attachment
-          echo "=== BPF programs attached ==="
-          sudo bpftool prog list | head -30 || true
+          echo "=== ALL BPF programs ==="
+          sudo bpftool prog list || true
+          echo "=== Looking for our programs ==="
+          sudo bpftool prog list | grep -E "handle_sockops|handle_sendmsg" || echo "Our programs not found in list"
           echo "=== BPF maps ==="
-          sudo bpftool map list | head -20 || true
+          sudo bpftool map list || true
 
-          # Check cgroup attachments
-          echo "=== Cgroup BPF attachments ==="
-          sudo bpftool cgroup tree /sys/fs/cgroup 2>/dev/null | head -50 || true
+          # Check cgroup attachments at root
+          echo "=== Cgroup BPF attachments at root ==="
+          sudo bpftool cgroup show /sys/fs/cgroup 2>/dev/null || true
+          echo "=== Full cgroup tree ==="
+          sudo bpftool cgroup tree /sys/fs/cgroup 2>/dev/null || true
 
           # Make test connections
           echo "=== Making test connections ==="
