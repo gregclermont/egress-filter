@@ -48,7 +48,13 @@ jobs:
           echo "=== Direct BPF load test ==="
           sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON -c "
           import tinybpf
-          print('tinybpf loaded')
+          from pathlib import Path
+          # Init with system libbpf (same as main.py)
+          for p in ['/usr/lib/x86_64-linux-gnu/libbpf.so.1', '/usr/lib/libbpf.so.1']:
+              if Path(p).exists():
+                  tinybpf.init(p)
+                  break
+          print('tinybpf initialized')
           obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
           print('Object loaded')
           print('Programs:', list(obj.programs.keys()))
