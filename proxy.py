@@ -7,10 +7,19 @@
 
 import json
 import logging
+import os
 from mitmproxy import http, ctx
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+# Configure logging to file
+LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 
@@ -24,13 +33,13 @@ class ConnectionLogger:
         )
 
     def running(self):
-        logger.info("Proxy started in transparent mode")
+        logger.info(f"Proxy started in transparent mode, logging to {LOG_FILE}")
 
     def request(self, flow: http.HTTPFlow) -> None:
-        logger.info(f"HTTP: {flow.request.method} {flow.request.pretty_url}")
+        logger.info(f"REQUEST: {flow.request.method} {flow.request.pretty_url}")
 
     def response(self, flow: http.HTTPFlow) -> None:
-        logger.info(f"HTTP: {flow.request.method} {flow.request.pretty_url} -> {flow.response.status_code}")
+        logger.info(f"RESPONSE: {flow.request.method} {flow.request.pretty_url} -> {flow.response.status_code}")
 
 
 addons = [ConnectionLogger()]

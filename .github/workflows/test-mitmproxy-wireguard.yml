@@ -39,7 +39,7 @@ jobs:
           sudo chmod 600 /home/mitmproxyuser/config.json
 
           # Start proxy in background (--python 3.12 ensures compatible version)
-          sudo -i -u mitmproxyuser /home/mitmproxyuser/.local/bin/uv run --python 3.12 /home/mitmproxyuser/proxy.py &
+          sudo -i -u mitmproxyuser PROXY_LOG_FILE=/tmp/proxy.log /home/mitmproxyuser/.local/bin/uv run --python 3.12 /home/mitmproxyuser/proxy.py &
 
           # Wait for proxy to generate CA certificate (before iptables to avoid breaking runner comms)
           # Allow up to 60s for uv to download python + mitmproxy + start
@@ -92,3 +92,17 @@ jobs:
           wget -O /dev/null https://httpbin.org/get
 
           echo "All tests passed!"
+
+      - name: Show proxy log
+        if: always()
+        run: |
+          echo "=== Proxy Log ==="
+          cat /tmp/proxy.log || echo "No log file found"
+
+      - name: Upload proxy log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-log
+          path: /tmp/proxy.log
+          if-no-files-found: warn
