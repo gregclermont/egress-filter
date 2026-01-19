@@ -42,13 +42,17 @@ jobs:
           sudo -i -u mitmproxyuser /home/mitmproxyuser/.local/bin/uv run --python 3.12 /home/mitmproxyuser/proxy.py &
 
           # Wait for proxy to generate CA certificate (before iptables to avoid breaking runner comms)
+          # Allow up to 60s for uv to download python + mitmproxy + start
           counter=0
           while [ ! -f /home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem ]; do
             sleep 1
             counter=$((counter+1))
-            if [ $counter -gt 10 ]; then
+            if [ $counter -gt 60 ]; then
               echo "Timeout waiting for certificate"
               exit 1
+            fi
+            if [ $((counter % 10)) -eq 0 ]; then
+              echo "Waiting for mitmproxy to start... ($counter/60)"
             fi
           done
 
