@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mitmproxy", "tinybpf"]
+# dependencies = ["mitmproxy", "tinybpf==0.0.1"]
+#
+# [[tool.uv.index]]
+# name = "tinybpf"
+# url = "https://gregclermont.github.io/tinybpf"
 #
 # [tool.uv.sources]
-# tinybpf = { git = "https://github.com/gregclermont/tinybpf.git" }
+# tinybpf = { index = "tinybpf" }
 # ///
 """Simple mitmproxy transparent proxy that logs all connections with PID tracking."""
 
 import ctypes
-import json
 import logging
 import os
 import socket
@@ -17,15 +20,6 @@ import ipaddress
 from pathlib import Path
 from mitmproxy import http, tcp, ctx
 import tinybpf
-
-# Initialize tinybpf with system libbpf (guard against double-init when loaded as addon)
-try:
-    for libbpf_path in ["/usr/lib/x86_64-linux-gnu/libbpf.so.1", "/usr/lib/libbpf.so.1"]:
-        if Path(libbpf_path).exists():
-            tinybpf.init(libbpf_path)
-            break
-except RuntimeError:
-    pass  # Already initialized
 
 IPPROTO_TCP = 6
 

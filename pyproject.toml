@@ -2,15 +2,18 @@
 name = "egress-filter"
 version = "0.1.0"
 description = "eBPF-based connection-to-PID tracker for egress firewall"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
-    "tinybpf @ git+https://github.com/gregclermont/tinybpf.git",
+    "tinybpf==0.0.1",
     "mitmproxy",
 ]
 
 [[tool.uv.index]]
 name = "tinybpf"
 url = "https://gregclermont.github.io/tinybpf"
+
+[tool.uv.sources]
+tinybpf = { index = "tinybpf" }
 
 [tool.uv]
 environments = ["sys_platform == 'linux'"]
