@@ -10,11 +10,22 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup mitmproxy transparent mode
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libbpf-dev
+
+      - name: Compile BPF programs
+        run: uv run tinybpf docker-compile src/bpf/*.bpf.c
+
+      - name: Setup mitmproxy transparent mode with BPF tracking
         run: |
           set -e
 
@@ -25,61 +36,62 @@ jobs:
           }
           trap cleanup ERR
 
-          # Create mitmproxyuser - proxy won't intercept local traffic from same user
-          sudo useradd mitmproxyuser
-          sudo mkdir -p /home/mitmproxyuser/.local/bin
-          sudo chown -R mitmproxyuser:mitmproxyuser /home/mitmproxyuser
+          # Get site-packages path for sudo
+          PYTHON=$(uv python find)
+          SITE_PACKAGES=$(dirname $PYTHON)/../lib/python*/site-packages
+          export PYTHONPATH="$SITE_PACKAGES"
 
-          # Install uv (UV_UNMANAGED_INSTALL skips receipt file for CI)
-          sudo -u mitmproxyuser -H bash -e -c 'curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=/home/mitmproxyuser/.local/bin sh'
+          # Start proxy as root (needed for BPF), exclude root's traffic via iptables
+          echo "Starting proxy..."
+          sudo env PYTHONPATH="$PYTHONPATH" PROXY_LOG_FILE=/tmp/proxy.log \
+            $PYTHON -c "
+import sys
+sys.path.insert(0, '$SITE_PACKAGES')
+from mitmproxy.tools.main import mitmdump
+mitmdump(['-s', 'proxy.py', '--mode', 'transparent', '--showhost', '--set', 'block_global=false'])
+" &
+          PROXY_PID=$!
 
-          # Copy proxy script and config
-          sudo cp proxy.py config.json /home/mitmproxyuser/
-          sudo chown mitmproxyuser:mitmproxyuser /home/mitmproxyuser/config.json
-          sudo chmod 600 /home/mitmproxyuser/config.json
-
-          # Start proxy in background (--python 3.12 ensures compatible version)
-          sudo -i -u mitmproxyuser PROXY_LOG_FILE=/tmp/proxy.log /home/mitmproxyuser/.local/bin/uv run --python 3.12 /home/mitmproxyuser/proxy.py &
-
-          # Wait for proxy to generate CA certificate (before iptables to avoid breaking runner comms)
-          # Allow up to 60s for uv to download python + mitmproxy + start
+          # Wait for proxy to generate CA certificate
           counter=0
-          while [ ! -f /home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem ]; do
+          while [ ! -f ~/.mitmproxy/mitmproxy-ca-cert.pem ]; do
             sleep 1
             counter=$((counter+1))
-            if [ $counter -gt 60 ]; then
+            if [ $counter -gt 120 ]; then
               echo "Timeout waiting for certificate"
               exit 1
             fi
             if [ $((counter % 10)) -eq 0 ]; then
-              echo "Waiting for mitmproxy to start... ($counter/60)"
+              echo "Waiting for mitmproxy to start... ($counter/120)"
             fi
           done
+          echo "Proxy started!"
 
-          # Setup iptables now that proxy is confirmed running
+          # Setup iptables - exclude root's traffic to prevent loops
           sudo sysctl -w net.ipv4.ip_forward=1
           sudo sysctl -w net.ipv6.conf.all.forwarding=1
           sudo sysctl -w net.ipv4.conf.all.send_redirects=0
-          sudo iptables -t nat -A OUTPUT -p tcp -m owner ! --uid-owner mitmproxyuser -j REDIRECT --to-port 8080
-          sudo ip6tables -t nat -A OUTPUT -p tcp -m owner ! --uid-owner mitmproxyuser -j REDIRECT --to-port 8080
+          sudo iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
+          sudo iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
+          sudo ip6tables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
+          sudo ip6tables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
 
           # Install mitmproxy certificate as system CA
           sudo mkdir -p /usr/local/share/ca-certificates/extra
-          sudo openssl x509 -in /home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out ~/mitmproxy-ca-cert.crt
+          sudo openssl x509 -in ~/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out ~/mitmproxy-ca-cert.crt
           sudo cp ~/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
           sudo dpkg-reconfigure -p critical ca-certificates
           sudo update-ca-certificates
 
           # Set CA env vars for tools that don't use system store
-          echo "NODE_EXTRA_CA_CERTS=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
-          echo "REQUESTS_CA_BUNDLE=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
-          echo "HEX_CACERTS_PATH=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
-          echo "AWS_CA_BUNDLE=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
+          echo "NODE_EXTRA_CA_CERTS=$HOME/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
+          echo "REQUESTS_CA_BUNDLE=$HOME/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
 
           echo "--all done--"
 
       - name: Test connectivity through proxy
         run: |
+          # Run tests as non-root user so traffic goes through proxy
           echo "Testing HTTP..."
           curl -v http://example.com 2>&1 | head -20
 
