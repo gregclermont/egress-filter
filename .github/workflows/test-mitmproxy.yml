@@ -18,48 +18,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wireguard-tools dnsutils
 
-      - name: Install Python dependencies
-        run: |
-          uv sync
-          uv pip install mitmproxy
-          # Make venv accessible to mitmproxy-user
-          chmod -R a+rX .venv
+      - name: Install Python dependencies for tests
+        run: uv sync
 
-      - name: Setup mitmproxy user with fwmark bypass
+      - name: Setup mitmproxy user with dedicated uv install
         run: |
-          # Create a dedicated user for mitmproxy
-          # Traffic from this user will bypass the WireGuard tunnel
-          sudo useradd -r -s /bin/false mitmproxy-user
+          # Create dedicated user for mitmproxy
+          sudo useradd -r -m mitmproxy-user
+          sudo mkdir -p /home/mitmproxy-user/.local/bin
+          sudo chown -R mitmproxy-user:mitmproxy-user /home/mitmproxy-user
 
-          # Mark packets from mitmproxy user to skip WireGuard routing
-          # This prevents the loop where mitmproxy's traffic goes through its own tunnel
+          # Install uv for mitmproxy-user (UV_UNMANAGED_INSTALL skips receipt file)
+          sudo -u mitmproxy-user -H bash -c 'curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=/home/mitmproxy-user/.local/bin sh'
+
+          # Copy the logger script
+          sudo cp mitmproxy_wg_logger.py /home/mitmproxy-user/
+          sudo chown mitmproxy-user:mitmproxy-user /home/mitmproxy-user/mitmproxy_wg_logger.py
+
+          # Mark packets from mitmproxy-user to bypass WireGuard routing
           sudo iptables -t mangle -A OUTPUT -m owner --uid-owner mitmproxy-user -j MARK --set-mark 0x1
-
-          # Add routing rule: marked packets use main table (bypass WireGuard)
           sudo ip rule add fwmark 0x1 lookup main priority 100
 
-          echo "fwmark bypass configured for mitmproxy-user"
+          echo "mitmproxy-user setup complete"
 
       - name: Start mitmproxy
         run: |
-          VENV_BIN=$(dirname $(uv python find))
-
-          # Run mitmproxy as the dedicated user so its traffic bypasses WireGuard
-          sudo -u mitmproxy-user env \
-            PATH="$VENV_BIN:$PATH" \
-            HOME=/tmp \
-            PYTHONUNBUFFERED=1 \
-            $VENV_BIN/mitmdump \
+          # Start mitmproxy as dedicated user with its own uv
+          sudo -i -u mitmproxy-user /home/mitmproxy-user/.local/bin/uv run \
+            --python 3.12 \
+            --with mitmproxy \
+            mitmdump \
               --mode wireguard \
               --set block_global=false \
-              -s mitmproxy_wg_logger.py \
+              -s /home/mitmproxy-user/mitmproxy_wg_logger.py \
               > /tmp/mitmproxy.log 2>&1 &
 
           echo "MITMPROXY_PID=$!" >> $GITHUB_ENV
 
           # Wait for mitmproxy to start
           echo "Waiting for mitmproxy to start..."
-          for i in {1..30}; do
+          for i in {1..60}; do
             if grep -q "WireGuard server listening" /tmp/mitmproxy.log 2>/dev/null; then
               echo "mitmproxy started"
               break
@@ -160,4 +158,4 @@ jobs:
         run: |
           sudo wg-quick down wg0 || true
           sudo pkill -f mitmdump || true
-          sudo userdel mitmproxy-user || true
+          sudo userdel -r mitmproxy-user || true
