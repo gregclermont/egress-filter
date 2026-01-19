@@ -122,6 +122,13 @@ jobs:
 
           echo "All tests passed!"
 
+      - name: Stop proxy gracefully
+        if: always()
+        run: |
+          # Send SIGTERM to trigger done() and dump maps
+          sudo pkill -TERM -f "python proxy.py" || true
+          sleep 2
+
       - name: Cleanup iptables
         if: always()
         run: |

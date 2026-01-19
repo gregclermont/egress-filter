@@ -116,12 +116,31 @@ class ConnectionLogger:
         logger.info(f"Proxy started in transparent mode, logging to {LOG_FILE}")
 
     def done(self):
+        # Dump map contents for debugging
+        self._dump_maps()
         # Cleanup BPF
         for link in self._bpf_links:
             link.destroy()
         self._bpf_links.clear()
         if self._bpf_obj:
             self._bpf_obj.__exit__(None, None, None)
+
+    def _dump_maps(self):
+        """Dump all map entries for debugging."""
+        logger.info("=== BPF Map Dump ===")
+        if self._map_v4:
+            for key, pid in self._map_v4.items():
+                dst_ip = socket.ntohl(key.dst_ip)
+                dst_str = str(ipaddress.IPv4Address(dst_ip))
+                proto = "TCP" if key.protocol == IPPROTO_TCP else "UDP"
+                logger.info(f"  v4: {dst_str}:{key.dst_port} <- :{key.src_port} [{proto}] pid={pid} comm={get_comm(pid)}")
+        if self._map_v6:
+            for key, pid in self._map_v6.items():
+                packed = b"".join(key.dst_ip[i].to_bytes(4, "big") for i in range(4))
+                dst_str = str(ipaddress.IPv6Address(packed))
+                proto = "TCP" if key.protocol == IPPROTO_TCP else "UDP"
+                logger.info(f"  v6: [{dst_str}]:{key.dst_port} <- :{key.src_port} [{proto}] pid={pid} comm={get_comm(pid)}")
+        logger.info("=== End Map Dump ===")
 
     def lookup_pid(self, dst_ip: str, src_port: int, dst_port: int, protocol: int = IPPROTO_TCP) -> int | None:
         """Look up PID for a connection tuple."""
