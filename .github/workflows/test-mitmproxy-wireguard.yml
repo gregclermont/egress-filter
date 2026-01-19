@@ -93,16 +93,21 @@ jobs:
 
           echo "All tests passed!"
 
-      - name: Show proxy log
+      - name: Show proxy logs
         if: always()
         run: |
-          echo "=== Proxy Log ==="
+          echo "=== Proxy Log (custom) ==="
           cat /tmp/proxy.log || echo "No log file found"
+          echo ""
+          echo "=== Mitmproxy Log (debug) ==="
+          cat /tmp/mitmproxy.log || echo "No log file found"
 
-      - name: Upload proxy log
+      - name: Upload proxy logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: proxy-log
-          path: /tmp/proxy.log
+          name: proxy-logs
+          path: |
+            /tmp/proxy.log
+            /tmp/mitmproxy.log
           if-no-files-found: warn

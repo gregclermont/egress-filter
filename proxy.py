@@ -10,17 +10,25 @@ import logging
 import os
 from mitmproxy import http, ctx
 
-# Configure logging to file
+# Our custom log (fully controlled)
 LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
+logger = logging.getLogger("proxy")
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Don't send to root logger
+_file_handler = logging.FileHandler(LOG_FILE)
+_file_handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+logger.addHandler(_file_handler)
+
+# Mitmproxy debug log (separate file)
+MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", "/tmp/mitmproxy.log")
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(message)s',
+    format='%(asctime)s %(name)s %(message)s',
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        logging.FileHandler(MITMPROXY_LOG_FILE),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(__name__)
 
 
 class ConnectionLogger:
