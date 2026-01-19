@@ -1,0 +1,196 @@
+name: Debug mitmproxy DNS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug-dns:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools resolvconf dnsutils
+          uv sync
+          uv pip install mitmproxy
+
+      - name: Test 1 - Basic DNS resolution on host
+        run: |
+          echo "=== Host DNS config ==="
+          cat /etc/resolv.conf
+          echo ""
+          echo "=== Test DNS resolution ==="
+          nslookup example.com
+          dig example.com +short
+
+      - name: Test 2 - mitmproxy DNS mode (no WireGuard)
+        run: |
+          VENV_BIN=$(dirname $(uv python find))
+
+          echo "=== Starting mitmproxy in DNS mode ==="
+          # Run mitmproxy as a DNS server only
+          sudo $VENV_BIN/mitmdump --mode dns@5353 > /tmp/dns-test.log 2>&1 &
+          sleep 3
+
+          echo "=== Test DNS query through mitmproxy ==="
+          dig @127.0.0.1 -p 5353 example.com || echo "DNS query failed"
+
+          echo "=== mitmproxy DNS logs ==="
+          cat /tmp/dns-test.log
+
+          sudo pkill -f mitmdump || true
+
+      - name: Test 3 - Check mitmproxy WireGuard network setup
+        run: |
+          VENV_BIN=$(dirname $(uv python find))
+
+          echo "=== Starting mitmproxy in WireGuard mode ==="
+          sudo env PYTHONUNBUFFERED=1 $VENV_BIN/mitmdump \
+            --mode wireguard \
+            --set block_global=false \
+            > /tmp/wg-test.log 2>&1 &
+
+          sleep 5
+
+          echo "=== mitmproxy output ==="
+          cat /tmp/wg-test.log
+
+          echo ""
+          echo "=== Network interfaces ==="
+          ip addr
+
+          echo ""
+          echo "=== Routing table ==="
+          ip route
+
+          echo ""
+          echo "=== Can mitmproxy process reach DNS? ==="
+          # Test if mitmproxy's process can reach external DNS
+          sudo nsenter -t $(pgrep -f mitmdump) -n nslookup example.com 8.8.8.8 || echo "nsenter failed, trying direct"
+
+          # Try direct from host
+          nslookup example.com 8.8.8.8 || echo "Direct DNS also failed"
+
+          sudo pkill -f mitmdump || true
+
+      - name: Test 4 - WireGuard setup and DNS routing
+        run: |
+          VENV_BIN=$(dirname $(uv python find))
+
+          echo "=== Starting mitmproxy ==="
+          sudo env PYTHONUNBUFFERED=1 $VENV_BIN/mitmdump \
+            --mode wireguard \
+            --set block_global=false \
+            > /tmp/wg-full.log 2>&1 &
+
+          # Wait for config
+          for i in {1..15}; do
+            if grep -q "Endpoint" /tmp/wg-full.log; then break; fi
+            sleep 1
+          done
+
+          cat /tmp/wg-full.log
+
+          echo ""
+          echo "=== Extract and setup WireGuard ==="
+          # Extract config
+          python3 << 'EOF'
+          import re
+          with open("/tmp/wg-full.log") as f:
+              content = f.read()
+
+          # Find config section
+          config = []
+          in_config = False
+          for line in content.split('\n'):
+              if '[Interface]' in line:
+                  in_config = True
+                  config.append('[Interface]')
+              elif in_config:
+                  if line.strip().startswith('---'):
+                      break
+                  for key in ['PrivateKey', 'Address', 'DNS', 'PublicKey', 'AllowedIPs', 'Endpoint']:
+                      if key in line and '=' in line:
+                          match = re.search(rf'{key}\s*=\s*(.+)', line)
+                          if match:
+                              config.append(f'{key} = {match.group(1).strip()}')
+                  if '[Peer]' in line:
+                      config.append('')
+                      config.append('[Peer]')
+
+          print('\n'.join(config))
+          with open('/tmp/wg.conf', 'w') as f:
+              f.write('\n'.join(config))
+          EOF
+
+          echo ""
+          echo "=== WireGuard config ==="
+          cat /tmp/wg.conf
+
+          echo ""
+          echo "=== DNS config BEFORE WireGuard ==="
+          cat /etc/resolv.conf
+
+          echo ""
+          echo "=== Setup WireGuard interface ==="
+          sudo cp /tmp/wg.conf /etc/wireguard/wg0.conf
+          sudo wg-quick up wg0
+
+          echo ""
+          echo "=== DNS config AFTER WireGuard ==="
+          cat /etc/resolv.conf
+
+          echo ""
+          echo "=== WireGuard status ==="
+          sudo wg show
+
+          echo ""
+          echo "=== Routing after WireGuard ==="
+          ip route
+          ip rule list
+
+          echo ""
+          echo "=== Test DNS through WireGuard tunnel ==="
+          # The DNS server should be 10.0.0.53 (mitmproxy's internal DNS)
+          dig @10.0.0.53 example.com || echo "DNS to 10.0.0.53 failed"
+
+          echo ""
+          echo "=== Test direct DNS (should bypass WireGuard due to fwmark) ==="
+          dig @8.8.8.8 example.com || echo "Direct DNS failed"
+
+          echo ""
+          echo "=== mitmproxy logs ==="
+          cat /tmp/wg-full.log
+
+          sudo wg-quick down wg0 || true
+          sudo pkill -f mitmdump || true
+
+      - name: Test 5 - Check mitmproxy's ability to resolve DNS itself
+        run: |
+          VENV_BIN=$(dirname $(uv python find))
+
+          echo "=== Test Python DNS resolution ==="
+          $VENV_BIN/python -c "
+          import socket
+          try:
+              result = socket.gethostbyname('example.com')
+              print(f'Resolved example.com to {result}')
+          except Exception as e:
+              print(f'Failed: {e}')
+          "
+
+          echo ""
+          echo "=== Test with mitmproxy's resolver ==="
+          $VENV_BIN/python -c "
+          import asyncio
+          try:
+              from mitmproxy.net.dns import resolver
+              print('mitmproxy resolver module loaded')
+          except ImportError as e:
+              print(f'Import error: {e}')
+          "
