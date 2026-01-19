@@ -91,6 +91,9 @@ jobs:
           echo "Testing with wget..."
           wget -O /dev/null https://httpbin.org/get
 
+          echo "Testing non-HTTP TCP (SSH to github.com)..."
+          nc -zv github.com 22 2>&1
+
           echo "All tests passed!"
 
       - name: Show proxy logs
