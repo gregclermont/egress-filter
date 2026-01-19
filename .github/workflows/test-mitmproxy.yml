@@ -31,6 +31,10 @@ jobs:
           # Install uv for mitmproxy-user (UV_UNMANAGED_INSTALL skips receipt file)
           sudo -u mitmproxy-user -H bash -c 'curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=/home/mitmproxy-user/.local/bin sh'
 
+          # Create venv and install mitmproxy
+          sudo -i -u mitmproxy-user /home/mitmproxy-user/.local/bin/uv venv --python 3.12 /home/mitmproxy-user/venv
+          sudo -i -u mitmproxy-user /home/mitmproxy-user/.local/bin/uv pip install --python /home/mitmproxy-user/venv/bin/python mitmproxy
+
           # Copy the logger script
           sudo cp mitmproxy_wg_logger.py /home/mitmproxy-user/
           sudo chown mitmproxy-user:mitmproxy-user /home/mitmproxy-user/mitmproxy_wg_logger.py
@@ -43,15 +47,12 @@ jobs:
 
       - name: Start mitmproxy
         run: |
-          # Start mitmproxy as dedicated user with its own uv
-          sudo -i -u mitmproxy-user /home/mitmproxy-user/.local/bin/uv run \
-            --python 3.12 \
-            --with mitmproxy \
-            mitmdump \
-              --mode wireguard \
-              --set block_global=false \
-              -s /home/mitmproxy-user/mitmproxy_wg_logger.py \
-              > /tmp/mitmproxy.log 2>&1 &
+          # Start mitmproxy as dedicated user using the pre-installed venv
+          sudo -i -u mitmproxy-user /home/mitmproxy-user/venv/bin/mitmdump \
+            --mode wireguard \
+            --set block_global=false \
+            -s /home/mitmproxy-user/mitmproxy_wg_logger.py \
+            > /tmp/mitmproxy.log 2>&1 &
 
           echo "MITMPROXY_PID=$!" >> $GITHUB_ENV
 
