@@ -1,4 +1,4 @@
-name: Test mitmproxy WireGuard (simple)
+name: Test mitmproxy transparent
 
 on:
   workflow_dispatch:
@@ -14,116 +14,77 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup and test mitmproxy wireguard
+      - name: Setup mitmproxy transparent mode
         run: |
           set -e
 
-          log() {
-            echo "[$(date +%H:%M:%S.%3N)] $*"
+          # Cleanup iptables on failure to avoid breaking runner communication
+          cleanup() {
+            sudo iptables -t nat -F 2>/dev/null || true
+            sudo ip6tables -t nat -F 2>/dev/null || true
           }
+          trap cleanup ERR
 
-          log "Starting"
+          # Create mitmproxyuser - proxy won't intercept local traffic from same user
+          sudo useradd mitmproxyuser
+          sudo mkdir -p /home/mitmproxyuser/.local/bin
+          sudo chown -R mitmproxyuser:mitmproxyuser /home/mitmproxyuser
 
-          # Install deps
-          log "Installing wireguard-tools..."
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq wireguard-tools
-          log "✓ wireguard-tools installed"
+          # Install uv (UV_UNMANAGED_INSTALL skips receipt file for CI)
+          sudo -u mitmproxyuser -H bash -e -c 'curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=/home/mitmproxyuser/.local/bin sh'
 
-          log "Installing mitmproxy..."
-          sudo pip install mitmproxy --break-system-packages --ignore-installed -q
-          log "✓ mitmproxy installed"
+          # Copy proxy script and config
+          sudo cp proxy.py config.json /home/mitmproxyuser/
+          sudo chown mitmproxyuser:mitmproxyuser /home/mitmproxyuser/config.json
+          sudo chmod 600 /home/mitmproxyuser/config.json
 
-          # Create network namespace for mitmproxy
-          log "Setting up network namespace..."
-          sudo ip netns add mitmns
+          # Start proxy in background (--python 3.12 ensures compatible version)
+          sudo -i -u mitmproxyuser /home/mitmproxyuser/.local/bin/uv run --python 3.12 /home/mitmproxyuser/proxy.py &
 
-          # Create veth pair to connect namespaces
-          sudo ip link add veth-host type veth peer name veth-mitm
-          sudo ip link set veth-mitm netns mitmns
-
-          # Configure host side
-          sudo ip addr add 10.200.0.1/24 dev veth-host
-          sudo ip link set veth-host up
-
-          # Configure namespace side
-          sudo ip netns exec mitmns ip addr add 10.200.0.2/24 dev veth-mitm
-          sudo ip netns exec mitmns ip link set veth-mitm up
-          sudo ip netns exec mitmns ip link set lo up
-          sudo ip netns exec mitmns ip route add default via 10.200.0.1
-
-          # Enable forwarding and NAT for the namespace
-          sudo sysctl -w net.ipv4.ip_forward=1
-          sudo iptables -t nat -A POSTROUTING -s 10.200.0.0/24 -j MASQUERADE
-          sudo iptables -A FORWARD -i veth-host -o eth0 -j ACCEPT
-          sudo iptables -A FORWARD -i eth0 -o veth-host -m state --state RELATED,ESTABLISHED -j ACCEPT
-
-          log "✓ Network namespace configured"
-
-          # Test namespace connectivity
-          sudo ip netns exec mitmns ping -c 1 8.8.8.8 || log "WARN: namespace can't ping external"
-
-          # Start mitmproxy in the namespace
-          log "Starting mitmproxy in namespace..."
-          sudo ip netns exec mitmns bash -c 'PYTHONUNBUFFERED=1 mitmdump --mode wireguard --set block_global=false -p 51820 > /tmp/mitm.log 2>&1' &
-          MITM_PID=$!
-          log "✓ Started mitmproxy (PID: $MITM_PID)"
-          sleep 3
-
-          # Check if process is still running
-          if ps -p $MITM_PID > /dev/null 2>&1; then
-            log "✓ mitmproxy process is running"
-          else
-            log "✗ mitmproxy process exited early!"
-            cat /tmp/mitm.log || echo "No log file"
-            exit 1
-          fi
-
-          # Wait for WireGuard config to appear
-          log "Waiting for WireGuard config..."
-          for i in {1..30}; do
-            if grep -q "\[Interface\]" /tmp/mitm.log 2>/dev/null; then
-              log "✓ WireGuard config appeared (attempt $i)"
-              break
-            fi
-            if [ $((i % 5)) -eq 0 ]; then
-              log "Still waiting... ($i/30)"
-              wc -l /tmp/mitm.log 2>/dev/null || echo "No log yet"
-              tail -3 /tmp/mitm.log 2>/dev/null || true
-            fi
+          # Wait for proxy to generate CA certificate (before iptables to avoid breaking runner comms)
+          counter=0
+          while [ ! -f /home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem ]; do
             sleep 1
+            counter=$((counter+1))
+            if [ $counter -gt 10 ]; then
+              echo "Timeout waiting for certificate"
+              exit 1
+            fi
           done
 
-          echo "=== mitmproxy output ==="
-          cat /tmp/mitm.log || echo "No log file"
-          echo "========================"
+          # Setup iptables now that proxy is confirmed running
+          sudo sysctl -w net.ipv4.ip_forward=1
+          sudo sysctl -w net.ipv6.conf.all.forwarding=1
+          sudo sysctl -w net.ipv4.conf.all.send_redirects=0
+          sudo iptables -t nat -A OUTPUT -p tcp -m owner ! --uid-owner mitmproxyuser --dport 80 -j REDIRECT --to-port 8080
+          sudo iptables -t nat -A OUTPUT -p tcp -m owner ! --uid-owner mitmproxyuser --dport 443 -j REDIRECT --to-port 8080
+          sudo ip6tables -t nat -A OUTPUT -p tcp -m owner ! --uid-owner mitmproxyuser --dport 80 -j REDIRECT --to-port 8080
+          sudo ip6tables -t nat -A OUTPUT -p tcp -m owner ! --uid-owner mitmproxyuser --dport 443 -j REDIRECT --to-port 8080
 
-          # Check if we got the config
-          if ! grep -q "\[Interface\]" /tmp/mitm.log 2>/dev/null; then
-            log "✗ WireGuard config not found in output"
-            exit 1
-          fi
+          # Install mitmproxy certificate as system CA
+          sudo mkdir -p /usr/local/share/ca-certificates/extra
+          sudo openssl x509 -in /home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out ~/mitmproxy-ca-cert.crt
+          sudo cp ~/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
+          sudo dpkg-reconfigure -p critical ca-certificates
+          sudo update-ca-certificates
 
-          # Extract config - update endpoint to point to namespace IP
-          log "Extracting config..."
-          sed -n '/\[Interface\]/,/^---/p' /tmp/mitm.log | grep -v '^---' | \
-            sed 's/Endpoint = [^:]*/Endpoint = 10.200.0.2/' > /tmp/wg.conf
-          cat /tmp/wg.conf
-          log "✓ Config extracted"
+          # Set CA env vars for tools that don't use system store
+          echo "NODE_EXTRA_CA_CERTS=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
+          echo "REQUESTS_CA_BUNDLE=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
+          echo "HEX_CACERTS_PATH=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
+          echo "AWS_CA_BUNDLE=/home/mitmproxyuser/.mitmproxy/mitmproxy-ca-cert.pem" >> $GITHUB_ENV
 
-          # Bring up wireguard on host
-          log "Bringing up wg0..."
-          sudo cp /tmp/wg.conf /etc/wireguard/wg0.conf
-          sudo wg-quick up wg0
-          log "✓ WireGuard interface up"
+          echo "--all done--"
 
-          sudo wg show
+      - name: Test connectivity through proxy
+        run: |
+          echo "Testing HTTP..."
+          curl -v http://example.com 2>&1 | head -20
 
-          # Test connectivity through mitmproxy
-          log "Testing connectivity..."
-          curl -v --max-time 10 https://example.com 2>&1 | head -20
-          log "✓ curl completed"
+          echo "Testing HTTPS..."
+          curl -v https://example.com 2>&1 | head -20
 
-          echo "=== mitmproxy logs ==="
-          cat /tmp/mitm.log
-          log "Done"
+          echo "Testing with wget..."
+          wget -O /dev/null https://httpbin.org/get
+
+          echo "All tests passed!"
