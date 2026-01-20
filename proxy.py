@@ -45,6 +45,12 @@ class ConnKeyV6(ctypes.Structure):
         ("pad", ctypes.c_uint8 * 3),
     ]
 
+class DnsKey(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("src_port", ctypes.c_uint16),
+    ]
+
 def get_comm(pid: int) -> str:
     """Get command name from /proc."""
     try:
@@ -115,7 +121,7 @@ class ConnectionLogger:
 
         self._map_v4 = self._bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
         self._map_v6 = self._bpf_obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=int)
-        self._map_dns = self._bpf_obj.maps["dns_to_pid"].typed(key=ctypes.c_uint16, value=int)
+        self._map_dns = self._bpf_obj.maps["dns_to_pid"].typed(key=DnsKey, value=int)
 
         logger.info(f"Proxy started in transparent mode, logging to {LOG_FILE}")
 
@@ -221,7 +227,7 @@ class ConnectionLogger:
             pid = self.lookup_pid("127.0.0.1", src_port, 53, protocol=IPPROTO_UDP)
         # Final fallback: DNS-specific map keyed by src_port only
         if not pid and self._map_dns:
-            pid = self._map_dns.get(ctypes.c_uint16(src_port))
+            pid = self._map_dns.get(DnsKey(src_port=src_port))
 
         if pid:
             comm = get_comm(pid)
