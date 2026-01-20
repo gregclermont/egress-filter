@@ -79,14 +79,18 @@ jobs:
           sudo sysctl -w net.ipv6.conf.all.forwarding=1
           sudo sysctl -w net.ipv4.conf.all.send_redirects=0
 
-          # Block direct proxy connections (before NAT redirect)
-          # Mark packets going directly to proxy in mangle (runs before nat)
+          # ===========================================
+          # Block direct proxy connections
+          # ===========================================
+          # Prevent apps from bypassing transparent redirect by connecting
+          # directly to the proxy port. Mark in mangle (before nat), drop in filter.
           sudo iptables -t mangle -A OUTPUT -p tcp -d 127.0.0.1 --dport 8080 -m owner ! --uid-owner 0 -j MARK --set-mark 1
-          # Drop marked packets in filter
           sudo iptables -A OUTPUT -m mark --mark 1 -j DROP
 
-          # UDP flow (DNS detection by packet structure, not port):
-          #
+          # ===========================================
+          # UDP: nfqueue for DNS detection + PID tracking
+          # ===========================================
+          # Flow:
           #   All UDP → nfqueue (mangle, before NAT)
           #                 ↓
           #           haslayer(DNS)?
@@ -100,18 +104,31 @@ jobs:
           #           ↓
           #      mitmproxy
           #
+          # Exclude systemd-resolve: it's the system DNS stub resolver that
+          # forwards queries to upstream DNS. Must reach network directly.
           sudo iptables -t mangle -A OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
+          # Exclude root (uid 0): mitmproxy runs as root. Without this exclusion,
+          # mitmproxy's own DNS queries would loop back through nfqueue → mitmproxy.
           sudo iptables -t mangle -A OUTPUT -p udp -m owner --uid-owner 0 -j RETURN
+          # Everything else → nfqueue for inspection
           sudo iptables -t mangle -A OUTPUT -p udp -j NFQUEUE --queue-num 1
 
-          # TCP -> transparent proxy (8080)
+          # ===========================================
+          # TCP: transparent proxy (8080)
+          # ===========================================
+          # Exclude root: mitmproxy runs as root and makes outbound connections
+          # to upstream servers. Without this, infinite redirect loop.
           sudo iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
           sudo iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
+          # IPv6 (note: blocked by BPF, but keep rules for completeness)
           sudo ip6tables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
           sudo ip6tables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
 
-          # DNS (marked by nfqueue) -> dns proxy (8053)
-          # nfqueue detects DNS by packet structure and sets mark=2
+          # ===========================================
+          # DNS: redirect marked packets (8053)
+          # ===========================================
+          # nfqueue inspects UDP packets and sets mark=2 on DNS (by structure,
+          # not port - catches DNS on non-standard ports too)
           sudo iptables -t nat -A OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
           sudo ip6tables -t nat -A OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
 
