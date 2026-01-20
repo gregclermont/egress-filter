@@ -184,9 +184,10 @@ echo ""
 echo "### IPv6 Tests ###"
 
 # Native IPv6 is blocked by BPF (ipv6_blocker.bpf.c) at syscall level
+# Use nc with literal IPv6 address to avoid DNS lookup (which would be logged)
 # Should fail with EPERM regardless of network connectivity
-run_test "HTTPS/IPv6 native (blocked)" "FAIL" \
-    curl -s -o /dev/null -m 5 -6 https://ipv6.google.com/
+run_test "TCP/IPv6 native (blocked)" "FAIL" \
+    nc -6 -z -w 2 2606:4700:4700::1111 80
 
 # IPv4-mapped IPv6 (::ffff:x.x.x.x) - blocked by BPF to prevent proxy bypass
 # These connections would bypass iptables REDIRECT, so we block them entirely.
