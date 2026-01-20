@@ -1,7 +1,7 @@
 #!/bin/bash
 # Comprehensive PID tracking tests
 # This script tests all protocol/destination combinations and reports results.
-# It ALWAYS exits 0 - failures are expected and tracked for observability.
+# Exits 0 if all tests match expected results, 1 if any unexpected results.
 
 set -u
 
@@ -169,7 +169,7 @@ run_test "DNS via loopback (127.0.0.53)" "PASS" \
     dig +short +time=2 +tries=1 @127.0.0.53 example.com
 
 # DNS to external resolver
-run_test "DNS to external (8.8.8.8)" "?" \
+run_test "DNS to external (8.8.8.8)" "PASS" \
     dig +short +time=2 +tries=1 @8.8.8.8 example.com
 
 # DNS using system resolver (should go through 127.0.0.53)
@@ -300,10 +300,10 @@ echo "----------------------------------------"
 echo ""
 
 if [[ $unexpected -gt 0 ]]; then
-    echo "NOTE: $unexpected test(s) had unexpected results - may need investigation"
+    echo "ERROR: $unexpected test(s) had unexpected results"
+    echo ""
+    exit 1
 fi
 
-# Always exit 0 - this is for observability, not CI gating
-echo ""
-echo "Test suite complete (exit 0 - failures are tracked, not fatal)"
+echo "All tests matched expected results"
 exit 0
