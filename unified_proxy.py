@@ -283,7 +283,6 @@ async def run_mitmproxy():
         opts = Options(
             mode=["transparent", "dns@8053"],
             showhost=True,
-            block_global=False,
         )
         master = DumpMaster(opts)
         master.addons.add(MitmproxyAddon())
