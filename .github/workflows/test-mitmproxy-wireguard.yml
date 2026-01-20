@@ -83,8 +83,12 @@ jobs:
           # Block direct proxy connections
           # ===========================================
           # Prevent apps from bypassing transparent redirect by connecting
-          # directly to the proxy port. Mark in mangle (before nat), drop in filter.
+          # directly to the proxy ports. Without this, apps could connect to
+          # localhost:8080 or :8053 directly, and we'd lose visibility into
+          # the original destination they intended to reach.
+          # Mark in mangle (before nat), drop in filter.
           sudo iptables -t mangle -A OUTPUT -p tcp -d 127.0.0.1 --dport 8080 -m owner ! --uid-owner 0 -j MARK --set-mark 1
+          sudo iptables -t mangle -A OUTPUT -p udp -d 127.0.0.1 --dport 8053 -m owner ! --uid-owner 0 -j MARK --set-mark 1
           sudo iptables -A OUTPUT -m mark --mark 1 -j DROP
 
           # ===========================================
