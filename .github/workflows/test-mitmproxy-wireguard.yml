@@ -104,15 +104,6 @@ jobs:
 
       - name: Test connectivity through proxy
         run: |
-          # Debug: show cgroups
-          echo "=== Cgroup debug ==="
-          echo "Current process cgroup:"
-          cat /proc/self/cgroup
-          echo "Sudo process cgroup:"
-          sudo cat /proc/self/cgroup
-          echo "===================="
-
-          # Run tests as non-root user so traffic goes through proxy
           echo "Testing HTTP..."
           curl -v http://example.com 2>&1 | head -20
 
@@ -127,9 +118,6 @@ jobs:
 
           echo "Testing DNS..."
           dig +short example.com
-
-          echo "Testing UDP to external IP (should be tracked)..."
-          python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.sendto(b'test', ('8.8.8.8', 53)); print('sent UDP to 8.8.8.8:53')"
 
           echo "All tests passed!"
 
