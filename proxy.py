@@ -86,6 +86,7 @@ class ConnectionLogger:
         self._bpf_links = []
         self._map_v4 = None
         self._map_v6 = None
+        self._map_dns = None
 
     def load(self, loader):
         loader.add_option(
@@ -114,6 +115,7 @@ class ConnectionLogger:
 
         self._map_v4 = self._bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
         self._map_v6 = self._bpf_obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=int)
+        self._map_dns = self._bpf_obj.maps["dns_to_pid"].typed(key=ctypes.c_uint16, value=int)
 
         logger.info(f"Proxy started in transparent mode, logging to {LOG_FILE}")
 
@@ -208,11 +210,8 @@ class ConnectionLogger:
         # Get original destination (before iptables redirect)
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else (None, 53)
 
-        # Debug: log what we see
-        logger.info(f"DNS DEBUG: server_conn.address={flow.server_conn.address} client_peername={flow.client_conn.peername}")
-
         pid = None
-        # Try original destination first
+        # Try original destination first (if mitmproxy preserved it)
         if dst_ip:
             pid = self.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
         # Fall back to common loopback addresses (systemd-resolved, localhost)
@@ -220,6 +219,9 @@ class ConnectionLogger:
             pid = self.lookup_pid("127.0.0.53", src_port, 53, protocol=IPPROTO_UDP)
         if not pid:
             pid = self.lookup_pid("127.0.0.1", src_port, 53, protocol=IPPROTO_UDP)
+        # Final fallback: DNS-specific map keyed by src_port only
+        if not pid and self._map_dns:
+            pid = self._map_dns.get(ctypes.c_uint16(src_port))
 
         if pid:
             comm = get_comm(pid)
