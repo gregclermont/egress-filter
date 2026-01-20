@@ -278,20 +278,25 @@ class NfqueueHandler:
 
 async def run_mitmproxy():
     """Run mitmproxy with our addon."""
-    opts = Options(
-        mode=["transparent", "dns@8053"],
-        showhost=True,
-        block_global=False,
-    )
-    master = DumpMaster(opts)
-    master.addons.add(MitmproxyAddon())
-
-    logger.info("Starting mitmproxy...")
+    logger.info("Initializing mitmproxy...")
     try:
+        opts = Options(
+            mode=["transparent", "dns@8053"],
+            showhost=True,
+            block_global=False,
+        )
+        master = DumpMaster(opts)
+        master.addons.add(MitmproxyAddon())
+        logger.info("Starting mitmproxy on port 8080 (TCP) and 8053 (DNS)...")
         await master.run()
     except asyncio.CancelledError:
         logger.info("mitmproxy cancelled")
         master.shutdown()
+    except Exception as e:
+        logger.error(f"mitmproxy failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
 
 
 async def run_nfqueue(handler: NfqueueHandler):
@@ -339,18 +344,29 @@ async def main():
 
     # Create tasks
     nfqueue_handler = NfqueueHandler()
-    tasks = [
-        asyncio.create_task(run_mitmproxy()),
-        asyncio.create_task(run_nfqueue(nfqueue_handler)),
-    ]
+    mitmproxy_task = asyncio.create_task(run_mitmproxy(), name="mitmproxy")
+    nfqueue_task = asyncio.create_task(run_nfqueue(nfqueue_handler), name="nfqueue")
+    tasks = [mitmproxy_task, nfqueue_task]
 
-    # Wait for stop signal
-    await stop_event.wait()
+    # Wait for stop signal OR task failure
+    stop_task = asyncio.create_task(stop_event.wait(), name="stop_signal")
+    done, pending = await asyncio.wait(
+        [stop_task, mitmproxy_task, nfqueue_task],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
 
-    # Cancel tasks
+    # Check if a task failed
+    for task in done:
+        if task != stop_task and task.exception():
+            logger.error(f"Task {task.get_name()} failed: {task.exception()}")
+
+    # Cancel remaining tasks
     logger.info("Shutting down...")
-    for task in tasks:
+    for task in pending:
         task.cancel()
+    for task in tasks:
+        if not task.done():
+            task.cancel()
 
     await asyncio.gather(*tasks, return_exceptions=True)
 
