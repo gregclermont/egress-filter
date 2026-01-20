@@ -2,6 +2,11 @@ name: Test transparent proxy
 
 on:
   workflow_dispatch:
+    inputs:
+      verbose:
+        description: 'Enable verbose test output'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,7 +46,10 @@ jobs:
         run: ./scripts/setup-proxy.sh
 
       - name: Run PID tracking tests
-        run: PROXY_LOG_FILE=/tmp/proxy.log ./tests/test_pid_tracking.sh
+        run: ./tests/test_pid_tracking.sh
+        env:
+          PROXY_LOG_FILE: /tmp/proxy.log
+          VERBOSE: ${{ inputs.verbose && '1' || '0' }}
 
       - name: Stop proxy gracefully
         if: always()
