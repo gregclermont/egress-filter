@@ -66,14 +66,6 @@ struct {
     __uint(max_entries, 16384);
 } conn_to_pid_v6 SEC(".maps");
 
-// DNS-specific map: keyed by src_port only (for when proxy can't see original dest)
-struct {
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __type(key, u16);  // src_port only
-    __type(value, u32);
-    __uint(max_entries, 8192);
-} dns_to_pid SEC(".maps");
-
 // ============================================
 // Helpers
 // ============================================
@@ -196,9 +188,6 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
                 .protocol = IPPROTO_UDP,
             };
             bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-            // Also store in DNS map if this is DNS traffic
-            if (dst_port_h == 53)
-                bpf_map_update_elem(&dns_to_pid, &src_port, &pid, BPF_ANY);
         } else if (family == AF_INET6) {
             struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
             u32 dst_ip6[4];
@@ -227,9 +216,6 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
                 key.dst_ip[3] = dst_ip6[3];
                 bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
             }
-            // Also store in DNS map if this is DNS traffic
-            if (dst_port_h == 53)
-                bpf_map_update_elem(&dns_to_pid, &src_port, &pid, BPF_ANY);
         }
     } else {
         // Connected UDP: destination is in the socket
@@ -253,9 +239,6 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
                 .protocol = IPPROTO_UDP,
             };
             bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-            // Also store in DNS map if this is DNS traffic
-            if (dst_port_h == 53)
-                bpf_map_update_elem(&dns_to_pid, &src_port, &pid, BPF_ANY);
         } else if (family == AF_INET6) {
             u32 dst_ip6[4];
             u16 dst_port;
@@ -286,9 +269,6 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
                 key.dst_ip[3] = dst_ip6[3];
                 bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
             }
-            // Also store in DNS map if this is DNS traffic
-            if (dst_port_h == 53)
-                bpf_map_update_elem(&dns_to_pid, &src_port, &pid, BPF_ANY);
         }
     }
 
@@ -318,9 +298,6 @@ int handle_sendmsg4(struct bpf_sock_addr *ctx) {
     };
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-    // Also store in DNS map if this is DNS traffic
-    if (dst_port_h == 53)
-        bpf_map_update_elem(&dns_to_pid, &src_port, &pid, BPF_ANY);
     return 1;
 }
 
@@ -350,9 +327,6 @@ int handle_sendmsg6(struct bpf_sock_addr *ctx) {
             .protocol = IPPROTO_UDP,
         };
         bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-        // Also store in DNS map if this is DNS traffic
-        if (dst_port_h == 53)
-            bpf_map_update_elem(&dns_to_pid, &src_port, &pid, BPF_ANY);
         return 1;
     }
 
@@ -368,9 +342,6 @@ int handle_sendmsg6(struct bpf_sock_addr *ctx) {
     key.dst_ip[2] = ctx->user_ip6[2];
     key.dst_ip[3] = ctx->user_ip6[3];
     bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
-    // Also store in DNS map if this is DNS traffic
-    if (dst_port_h == 53)
-        bpf_map_update_elem(&dns_to_pid, &src_port, &pid, BPF_ANY);
     return 1;
 }
 

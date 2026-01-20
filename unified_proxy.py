@@ -53,11 +53,6 @@ class ConnKeyV4(ctypes.Structure):
         ("pad", ctypes.c_uint8 * 3),
     ]
 
-class DnsKey(ctypes.Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("src_port", ctypes.c_uint16),
-    ]
 
 # Logging setup
 LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
@@ -111,7 +106,6 @@ class SharedState:
         self.ipv6_blocker_obj = None
         self.bpf_links = []
         self.map_v4 = None
-        self.map_dns = None
         self.running = False
         self.bpf_path = bpf_path
         self.ipv6_blocker_path = ipv6_blocker_path
@@ -135,7 +129,6 @@ class SharedState:
         self.bpf_links.append(self.bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg"))
 
         self.map_v4 = self.bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
-        self.map_dns = self.bpf_obj.maps["dns_to_pid"].typed(key=DnsKey, value=int)
 
         # Load IPv6 blocker
         logger.info(f"Loading IPv6 blocker from {self.ipv6_blocker_path}")
@@ -175,15 +168,6 @@ class SharedState:
                 protocol=protocol,
             )
             return self.map_v4.get(key)
-        except Exception:
-            return None
-
-    def lookup_dns_pid(self, src_port: int) -> int | None:
-        """Look up PID from DNS map (src_port only)."""
-        if not self.map_dns:
-            return None
-        try:
-            return self.map_dns.get(DnsKey(src_port=src_port))
         except Exception:
             return None
 
@@ -236,8 +220,6 @@ class MitmproxyAddon:
             pid = shared_state.lookup_pid("127.0.0.53", src_port, 53, protocol=IPPROTO_UDP)
         if not pid:
             pid = shared_state.lookup_pid("127.0.0.1", src_port, 53, protocol=IPPROTO_UDP)
-        if not pid:
-            pid = shared_state.lookup_dns_pid(src_port)
 
         comm = get_comm(pid) if pid else "?"
         logger.info(f"DNS src_port={src_port} name={query_name} txid={txid} pid={pid or '?'} comm={comm} (fallback)")
@@ -281,9 +263,6 @@ class NfqueueHandler:
 
                     # Look up PID
                     pid = shared_state.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
-                    if not pid:
-                        pid = shared_state.lookup_dns_pid(src_port)
-
                     comm = get_comm(pid) if pid else "?"
 
                     # DNS detection by packet structure (catches DNS on any port)
