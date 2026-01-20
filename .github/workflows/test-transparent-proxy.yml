@@ -1,0 +1,72 @@
+name: Test transparent proxy
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnetfilter-queue-dev libnfnetlink-dev
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Cache BPF objects
+        id: bpf-cache
+        uses: actions/cache@v4
+        with:
+          path: src/bpf/*.bpf.o
+          key: bpf-${{ hashFiles('src/bpf/*.bpf.c') }}
+
+      - name: Compile BPF programs
+        if: steps.bpf-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm -v "$(pwd)":/src ghcr.io/gregclermont/tinybpf-compile src/bpf/port_tracker.bpf.c
+
+      - name: Setup transparent proxy
+        run: ./scripts/setup-proxy.sh
+
+      - name: Test connectivity through proxy
+        run: ./scripts/test-connectivity.sh
+
+      - name: Run comprehensive PID tracking tests
+        run: |
+          # This test suite always exits 0 - it's for observability
+          # and tracking which edge cases work vs don't work
+          PROXY_LOG_FILE=/tmp/proxy.log ./tests/test_pid_tracking.sh
+
+      - name: Stop proxy gracefully
+        if: always()
+        run: |
+          sudo pkill -TERM -f "python unified_proxy.py" || true
+          sleep 2
+
+      - name: Cleanup iptables
+        if: always()
+        run: ./scripts/cleanup-iptables.sh
+
+      - name: Show proxy logs
+        if: always()
+        run: |
+          echo "=== Proxy Log (custom) ==="
+          cat /tmp/proxy.log || echo "No log file found"
+          echo ""
+          echo "=== Proxy stdout/stderr ==="
+          cat /tmp/proxy-stdout.log || echo "No log file found"
+          echo ""
+          echo "=== Mitmproxy Log (debug) ==="
+          cat /tmp/mitmproxy.log || echo "No log file found"
