@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Session Start
+
+At the start of each session, read and display the contents of `TODO.md` to remind the user of pending tasks.
+
 ## Project Overview
 
 eBPF-based connection-to-PID tracker integrated with mitmproxy transparent proxy. Attributes every network connection to the process that made it.
