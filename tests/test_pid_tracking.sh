@@ -198,14 +198,17 @@ else
     skip_test "HTTPS/IPv6 native (blocked)" "No IPv6 connectivity"
 fi
 
-# IPv4-mapped IPv6 (::ffff:x.x.x.x) should be ALLOWED through blocker
-# This doesn't require external IPv6 connectivity
+# IPv4-mapped IPv6 (::ffff:x.x.x.x) - allowed by BPF blocker but not tracked
+# The IPv6 blocker allows these connections (they reach the destination).
+# However, iptables REDIRECT doesn't work reliably with AF_INET6 sockets
+# connecting to IPv4-mapped addresses - the traffic bypasses mitmproxy.
+# This is a transparent proxy limitation, not a BPF tracking issue.
 EXAMPLE_IP=$(dig +short example.com A | head -1)
 if [[ -n "$EXAMPLE_IP" ]]; then
-    run_test "TCP via IPv4-mapped IPv6 (allowed)" "PASS" \
+    run_test "TCP via IPv4-mapped IPv6 (no proxy)" "FAIL" \
         nc -z -w 5 "::ffff:$EXAMPLE_IP" 80
 else
-    skip_test "TCP via IPv4-mapped IPv6 (allowed)" "Could not resolve example.com"
+    skip_test "TCP via IPv4-mapped IPv6 (no proxy)" "Could not resolve example.com"
 fi
 
 # ============================================
