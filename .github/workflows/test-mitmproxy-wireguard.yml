@@ -42,10 +42,10 @@ jobs:
           }
           trap cleanup ERR
 
-          # Start proxy as root (needed for BPF), exclude root's traffic via iptables
-          echo "Starting proxy..."
+          # Start unified proxy as root (needed for BPF), exclude root's traffic via iptables
+          echo "Starting unified proxy..."
           sudo env PROXY_LOG_FILE=/tmp/proxy.log \
-            $(pwd)/.venv/bin/python proxy.py > /tmp/proxy-stdout.log 2>&1 &
+            $(pwd)/.venv/bin/python unified_proxy.py > /tmp/proxy-stdout.log 2>&1 &
           PROXY_PID=$!
 
           # Wait for proxy to be listening
@@ -130,8 +130,8 @@ jobs:
       - name: Stop proxy gracefully
         if: always()
         run: |
-          # Send SIGTERM to trigger done() and dump maps
-          sudo pkill -TERM -f "python proxy.py" || true
+          # Send SIGTERM to trigger shutdown
+          sudo pkill -TERM -f "python unified_proxy.py" || true
           sleep 2
 
       - name: Cleanup iptables
