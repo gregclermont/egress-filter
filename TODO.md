@@ -10,6 +10,7 @@
 - [x] Block direct proxy connections via iptables mangle+filter
 - [x] Add IPv6 blocker BPF (blocks ALL IPv6 including IPv4-mapped to prevent proxy bypass)
 - [x] Hybrid DNS 4-tuple tracking: nfqueue (mangle) captures original dst before NAT, mitmproxy looks up via (src_port, txid)
+- [x] DNS detection by packet structure (haslayer(DNS)) not just port 53 - catches DNS on non-standard ports
 
 ## Ideas
 
