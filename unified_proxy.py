@@ -85,7 +85,11 @@ def get_cgroup() -> str:
 
 
 def ip_to_int(ip_str: str) -> int:
-    """Convert IP string to integer (network byte order).
+    """Convert IP string to integer matching BPF map key format.
+
+    BPF stores sin_addr.s_addr (network byte order) directly into a u32.
+    On little-endian machines (x86), this means the bytes are stored as-is
+    but interpreted as little-endian. We must match that interpretation.
 
     Handles IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) by extracting the IPv4 part.
     """
@@ -94,7 +98,8 @@ def ip_to_int(ip_str: str) -> int:
     # Handle IPv4-mapped IPv6 addresses
     if ip_str.startswith("::ffff:"):
         ip_str = ip_str[7:]  # Extract the IPv4 portion
-    return struct.unpack("!I", socket.inet_aton(ip_str))[0]
+    # Use little-endian to match how BPF interprets the network-order bytes
+    return struct.unpack("<I", socket.inet_aton(ip_str))[0]
 
 
 class SharedState:
