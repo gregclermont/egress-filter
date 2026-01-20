@@ -7,6 +7,7 @@
 - [x] DNS to external (e.g. 8.8.8.8) - added dns_to_pid map keyed by src_port only
 - [x] Test unified_proxy.py with mitmproxy + netfilterqueue - working in CI
 - [x] UDP non-DNS PID tracking via netfilterqueue + scapy (tested with port 9999)
+- [x] Block direct proxy connections via iptables mangle+filter
 
 ## Next Steps
 
