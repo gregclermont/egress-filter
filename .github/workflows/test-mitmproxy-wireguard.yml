@@ -34,7 +34,9 @@ jobs:
 
       - name: Compile BPF programs
         if: steps.bpf-cache.outputs.cache-hit != 'true'
-        run: docker run --rm -v "$(pwd)":/src ghcr.io/gregclermont/tinybpf-compile src/bpf/port_tracker.bpf.c
+        run: |
+          docker run --rm -v "$(pwd)":/src ghcr.io/gregclermont/tinybpf-compile src/bpf/port_tracker.bpf.c
+          docker run --rm -v "$(pwd)":/src ghcr.io/gregclermont/tinybpf-compile src/bpf/ipv6_blocker.bpf.c
 
       - name: Setup mitmproxy transparent mode with BPF tracking
         run: |

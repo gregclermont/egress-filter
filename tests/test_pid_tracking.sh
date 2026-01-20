@@ -189,23 +189,23 @@ run_test "DNS via system resolver" "PASS" \
 echo ""
 echo "### IPv6 Tests ###"
 
+# Native IPv6 is blocked by BPF (ipv6_blocker.bpf.c)
 if has_ipv6; then
-    # Native IPv6
-    run_test "HTTPS/IPv6 native" "?" \
+    # Native IPv6 should be blocked (EPERM)
+    run_test "HTTPS/IPv6 native (blocked)" "FAIL" \
         curl -s -o /dev/null -m 5 -6 https://ipv6.google.com/
-
-    # IPv4-mapped IPv6 address
-    # Get an IP for example.com and try connecting via ::ffff:x.x.x.x
-    EXAMPLE_IP=$(dig +short example.com A | head -1)
-    if [[ -n "$EXAMPLE_IP" ]]; then
-        run_test "TCP via IPv4-mapped IPv6" "?" \
-            nc -z -w 5 "::ffff:$EXAMPLE_IP" 80
-    else
-        skip_test "TCP via IPv4-mapped IPv6" "Could not resolve example.com"
-    fi
 else
-    skip_test "HTTPS/IPv6 native" "No IPv6 connectivity"
-    skip_test "TCP via IPv4-mapped IPv6" "No IPv6 connectivity"
+    skip_test "HTTPS/IPv6 native (blocked)" "No IPv6 connectivity"
+fi
+
+# IPv4-mapped IPv6 (::ffff:x.x.x.x) should be ALLOWED through blocker
+# This doesn't require external IPv6 connectivity
+EXAMPLE_IP=$(dig +short example.com A | head -1)
+if [[ -n "$EXAMPLE_IP" ]]; then
+    run_test "TCP via IPv4-mapped IPv6 (allowed)" "PASS" \
+        nc -z -w 5 "::ffff:$EXAMPLE_IP" 80
+else
+    skip_test "TCP via IPv4-mapped IPv6 (allowed)" "Could not resolve example.com"
 fi
 
 # ============================================
