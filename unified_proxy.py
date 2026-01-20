@@ -100,15 +100,12 @@ def ip_to_int(ip_str: str) -> int:
 class SharedState:
     """Shared state between mitmproxy addon and nfqueue handler."""
 
-    def __init__(self, bpf_path: str = "src/bpf/port_tracker.bpf.o",
-                 ipv6_blocker_path: str = "src/bpf/ipv6_blocker.bpf.o"):
+    def __init__(self, bpf_path: str = "src/bpf/port_tracker.bpf.o"):
         self.bpf_obj = None
-        self.ipv6_blocker_obj = None
         self.bpf_links = []
         self.map_v4 = None
         self.running = False
         self.bpf_path = bpf_path
-        self.ipv6_blocker_path = ipv6_blocker_path
         # DNS 4-tuple cache: (src_port, txid) -> (pid, dst_ip, dst_port)
         # Populated by nfqueue (before NAT), consumed by mitmproxy (after NAT)
         self.dns_cache = {}
@@ -118,28 +115,23 @@ class SharedState:
         cgroup = get_cgroup()
         logger.info(f"Attaching to cgroup {cgroup}")
 
-        # Load port tracker
         logger.info(f"Loading BPF from {self.bpf_path}")
         self.bpf_obj = tinybpf.load(self.bpf_path)
         self.bpf_obj.__enter__()
 
+        # IPv4 tracking
         self.bpf_links.append(self.bpf_obj.program("handle_sockops").attach_cgroup(cgroup))
         self.bpf_links.append(self.bpf_obj.program("handle_sendmsg4").attach_cgroup(cgroup))
-        self.bpf_links.append(self.bpf_obj.program("handle_sendmsg6").attach_cgroup(cgroup))
         self.bpf_links.append(self.bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg"))
+
+        # IPv6 blocking (forces apps to use IPv4, which goes through transparent proxy)
+        self.bpf_links.append(self.bpf_obj.program("block_connect6").attach_cgroup(cgroup))
+        self.bpf_links.append(self.bpf_obj.program("block_sendmsg6").attach_cgroup(cgroup))
 
         self.map_v4 = self.bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
 
-        # Load IPv6 blocker
-        logger.info(f"Loading IPv6 blocker from {self.ipv6_blocker_path}")
-        self.ipv6_blocker_obj = tinybpf.load(self.ipv6_blocker_path)
-        self.ipv6_blocker_obj.__enter__()
-
-        self.bpf_links.append(self.ipv6_blocker_obj.program("block_connect6").attach_cgroup(cgroup))
-        self.bpf_links.append(self.ipv6_blocker_obj.program("block_sendmsg6").attach_cgroup(cgroup))
-
         self.running = True
-        logger.info("BPF loaded and attached (including IPv6 blocker)")
+        logger.info("BPF loaded and attached")
 
     def cleanup_bpf(self):
         """Cleanup BPF resources."""
@@ -152,8 +144,6 @@ class SharedState:
         self.bpf_links.clear()
         if self.bpf_obj:
             self.bpf_obj.__exit__(None, None, None)
-        if self.ipv6_blocker_obj:
-            self.ipv6_blocker_obj.__exit__(None, None, None)
         self.running = False
 
     def lookup_pid(self, dst_ip: str, src_port: int, dst_port: int, protocol: int = IPPROTO_TCP) -> int | None:
