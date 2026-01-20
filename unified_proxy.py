@@ -262,10 +262,11 @@ class NfqueueHandler:
             return self.nfqueue.get_fd()
         return None
 
-    def run_socket(self):
+    def process_pending(self):
         """Process pending packets (call from asyncio)."""
         if self.nfqueue:
-            self.nfqueue.run_socket()
+            # run(block=False) processes available packets without blocking
+            self.nfqueue.run(block=False)
 
     def cleanup(self):
         """Cleanup nfqueue."""
@@ -308,7 +309,7 @@ async def run_nfqueue(handler: NfqueueHandler):
         return
 
     loop = asyncio.get_event_loop()
-    loop.add_reader(fd, handler.run_socket)
+    loop.add_reader(fd, handler.process_pending)
 
     logger.info("nfqueue handler running")
     try:
