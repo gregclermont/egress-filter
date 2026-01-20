@@ -23,7 +23,6 @@ cleanup() {
 trap cleanup ERR
 
 # Start unified proxy as root (needed for BPF), exclude root's traffic via iptables
-echo "Starting unified proxy..."
 sudo env PROXY_LOG_FILE=/tmp/proxy.log \
   "$(pwd)"/.venv/bin/python unified_proxy.py > /tmp/proxy-stdout.log 2>&1 &
 PROXY_PID=$!
@@ -43,12 +42,11 @@ while ! sudo ss -tln | grep -q ':8080 '; do
         exit 1
     fi
 done
-echo "Proxy listening on port 8080"
 
 # Setup iptables - exclude root's traffic to prevent loops
-sudo sysctl -w net.ipv4.ip_forward=1
-sudo sysctl -w net.ipv6.conf.all.forwarding=1
-sudo sysctl -w net.ipv4.conf.all.send_redirects=0
+sudo sysctl -qw net.ipv4.ip_forward=1
+sudo sysctl -qw net.ipv6.conf.all.forwarding=1
+sudo sysctl -qw net.ipv4.conf.all.send_redirects=0
 
 # ===========================================
 # Block direct proxy connections
@@ -109,10 +107,10 @@ sudo ip6tables -t nat -A OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 80
 
 # Install mitmproxy certificate as system CA
 sudo mkdir -p /usr/local/share/ca-certificates/extra
-sudo openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt
+sudo openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt 2>/dev/null
 sudo cp /tmp/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
-sudo dpkg-reconfigure -p critical ca-certificates
-sudo update-ca-certificates
+sudo dpkg-reconfigure -p critical ca-certificates >/dev/null 2>&1
+sudo update-ca-certificates >/dev/null 2>&1
 
 # Set CA env vars for tools that don't use system store (copy to readable location)
 sudo cp /root/.mitmproxy/mitmproxy-ca-cert.pem /tmp/mitmproxy-ca-cert.pem
@@ -126,5 +124,3 @@ else
     export NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem
     export REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem
 fi
-
-echo "--all done--"

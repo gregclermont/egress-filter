@@ -24,11 +24,11 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libnetfilter-queue-dev libnfnetlink-dev
+          sudo apt-get -qq update
+          sudo apt-get -qq -o Dpkg::Use-Pty=0 install -y libnetfilter-queue-dev libnfnetlink-dev
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --quiet
 
       - name: Cache BPF objects
         id: bpf-cache
