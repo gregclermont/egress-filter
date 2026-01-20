@@ -201,7 +201,7 @@ class MitmproxyAddon:
         query_name = flow.request.questions[0].name if flow.request.questions else "?"
         txid = flow.request.id
 
-        # Try to get info from nfqueue cache (has original 4-tuple from before NAT)
+        # Get info from nfqueue cache (has original 4-tuple from before NAT)
         cache_key = (src_port, txid)
         cached = shared_state.dns_cache.pop(cache_key, None)
 
@@ -209,20 +209,9 @@ class MitmproxyAddon:
             pid, original_dst_ip, original_dst_port = cached
             comm = get_comm(pid) if pid else "?"
             logger.info(f"DNS src_port={src_port} dst={original_dst_ip}:{original_dst_port} name={query_name} txid={txid} pid={pid or '?'} comm={comm}")
-            return
-
-        # Fallback: try BPF lookups (for cases where nfqueue didn't see the packet)
-        pid = None
-        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else (None, 53)
-        if dst_ip:
-            pid = shared_state.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
-        if not pid:
-            pid = shared_state.lookup_pid("127.0.0.53", src_port, 53, protocol=IPPROTO_UDP)
-        if not pid:
-            pid = shared_state.lookup_pid("127.0.0.1", src_port, 53, protocol=IPPROTO_UDP)
-
-        comm = get_comm(pid) if pid else "?"
-        logger.info(f"DNS src_port={src_port} name={query_name} txid={txid} pid={pid or '?'} comm={comm} (fallback)")
+        else:
+            # Cache miss - this is a bug, nfqueue should have seen the packet first
+            logger.error(f"DNS cache miss! src_port={src_port} txid={txid} name={query_name} - nfqueue didn't see this packet")
 
 
 class NfqueueHandler:
