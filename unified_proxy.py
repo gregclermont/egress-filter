@@ -244,7 +244,22 @@ class MitmproxyAddon:
 
 
 class NfqueueHandler:
-    """Handle non-DNS UDP via netfilterqueue."""
+    """Handle UDP via netfilterqueue (runs in mangle, before NAT).
+
+    Flow:
+        All UDP → nfqueue (mangle)
+                      ↓
+                haslayer(DNS)?
+                 /        \\
+               yes         no
+                ↓           ↓
+           mark=2        (just log)
+           cache 4-tuple
+                ↓
+           nat: mark=2 → REDIRECT :8053
+                ↓
+           mitmproxy (dns_request looks up cache by src_port+txid)
+    """
 
     def __init__(self):
         self.nfqueue = None

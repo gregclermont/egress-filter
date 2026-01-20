@@ -85,9 +85,21 @@ jobs:
           # Drop marked packets in filter
           sudo iptables -A OUTPUT -m mark --mark 1 -j DROP
 
-          # ALL UDP to nfqueue in mangle (BEFORE nat) - detects DNS by packet structure
-          # nfqueue sets mark=2 for DNS packets (any port, any dest), which nat then redirects
-          # No loopback exclusion - we want to catch DNS to 127.0.0.53
+          # UDP flow (DNS detection by packet structure, not port):
+          #
+          #   All UDP → nfqueue (mangle, before NAT)
+          #                 ↓
+          #           haslayer(DNS)?
+          #            /        \
+          #          yes         no
+          #           ↓           ↓
+          #      mark=2        (just log)
+          #      cache 4-tuple
+          #           ↓
+          #      nat: mark=2 → REDIRECT :8053
+          #           ↓
+          #      mitmproxy
+          #
           sudo iptables -t mangle -A OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
           sudo iptables -t mangle -A OUTPUT -p udp -m owner --uid-owner 0 -j RETURN
           sudo iptables -t mangle -A OUTPUT -p udp -j NFQUEUE --queue-num 1
