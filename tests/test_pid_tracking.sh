@@ -216,10 +216,13 @@ fi
 echo ""
 echo "### UDP Tests (non-DNS) ###"
 
-# Non-DNS UDP to external (port 9999) - redirected to nfqueue for logging
-# This tests that netfilterqueue + scapy can track UDP PIDs
-run_test "UDP non-DNS to external (port 9999)" "PASS" \
+# All non-DNS UDP goes through nfqueue for PID tracking
+# Test with multiple ports to verify the general rule works
+run_test "UDP to external (port 9999)" "PASS" \
     nc -u -z -w 2 8.8.8.8 9999
+
+run_test "UDP to external (port 12345)" "PASS" \
+    nc -u -z -w 2 8.8.8.8 12345
 
 # ============================================
 # Edge Cases

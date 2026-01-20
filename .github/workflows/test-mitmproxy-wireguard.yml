@@ -44,7 +44,9 @@ jobs:
 
           # Cleanup iptables on failure to avoid breaking runner communication
           cleanup() {
+            sudo iptables -t mangle -F 2>/dev/null || true
             sudo iptables -t nat -F 2>/dev/null || true
+            sudo iptables -t filter -F 2>/dev/null || true
             sudo ip6tables -t nat -F 2>/dev/null || true
           }
           trap cleanup ERR
@@ -101,8 +103,12 @@ jobs:
           sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -d ::1 -m owner --uid-owner 0 -j RETURN
           sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 8053
 
-          # Non-DNS UDP (port 9999) -> nfqueue for logging test
-          sudo iptables -A OUTPUT -p udp --dport 9999 -j NFQUEUE --queue-num 1
+          # All non-DNS UDP -> nfqueue for PID tracking
+          # Exclude: DNS (port 53, handled by mitmproxy), loopback, root's traffic
+          sudo iptables -A OUTPUT -p udp --dport 53 -j RETURN
+          sudo iptables -A OUTPUT -p udp -d 127.0.0.0/8 -j RETURN
+          sudo iptables -A OUTPUT -p udp -m owner --uid-owner 0 -j RETURN
+          sudo iptables -A OUTPUT -p udp -j NFQUEUE --queue-num 1
 
           # Install mitmproxy certificate as system CA
           sudo mkdir -p /usr/local/share/ca-certificates/extra
@@ -154,7 +160,10 @@ jobs:
       - name: Cleanup iptables
         if: always()
         run: |
+          # Flush all tables we modified
+          sudo iptables -t mangle -F 2>/dev/null || true
           sudo iptables -t nat -F 2>/dev/null || true
+          sudo iptables -t filter -F 2>/dev/null || true
           sudo ip6tables -t nat -F 2>/dev/null || true
 
       - name: Show proxy logs
