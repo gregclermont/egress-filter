@@ -201,12 +201,23 @@ class ConnectionLogger:
             logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port} pid=?")
 
     def dns_request(self, flow: dns.DNSFlow) -> None:
-        # DNS query - redirected from 127.0.0.53:53 (systemd-resolved)
+        # DNS query - may be redirected from various sources
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         query_name = flow.request.questions[0].name if flow.request.questions else "?"
 
-        # Look up PID using the original destination (local DNS resolver)
-        pid = self.lookup_pid("127.0.0.53", src_port, 53, protocol=IPPROTO_UDP)
+        # Get original destination (before iptables redirect)
+        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else (None, 53)
+
+        pid = None
+        # Try original destination first
+        if dst_ip:
+            pid = self.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
+        # Fall back to common loopback addresses (systemd-resolved, localhost)
+        if not pid:
+            pid = self.lookup_pid("127.0.0.53", src_port, 53, protocol=IPPROTO_UDP)
+        if not pid:
+            pid = self.lookup_pid("127.0.0.1", src_port, 53, protocol=IPPROTO_UDP)
+
         if pid:
             comm = get_comm(pid)
             logger.info(f"DNS src_port={src_port} name={query_name} pid={pid} comm={comm}")

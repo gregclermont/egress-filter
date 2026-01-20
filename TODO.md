@@ -7,5 +7,7 @@
 
 ## Next Steps
 
-- [ ] Fix edge cases identified by comprehensive tests (see `tests/test_pid_tracking.sh` results)
+- [ ] DNS to external (e.g. 8.8.8.8) logs `pid=?` - kprobe only handles loopback UDP
+- [ ] HTTP via direct proxy - loopback connection to proxy, no BPF hook fires
+- [ ] Consider removing IPv6 code (untested, GitHub runners lack IPv6)
 - [ ] Handle non-DNS UDP traffic PID tracking
