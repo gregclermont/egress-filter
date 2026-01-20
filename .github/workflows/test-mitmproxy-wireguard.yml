@@ -119,7 +119,13 @@ jobs:
           echo "Testing DNS..."
           dig +short example.com
 
-          echo "All tests passed!"
+          echo "All connectivity tests passed!"
+
+      - name: Run comprehensive PID tracking tests
+        run: |
+          # This test suite always exits 0 - it's for observability
+          # and tracking which edge cases work vs don't work
+          PROXY_LOG_FILE=/tmp/proxy.log ./tests/test_pid_tracking.sh
 
       - name: Stop proxy gracefully
         if: always()
