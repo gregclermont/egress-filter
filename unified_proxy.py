@@ -90,9 +90,15 @@ def get_cgroup() -> str:
 
 
 def ip_to_int(ip_str: str) -> int:
-    """Convert IP string to integer (network byte order)."""
+    """Convert IP string to integer (network byte order).
+
+    Handles IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) by extracting the IPv4 part.
+    """
     import socket
     import struct
+    # Handle IPv4-mapped IPv6 addresses
+    if ip_str.startswith("::ffff:"):
+        ip_str = ip_str[7:]  # Extract the IPv4 portion
     return struct.unpack("!I", socket.inet_aton(ip_str))[0]
 
 
