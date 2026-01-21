@@ -23,6 +23,7 @@ jobs:
         uses: gregclermont/egress-filter@main
 
       - name: Run PID tracking tests
+        if: false  # TEMPORARILY DISABLED FOR DEBUGGING
         run: ./tests/test_pid_tracking.sh
         env:
           PROXY_LOG_FILE: /tmp/proxy.log

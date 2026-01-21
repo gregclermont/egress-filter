@@ -44,7 +44,7 @@ start_proxy() {
     cd "$REPO_ROOT"
 
     # Cleanup iptables on failure to avoid breaking runner communication
-    trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
+    # trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR  # TEMPORARILY DISABLED FOR DEBUGGING
 
     # Start unified proxy (exclude root's traffic via iptables to prevent loops)
     env PROXY_LOG_FILE=/tmp/proxy.log \
@@ -68,7 +68,7 @@ start_proxy() {
     done
 
     # Setup iptables
-    "$SCRIPT_DIR"/iptables.sh setup
+    # "$SCRIPT_DIR"/iptables.sh setup  # TEMPORARILY DISABLED FOR DEBUGGING
 
     # Wait for mitmproxy to generate its CA certificate
     # Note: sudo -E preserves HOME, so cert is in $HOME/.mitmproxy/ not /root/.mitmproxy/
