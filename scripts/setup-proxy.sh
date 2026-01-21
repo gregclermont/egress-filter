@@ -102,8 +102,13 @@ start_proxy() {
 }
 
 stop_proxy() {
-    pkill -TERM -f "python unified_proxy.py" || true
-    sleep 2
+    # Send SIGTERM first
+    pkill -TERM -f "python.*unified_proxy" || true
+    sleep 1
+    # Force kill if still running
+    pkill -KILL -f "python.*unified_proxy" || true
+    # Also kill any mitmproxy processes
+    pkill -KILL -f "mitmproxy" || true
 }
 
 case "${1:-}" in
