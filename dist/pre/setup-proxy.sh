@@ -10,7 +10,8 @@ set -e
 [[ $EUID -eq 0 ]] || { echo "Must run as root" >&2; exit 1; }
 
 SCRIPT_DIR="$(dirname "$0")"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Use EGRESS_FILTER_ROOT if set (from action), otherwise calculate from script location
+REPO_ROOT="${EGRESS_FILTER_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 install_deps() {
     # Check Ubuntu version

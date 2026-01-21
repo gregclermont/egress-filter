@@ -27560,16 +27560,20 @@ const exec = __nccwpck_require__(5236);
 const path = __nccwpck_require__(6928);
 
 async function run() {
+  // Action root is 2 levels up from dist/post/
   const actionPath = path.resolve(__dirname, '..', '..');
+  const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
   core.info('Stopping proxy...');
-  await exec.exec('sudo', [__nccwpck_require__.ab + "setup-proxy.sh", 'stop'], {
-    ignoreReturnCode: true
+  await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "setup-proxy.sh", 'stop'], {
+    ignoreReturnCode: true,
+    env
   });
 
   core.info('Cleaning up iptables...');
-  await exec.exec('sudo', [__nccwpck_require__.ab + "iptables.sh", 'cleanup'], {
-    ignoreReturnCode: true
+  await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "iptables.sh", 'cleanup'], {
+    ignoreReturnCode: true,
+    env
   });
 
   core.info('Egress filter cleanup complete');

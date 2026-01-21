@@ -27561,14 +27561,18 @@ const path = __nccwpck_require__(6928);
 
 async function run() {
   try {
+    // Action root is 2 levels up from dist/pre/
     const actionPath = path.resolve(__dirname, '..', '..');
     const setupScript = __nccwpck_require__.ab + "setup-proxy.sh";
 
+    // Pass action path so script doesn't need to calculate it
+    const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
+
     core.info('Installing dependencies...');
-    await exec.exec('sudo', [__nccwpck_require__.ab + "setup-proxy.sh", 'install-deps']);
+    await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "setup-proxy.sh", 'install-deps'], { env });
 
     core.info('Starting proxy...');
-    await exec.exec('sudo', [__nccwpck_require__.ab + "setup-proxy.sh", 'start']);
+    await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "setup-proxy.sh", 'start'], { env });
 
     core.info('Egress filter proxy is running');
   } catch (error) {
