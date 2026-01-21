@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup egress filter
-        uses: ./
+        uses: gregclermont/egress-filter@main
 
       - name: Run PID tracking tests
         run: ./tests/test_pid_tracking.sh
