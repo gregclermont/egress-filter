@@ -102,34 +102,25 @@ start_proxy() {
 }
 
 stop_proxy() {
-    echo "=== stop_proxy starting ===" | tee -a /tmp/proxy.log
+    echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
 
-    # Show proxy processes before kill
-    echo "Proxy processes before kill:" | tee -a /tmp/proxy.log
-    pgrep -af "python.*unified_proxy" | tee -a /tmp/proxy.log || echo "No unified_proxy processes found"
-    pgrep -af "mitmproxy" | tee -a /tmp/proxy.log || echo "No mitmproxy processes found"
+    # Send SIGTERM - Python handles graceful shutdown with 3s timeout
+    pkill -TERM -f "python.*unified_proxy" 2>/dev/null || true
 
-    # Send SIGTERM first
-    echo "Sending SIGTERM..." | tee -a /tmp/proxy.log
-    pkill -TERM -f "python.*unified_proxy" || true
-    sleep 2
-
-    # Check if still running
-    echo "Proxy processes after SIGTERM:" | tee -a /tmp/proxy.log
-    pgrep -af "python.*unified_proxy" | tee -a /tmp/proxy.log || echo "No unified_proxy processes found"
+    # Wait for graceful shutdown (Python's SHUTDOWN_TIMEOUT is 3s)
+    local i=0
+    while pgrep -f "python.*unified_proxy" >/dev/null 2>&1 && [ $i -lt 40 ]; do
+        sleep 0.1
+        i=$((i+1))
+    done
 
     # Force kill if still running
-    echo "Sending SIGKILL..." | tee -a /tmp/proxy.log
-    pkill -KILL -f "python.*unified_proxy" || true
-    pkill -KILL -f "mitmproxy" || true
-    sleep 1
+    if pgrep -f "python.*unified_proxy" >/dev/null 2>&1; then
+        echo "Graceful shutdown failed, sending SIGKILL" | tee -a /tmp/proxy.log
+        pkill -KILL -f "python.*unified_proxy" 2>/dev/null || true
+    fi
 
-    # Final check
-    echo "Proxy processes after SIGKILL:" | tee -a /tmp/proxy.log
-    pgrep -af "python.*unified_proxy" | tee -a /tmp/proxy.log || echo "No unified_proxy processes found"
-    pgrep -af "mitmproxy" | tee -a /tmp/proxy.log || echo "No mitmproxy processes found"
-
-    echo "=== stop_proxy finished ===" | tee -a /tmp/proxy.log
+    echo "Proxy stopped" | tee -a /tmp/proxy.log
 }
 
 case "${1:-}" in

@@ -11,6 +11,7 @@ All traffic is attributed to PIDs via BPF maps.
 """
 
 import asyncio
+import atexit
 import ctypes
 import logging
 import os
@@ -318,6 +319,7 @@ class NfqueueHandler:
 async def run_mitmproxy():
     """Run mitmproxy with our addon."""
     logger.info("Initializing mitmproxy...")
+    master = None
     try:
         opts = Options(
             mode=["transparent", "dns@8053"],
@@ -329,12 +331,16 @@ async def run_mitmproxy():
         await master.run()
     except asyncio.CancelledError:
         logger.info("mitmproxy cancelled")
-        master.shutdown()
+        raise  # Must re-raise for proper task cancellation
     except Exception as e:
         logger.error(f"mitmproxy failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise
+    finally:
+        if master:
+            logger.info("Shutting down mitmproxy master...")
+            master.shutdown()
 
 
 async def run_nfqueue(handler: NfqueueHandler):
@@ -360,6 +366,10 @@ async def run_nfqueue(handler: NfqueueHandler):
         handler.cleanup()
 
 
+# Graceful shutdown timeout (seconds)
+SHUTDOWN_TIMEOUT = 3.0
+
+
 def log_all_tasks(prefix: str = ""):
     """Log status of all asyncio tasks."""
     tasks = asyncio.all_tasks()
@@ -368,8 +378,57 @@ def log_all_tasks(prefix: str = ""):
         logger.info(f"  Task '{task.get_name()}': done={task.done()}, cancelled={task.cancelled()}")
 
 
+# Track if cleanup has run to avoid double cleanup
+_cleanup_done = False
+
+
+def cleanup_on_exit():
+    """Cleanup BPF resources on exit (atexit handler)."""
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
+    logger.info("atexit: cleaning up BPF...")
+    shared_state.cleanup_bpf()
+
+
+# Register atexit handler early
+atexit.register(cleanup_on_exit)
+
+
+async def shutdown_tasks(tasks: list, timeout: float = SHUTDOWN_TIMEOUT):
+    """Cancel tasks and wait for them to finish with timeout."""
+    # Cancel all tasks
+    for task in tasks:
+        if not task.done():
+            logger.info(f"Cancelling task: {task.get_name()}")
+            task.cancel()
+
+    if not tasks:
+        return
+
+    # Wait for tasks to finish with timeout
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=timeout
+        )
+        for task, result in zip(tasks, results):
+            if isinstance(result, asyncio.CancelledError):
+                logger.info(f"Task {task.get_name()} cancelled")
+            elif isinstance(result, Exception):
+                logger.warning(f"Task {task.get_name()} ended with error: {result}")
+            else:
+                logger.info(f"Task {task.get_name()} ended cleanly")
+    except asyncio.TimeoutError:
+        logger.warning(f"Shutdown timed out after {timeout}s, some tasks may not have cleaned up")
+        log_all_tasks("After timeout: ")
+
+
 async def main():
     """Main entry point."""
+    global _cleanup_done
+
     logger.info("=" * 50)
     logger.info("Unified Proxy Starting")
     logger.info(f"PID: {os.getpid()}")
@@ -385,7 +444,6 @@ async def main():
     def signal_handler(signum):
         sig_name = signal.Signals(signum).name
         logger.info(f"Received signal {sig_name} ({signum})")
-        log_all_tasks("On signal: ")
         stop_event.set()
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -397,51 +455,37 @@ async def main():
     nfqueue_task = asyncio.create_task(run_nfqueue(nfqueue_handler), name="nfqueue")
     tasks = [mitmproxy_task, nfqueue_task]
 
-    # Wait for stop signal OR task failure
-    stop_task = asyncio.create_task(stop_event.wait(), name="stop_signal")
-    done, pending = await asyncio.wait(
-        [stop_task, mitmproxy_task, nfqueue_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+    try:
+        # Wait for stop signal OR task failure
+        stop_task = asyncio.create_task(stop_event.wait(), name="stop_signal")
+        done, _ = await asyncio.wait(
+            [stop_task, mitmproxy_task, nfqueue_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
 
-    # Check if a task failed
-    for task in done:
-        if task != stop_task:
-            if task.exception():
+        # Check what triggered the exit
+        for task in done:
+            if task != stop_task and task.exception():
                 logger.error(f"Task {task.get_name()} failed: {task.exception()}")
-            else:
-                logger.info(f"Task {task.get_name()} completed normally")
 
-    # Cancel remaining tasks
-    logger.info("Shutting down...")
-    log_all_tasks("Before cancel: ")
+    finally:
+        # Always cleanup, even on exception
+        logger.info("Shutting down...")
+        stop_task.cancel()  # Cancel the stop_event.wait() task
+        await shutdown_tasks(tasks)
 
-    for task in pending:
-        logger.info(f"Cancelling pending task: {task.get_name()}")
-        task.cancel()
-    for task in tasks:
-        if not task.done():
-            logger.info(f"Cancelling task: {task.get_name()}")
-            task.cancel()
-
-    logger.info("Waiting for tasks to finish...")
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for task, result in zip(tasks, results):
-        if isinstance(result, Exception):
-            logger.info(f"Task {task.get_name()} ended with: {type(result).__name__}: {result}")
-        else:
-            logger.info(f"Task {task.get_name()} ended cleanly")
-
-    log_all_tasks("After gather: ")
-
-    # Cleanup
-    shared_state.cleanup_bpf()
-    logger.info("Shutdown complete")
-    logger.info("=" * 50)
+        # Cleanup BPF (also handled by atexit as fallback)
+        _cleanup_done = True
+        shared_state.cleanup_bpf()
+        logger.info("Shutdown complete")
+        logger.info("=" * 50)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        logger.info("Interrupted by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1)
