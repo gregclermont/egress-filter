@@ -85800,20 +85800,20 @@ async function saveVenvCache(actionPath) {
 
 async function run() {
   const actionPath = getActionPath();
-  const scriptsDir = path.join(actionPath, 'src', 'scripts');
+  const setupDir = path.join(actionPath, 'src', 'setup');
   const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
   // IMPORTANT: Clean iptables FIRST, before stopping proxy
   // Otherwise traffic is still redirected to port 8080 after proxy dies,
   // which breaks runner communication with GitHub (jobs appear stuck)
   core.info('Cleaning up iptables...');
-  await exec.exec('sudo', ['-E', path.join(scriptsDir, 'iptables.sh'), 'cleanup'], {
+  await exec.exec('sudo', ['-E', path.join(setupDir, 'iptables.sh'), 'cleanup'], {
     ignoreReturnCode: true,
     env
   });
 
   core.info('Stopping proxy...');
-  await exec.exec('sudo', ['-E', path.join(scriptsDir, 'setup-proxy.sh'), 'stop'], {
+  await exec.exec('sudo', ['-E', path.join(setupDir, 'proxy.sh'), 'stop'], {
     ignoreReturnCode: true,
     env
   });

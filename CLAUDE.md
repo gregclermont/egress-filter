@@ -17,7 +17,7 @@ src/
 ├── action/          # GitHub Action JS code (pre/main/post hooks)
 ├── bpf/             # BPF C source
 ├── proxy/           # Python proxy code
-└── scripts/         # Shell scripts (setup, iptables)
+└── setup/           # Environment setup/teardown scripts
 dist/
 ├── pre/main/post/   # Compiled JS bundles
 └── bpf/             # Compiled BPF object
@@ -28,8 +28,8 @@ tests/               # Test scripts
 
 - `src/proxy/main.py` - mitmproxy addon with BPF-based PID tracking + nfqueue UDP handler
 - `src/bpf/conn_tracker.bpf.c` - BPF program for connection tracking + IPv6 blocking
-- `src/scripts/setup-proxy.sh` - Setup transparent proxy with iptables
-- `src/scripts/iptables.sh` - iptables rules management
+- `src/setup/proxy.sh` - proxy lifecycle (install deps, start, stop)
+- `src/setup/iptables.sh` - iptables rules management
 - `.github/workflows/test-transparent-proxy.yml` - CI workflow
 
 ## How It Works
@@ -92,7 +92,7 @@ Planned expansion:
 
 Cache key format: `egress-filter-venv-${ImageOS}-${arch}-${lockHash}`
 
-The `.deb` packages in `src/scripts/setup-proxy.sh` are hardcoded to Ubuntu 24.04 amd64. When adding ARM64 or other Ubuntu versions, these URLs need architecture/version-specific variants.
+The `.deb` packages in `src/setup/proxy.sh` are hardcoded to Ubuntu 24.04 amd64. When adding ARM64 or other Ubuntu versions, these URLs need architecture/version-specific variants.
 
 ## Dependencies
 

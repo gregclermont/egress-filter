@@ -85833,7 +85833,7 @@ async function run() {
     checkPlatform();
 
     const actionPath = getActionPath();
-    const setupScript = path.join(actionPath, 'src', 'scripts', 'setup-proxy.sh');
+    const setupScript = path.join(actionPath, 'src', 'setup', 'proxy.sh');
     const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
     // Try to restore .venv from cache
