@@ -85816,11 +85816,9 @@ async function restoreVenvCache(actionPath) {
   try {
     const matchedKey = await cache.restoreCache([venvPath], cacheKey);
     if (matchedKey) {
-      core.info(`Cache restored from key: ${matchedKey}`);
       core.saveState('cache-matched-key', matchedKey);
       return true;
     }
-    core.info('Cache not found, will save after install');
     return false;
   } catch (error) {
     core.warning(`Cache restore failed: ${error.message}`);

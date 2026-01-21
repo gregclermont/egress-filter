@@ -1,7 +1,7 @@
 #!/bin/bash
 # Setup transparent proxy with BPF PID tracking (GitHub Actions only)
 #
-# Usage: setup-proxy.sh install-deps|start|stop
+# Usage: proxy.sh install-deps|start|stop
 #
 # Must run as root.
 
@@ -13,19 +13,7 @@ SCRIPT_DIR="$(dirname "$0")"
 # Use EGRESS_FILTER_ROOT if set (from action), otherwise calculate from script location
 REPO_ROOT="${EGRESS_FILTER_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
-timer() {
-    echo "::group::⏱ $1"
-    local start=$(date +%s.%N)
-    shift
-    "$@"
-    local end=$(date +%s.%N)
-    echo "::endgroup::"
-    printf "⏱ %s: %.2fs\n" "$1" "$(echo "$end - $start" | bc)"
-}
-
 install_deps() {
-    local total_start=$(date +%s.%N)
-
     # Check Ubuntu version
     source /etc/os-release
     if [[ "$VERSION_ID" != "24.04" ]]; then
@@ -34,43 +22,31 @@ install_deps() {
     fi
 
     # Install system dependencies (direct .deb download is faster than apt)
-    local start=$(date +%s.%N)
     local base=http://archive.ubuntu.com/ubuntu/pool
     curl -fsSL --parallel --parallel-immediate \
         -o /tmp/libnfnetlink-dev.deb "$base/main/libn/libnfnetlink/libnfnetlink-dev_1.0.2-2build1_amd64.deb" \
         -o /tmp/libnetfilter-queue1.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-4build1_amd64.deb" \
         -o /tmp/libnetfilter-queue-dev.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb"
-    dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb
-    printf "⏱ system-deps: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
+    dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb >/dev/null
 
     # Install uv if not present
-    start=$(date +%s.%N)
     if ! command -v uv &>/dev/null; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh
+        curl -LsSf https://astral.sh/uv/install.sh | UV_PRINT_QUIET=1 sh
         export PATH="$HOME/.local/bin:$PATH"
-        printf "⏱ uv-install: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
-    else
-        printf "⏱ uv-install: skipped (already installed)\n"
     fi
 
     # Install Python dependencies
-    start=$(date +%s.%N)
     cd "$REPO_ROOT"
-    uv sync
-    printf "⏱ uv-sync: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
-
-    printf "⏱ install_deps total: %.2fs\n" "$(echo "$(date +%s.%N) - $total_start" | bc)"
+    uv sync --quiet
 }
 
 start_proxy() {
-    local total_start=$(date +%s.%N)
     cd "$REPO_ROOT"
 
     # Cleanup iptables on failure to avoid breaking runner communication
     trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
 
     # Start proxy (exclude root's traffic via iptables to prevent loops)
-    local start=$(date +%s.%N)
     env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" \
         "$REPO_ROOT"/.venv/bin/python "$REPO_ROOT/src/proxy/main.py" > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
@@ -90,15 +66,11 @@ start_proxy() {
             exit 1
         fi
     done
-    printf "⏱ proxy-start: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
 
     # Setup iptables
-    start=$(date +%s.%N)
     "$SCRIPT_DIR"/iptables.sh setup
-    printf "⏱ iptables-setup: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
 
     # Wait for mitmproxy to generate its CA certificate
-    start=$(date +%s.%N)
     local mitmproxy_dir="$HOME/.mitmproxy"
     local cert_file="$mitmproxy_dir/mitmproxy-ca-cert.pem"
     local cert_counter=0
@@ -111,12 +83,9 @@ start_proxy() {
             exit 1
         fi
     done
-    printf "⏱ ca-cert-wait: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
 
     # Install mitmproxy certificate as system CA (direct append is much faster than update-ca-certificates)
-    start=$(date +%s.%N)
     cat "$cert_file" >> /etc/ssl/certs/ca-certificates.crt
-    printf "⏱ ca-cert-install: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
 
     # Set CA env vars for tools that don't use system store
     cp "$cert_file" /tmp/mitmproxy-ca-cert.pem
@@ -127,8 +96,6 @@ start_proxy() {
     echo "REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
     echo "AWS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
     echo "HEX_CACERTS_PATH=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
-
-    printf "⏱ start_proxy total: %.2fs\n" "$(echo "$(date +%s.%N) - $total_start" | bc)"
 }
 
 stop_proxy() {
