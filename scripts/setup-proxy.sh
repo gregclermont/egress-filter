@@ -71,25 +71,29 @@ start_proxy() {
     "$SCRIPT_DIR"/iptables.sh setup
 
     # Wait for mitmproxy to generate its CA certificate
+    # Note: sudo -E preserves HOME, so cert is in $HOME/.mitmproxy/ not /root/.mitmproxy/
+    local mitmproxy_dir="$HOME/.mitmproxy"
+    local cert_file="$mitmproxy_dir/mitmproxy-ca-cert.pem"
     local cert_counter=0
-    while [ ! -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; do
+    while [ ! -f "$cert_file" ]; do
         sleep 0.5
         cert_counter=$((cert_counter+1))
         if [ $cert_counter -gt 20 ]; then
-            echo "Timeout waiting for mitmproxy CA certificate"
+            echo "Timeout waiting for mitmproxy CA certificate at $cert_file"
+            ls -la "$mitmproxy_dir" 2>/dev/null || echo "Directory $mitmproxy_dir does not exist"
             exit 1
         fi
     done
 
     # Install mitmproxy certificate as system CA
     mkdir -p /usr/local/share/ca-certificates/extra
-    openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt
+    openssl x509 -in "$cert_file" -inform PEM -out /tmp/mitmproxy-ca-cert.crt
     cp /tmp/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
     dpkg-reconfigure -p critical ca-certificates >/dev/null 2>&1
     update-ca-certificates >/dev/null 2>&1
 
     # Set CA env vars for tools that don't use system store
-    cp /root/.mitmproxy/mitmproxy-ca-cert.pem /tmp/mitmproxy-ca-cert.pem
+    cp "$cert_file" /tmp/mitmproxy-ca-cert.pem
     chmod 644 /tmp/mitmproxy-ca-cert.pem
 
     # Set CA env vars for subsequent steps
