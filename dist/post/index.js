@@ -27568,14 +27568,17 @@ async function run() {
   const scriptsDir = actionPath + path.sep + 'scripts';
   const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
-  core.info('Stopping proxy...');
-  await exec.exec('sudo', ['-E', scriptsDir + path.sep + 'setup-proxy.sh', 'stop'], {
+  // IMPORTANT: Clean iptables FIRST, before stopping proxy
+  // Otherwise traffic is still redirected to port 8080 after proxy dies,
+  // which breaks runner communication with GitHub (jobs appear stuck)
+  core.info('Cleaning up iptables...');
+  await exec.exec('sudo', ['-E', scriptsDir + path.sep + 'iptables.sh', 'cleanup'], {
     ignoreReturnCode: true,
     env
   });
 
-  core.info('Cleaning up iptables...');
-  await exec.exec('sudo', ['-E', scriptsDir + path.sep + 'iptables.sh', 'cleanup'], {
+  core.info('Stopping proxy...');
+  await exec.exec('sudo', ['-E', scriptsDir + path.sep + 'setup-proxy.sh', 'stop'], {
     ignoreReturnCode: true,
     env
   });
