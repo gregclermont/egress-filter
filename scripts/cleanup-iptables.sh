@@ -4,4 +4,4 @@
 # Delegates to iptables.sh cleanup for single source of truth.
 # Safe to run multiple times.
 
-exec "$(dirname "$0")"/iptables.sh cleanup
+exec sudo "$(dirname "$0")"/iptables.sh cleanup
