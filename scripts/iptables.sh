@@ -29,8 +29,10 @@ apply_rules() {
     rule filter OUTPUT -m mark --mark 1 -j DROP
 
     # UDP: nfqueue for DNS detection + PID tracking
-    # Exclude systemd-resolve (system DNS stub) and root (mitmproxy)
-    rule mangle OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
+    # Exclude systemd-resolve (system DNS stub, if exists) and root (mitmproxy)
+    if id -u systemd-resolve &>/dev/null; then
+        rule mangle OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
+    fi
     rule mangle OUTPUT -p udp -m owner --uid-owner 0 -j RETURN
     rule mangle OUTPUT -p udp -j NFQUEUE --queue-num 1
 

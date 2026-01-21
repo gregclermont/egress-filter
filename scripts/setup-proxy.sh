@@ -70,9 +70,20 @@ start_proxy() {
     # Setup iptables
     "$SCRIPT_DIR"/iptables.sh setup
 
+    # Wait for mitmproxy to generate its CA certificate
+    local cert_counter=0
+    while [ ! -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; do
+        sleep 0.5
+        cert_counter=$((cert_counter+1))
+        if [ $cert_counter -gt 20 ]; then
+            echo "Timeout waiting for mitmproxy CA certificate"
+            exit 1
+        fi
+    done
+
     # Install mitmproxy certificate as system CA
     mkdir -p /usr/local/share/ca-certificates/extra
-    openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt 2>/dev/null
+    openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt
     cp /tmp/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
     dpkg-reconfigure -p critical ca-certificates >/dev/null 2>&1
     update-ca-certificates >/dev/null 2>&1
