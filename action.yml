@@ -3,7 +3,7 @@ description: 'Transparent proxy with eBPF-based PID tracking for monitoring netw
 author: 'gregclermont'
 
 runs:
-  using: 'node20'  # TEMP: Testing if node24 causes stuck jobs
+  using: 'node24'
   pre: 'dist/pre/index.js'
   main: 'dist/main/index.js'
   post: 'dist/post/index.js'
