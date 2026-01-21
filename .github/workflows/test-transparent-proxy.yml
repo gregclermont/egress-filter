@@ -22,7 +22,10 @@ jobs:
         env:
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: tests
+          fetch-depth: 1
 
       - name: Run PID tracking tests
         run: ./tests/test_pid_tracking.sh
