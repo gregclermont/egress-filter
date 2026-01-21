@@ -350,10 +350,19 @@ async def run_nfqueue(handler: NfqueueHandler):
         handler.cleanup()
 
 
+def log_all_tasks(prefix: str = ""):
+    """Log status of all asyncio tasks."""
+    tasks = asyncio.all_tasks()
+    logger.info(f"{prefix}Active asyncio tasks: {len(tasks)}")
+    for task in tasks:
+        logger.info(f"  Task '{task.get_name()}': done={task.done()}, cancelled={task.cancelled()}")
+
+
 async def main():
     """Main entry point."""
     logger.info("=" * 50)
     logger.info("Unified Proxy Starting")
+    logger.info(f"PID: {os.getpid()}")
     logger.info("=" * 50)
 
     # Setup BPF
@@ -363,12 +372,14 @@ async def main():
     loop = asyncio.get_event_loop()
     stop_event = asyncio.Event()
 
-    def signal_handler():
-        logger.info("Received shutdown signal")
+    def signal_handler(signum):
+        sig_name = signal.Signals(signum).name
+        logger.info(f"Received signal {sig_name} ({signum})")
+        log_all_tasks("On signal: ")
         stop_event.set()
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, signal_handler)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
 
     # Create tasks
     nfqueue_handler = NfqueueHandler()
@@ -385,22 +396,38 @@ async def main():
 
     # Check if a task failed
     for task in done:
-        if task != stop_task and task.exception():
-            logger.error(f"Task {task.get_name()} failed: {task.exception()}")
+        if task != stop_task:
+            if task.exception():
+                logger.error(f"Task {task.get_name()} failed: {task.exception()}")
+            else:
+                logger.info(f"Task {task.get_name()} completed normally")
 
     # Cancel remaining tasks
     logger.info("Shutting down...")
+    log_all_tasks("Before cancel: ")
+
     for task in pending:
+        logger.info(f"Cancelling pending task: {task.get_name()}")
         task.cancel()
     for task in tasks:
         if not task.done():
+            logger.info(f"Cancelling task: {task.get_name()}")
             task.cancel()
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info("Waiting for tasks to finish...")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for task, result in zip(tasks, results):
+        if isinstance(result, Exception):
+            logger.info(f"Task {task.get_name()} ended with: {type(result).__name__}: {result}")
+        else:
+            logger.info(f"Task {task.get_name()} ended cleanly")
+
+    log_all_tasks("After gather: ")
 
     # Cleanup
     shared_state.cleanup_bpf()
     logger.info("Shutdown complete")
+    logger.info("=" * 50)
 
 
 if __name__ == "__main__":

@@ -102,13 +102,34 @@ start_proxy() {
 }
 
 stop_proxy() {
+    echo "=== stop_proxy starting ===" | tee -a /tmp/proxy.log
+
+    # Show proxy processes before kill
+    echo "Proxy processes before kill:" | tee -a /tmp/proxy.log
+    pgrep -af "python.*unified_proxy" | tee -a /tmp/proxy.log || echo "No unified_proxy processes found"
+    pgrep -af "mitmproxy" | tee -a /tmp/proxy.log || echo "No mitmproxy processes found"
+
     # Send SIGTERM first
+    echo "Sending SIGTERM..." | tee -a /tmp/proxy.log
     pkill -TERM -f "python.*unified_proxy" || true
-    sleep 1
+    sleep 2
+
+    # Check if still running
+    echo "Proxy processes after SIGTERM:" | tee -a /tmp/proxy.log
+    pgrep -af "python.*unified_proxy" | tee -a /tmp/proxy.log || echo "No unified_proxy processes found"
+
     # Force kill if still running
+    echo "Sending SIGKILL..." | tee -a /tmp/proxy.log
     pkill -KILL -f "python.*unified_proxy" || true
-    # Also kill any mitmproxy processes
     pkill -KILL -f "mitmproxy" || true
+    sleep 1
+
+    # Final check
+    echo "Proxy processes after SIGKILL:" | tee -a /tmp/proxy.log
+    pgrep -af "python.*unified_proxy" | tee -a /tmp/proxy.log || echo "No unified_proxy processes found"
+    pgrep -af "mitmproxy" | tee -a /tmp/proxy.log || echo "No mitmproxy processes found"
+
+    echo "=== stop_proxy finished ===" | tee -a /tmp/proxy.log
 }
 
 case "${1:-}" in
