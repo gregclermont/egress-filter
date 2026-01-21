@@ -113,13 +113,9 @@ start_proxy() {
     done
     printf "⏱ ca-cert-wait: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
 
-    # Install mitmproxy certificate as system CA
+    # Install mitmproxy certificate as system CA (direct append is much faster than update-ca-certificates)
     start=$(date +%s.%N)
-    mkdir -p /usr/local/share/ca-certificates/extra
-    openssl x509 -in "$cert_file" -inform PEM -out /tmp/mitmproxy-ca-cert.crt
-    cp /tmp/mitmproxy-ca-cert.crt /usr/local/share/ca-certificates/extra/mitmproxy-ca-cert.crt
-    dpkg-reconfigure -p critical ca-certificates >/dev/null 2>&1
-    update-ca-certificates >/dev/null 2>&1
+    cat "$cert_file" >> /etc/ssl/certs/ca-certificates.crt
     printf "⏱ ca-cert-install: %.2fs\n" "$(echo "$(date +%s.%N) - $start" | bc)"
 
     # Set CA env vars for tools that don't use system store
