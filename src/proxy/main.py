@@ -71,14 +71,13 @@ _handler = logging.FileHandler(LOG_FILE)
 _handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
 logger.addHandler(_handler)
 
-# Configure mitmproxy's internal logging (only in verbose mode)
-if VERBOSE:
-    _mitmproxy_handler = logging.FileHandler(MITMPROXY_LOG_FILE)
-    _mitmproxy_handler.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s'))
-    for mlog_name in ["mitmproxy", "mitmproxy.proxy", "mitmproxy.options"]:
-        mlog = logging.getLogger(mlog_name)
-        mlog.setLevel(logging.DEBUG)
-        mlog.addHandler(_mitmproxy_handler)
+# Configure mitmproxy's internal logging (always enabled for debugging)
+_mitmproxy_handler = logging.FileHandler(MITMPROXY_LOG_FILE)
+_mitmproxy_handler.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s'))
+for mlog_name in ["mitmproxy", "mitmproxy.proxy", "mitmproxy.options", "mitmproxy.proxy.layers"]:
+    mlog = logging.getLogger(mlog_name)
+    mlog.setLevel(logging.DEBUG)
+    mlog.addHandler(_mitmproxy_handler)
 
 
 def get_comm(pid: int) -> str:
@@ -270,6 +269,12 @@ class MitmproxyAddon:
             transfer_encoding = flow.response.headers.get("Transfer-Encoding", "none")
             content_encoding = flow.response.headers.get("Content-Encoding", "none")
             logger.info(f"<<< RESPONSE {host}: {flow.response.status_code}, Content-Length={content_len_header}, raw={raw_len}, TE={transfer_encoding}, CE={content_encoding} <<<")
+
+    def error(self, flow: http.HTTPFlow) -> None:
+        """Called when an error occurs."""
+        host = flow.request.pretty_host if flow.request else "?"
+        error_msg = str(flow.error) if flow.error else "unknown"
+        logger.error(f"HTTP ERROR {host}: {error_msg}")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0

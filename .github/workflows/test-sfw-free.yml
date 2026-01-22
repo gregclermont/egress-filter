@@ -287,3 +287,9 @@ jobs:
         run: |
           echo "=== Proxy Log ==="
           cat /tmp/proxy.log || echo "No log file found"
+
+      - name: Show mitmproxy internal logs
+        if: always()
+        run: |
+          echo "=== Mitmproxy Internal Log ==="
+          cat /tmp/mitmproxy.log 2>/dev/null || echo "No mitmproxy log file found"
