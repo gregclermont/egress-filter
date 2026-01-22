@@ -99,6 +99,7 @@ jobs:
           "
 
       - name: Test CacheControlAdapter (diagnose Poetry issue)
+        if: false  # Skip - Poetry 2.x uses httpx now
         run: |
           # Use venv to avoid permission issues
           python3 -m venv /tmp/test-venv
@@ -130,6 +131,46 @@ jobs:
               except Exception as e:
                   print(f'Request {i+1}: FAILED - {e}')
           print('CacheControlAdapter: OK')
+          "
+
+      - name: Test httpx (Poetry 2.x uses httpx)
+        run: |
+          python3 -m venv /tmp/httpx-venv
+          /tmp/httpx-venv/bin/pip install httpx
+          /tmp/httpx-venv/bin/python -c "
+          import httpx
+          import ssl
+          import os
+
+          print('Testing httpx library...')
+          print(f'SSL_CERT_FILE: {os.environ.get(\"SSL_CERT_FILE\", \"not set\")}')
+
+          # Test with default SSL context
+          print('Test 1: Default SSL context...')
+          try:
+              r = httpx.get('https://pypi.org/simple/requests/', timeout=10)
+              print(f'  Status: {r.status_code}, Length: {len(r.content)}')
+          except Exception as e:
+              print(f'  FAILED: {e}')
+
+          # Test with explicit verify path
+          print('Test 2: Explicit verify=/tmp/mitmproxy-ca-cert.pem...')
+          try:
+              r = httpx.get('https://pypi.org/simple/requests/', verify='/tmp/mitmproxy-ca-cert.pem', timeout=10)
+              print(f'  Status: {r.status_code}, Length: {len(r.content)}')
+          except Exception as e:
+              print(f'  FAILED: {e}')
+
+          # Test multiple rapid requests (simulating Poetry's retry behavior)
+          print('Test 3: Multiple rapid requests...')
+          for i in range(6):
+              try:
+                  r = httpx.get('https://pypi.org/simple/requests/', timeout=5)
+                  print(f'  Request {i+1}: Status {r.status_code}')
+              except Exception as e:
+                  print(f'  Request {i+1}: FAILED - {e}')
+
+          print('httpx: DONE')
           "
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
