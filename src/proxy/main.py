@@ -231,12 +231,11 @@ class MitmproxyAddon:
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
         comm = get_comm(pid) if pid else "?"
-        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm}")
+        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm} host={host}")
 
         # Full logging for debugging
         if self._should_log_full(host):
             logger.info(f">>> REQUEST to {host} >>>")
-            logger.info(f">>> {flow.request.method} {flow.request.path} HTTP/{flow.request.http_version}")
             self._log_headers(flow.request.headers, ">>> ")
 
         # Check package downloads for security issues
