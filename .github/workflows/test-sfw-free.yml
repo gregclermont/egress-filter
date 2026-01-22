@@ -261,12 +261,27 @@ jobs:
           # Show Poetry version
           /tmp/poetry-venv/bin/poetry --version
 
+          # Debug: Check CA bundle environment
+          echo "REQUESTS_CA_BUNDLE=$REQUESTS_CA_BUNDLE"
+          echo "SSL_CERT_FILE=$SSL_CERT_FILE"
+          ls -la $REQUESTS_CA_BUNDLE || echo "CA file not found"
+
+          # Debug: Test raw requests from poetry venv (to rule out venv-specific issues)
+          /tmp/poetry-venv/bin/python -c "
+          import requests
+          import os
+          print('Testing from poetry venv...')
+          print('REQUESTS_CA_BUNDLE:', os.environ.get('REQUESTS_CA_BUNDLE'))
+          r = requests.get('https://pypi.org/simple/requests/')
+          print(f'Raw requests: Status={r.status_code}, Length={len(r.content)}')
+          "
+
           # Create and init project
           mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
           /tmp/poetry-venv/bin/poetry init --no-interaction --name test --dependency requests
 
-          # Install (verbose for debugging connection issues)
-          /tmp/poetry-venv/bin/poetry install --no-root -v 2>&1 || echo "Poetry install failed"
+          # Install with very verbose output
+          /tmp/poetry-venv/bin/poetry install --no-root -vvv 2>&1 || echo "Poetry install failed"
 
           # Verify
           /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)" || echo "Could not import requests"
