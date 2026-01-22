@@ -14,27 +14,15 @@ jobs:
     steps:
       - name: Setup egress filter
         uses: gregclermont/egress-filter@sfw
-        env:
-          VERBOSE: "1"
 
       - name: Install sfw-free
         run: npm install -g sfw
-
-      - name: Check sfw-free binary location
-        run: |
-          which sfw || true
-          ls -la $(npm root -g)/sfw/ || true
 
       - name: Use sfw to install a package
         run: |
           mkdir test-project && cd test-project
           npm init -y
-          echo "=== Environment before sfw ==="
-          env | grep -iE '(proxy|npm|node|ca|cert|socket)' | sort || true
-          echo "=== Running sfw npm install ==="
-          sfw npm install is-odd 2>&1 || true
-          echo "=== npm debug log ==="
-          cat ~/.npm/_logs/*.log 2>/dev/null || true
+          sfw npm install is-odd
 
       - name: Verify installation
         run: |
@@ -46,6 +34,3 @@ jobs:
         run: |
           echo "=== Proxy Log ==="
           cat /tmp/proxy.log || echo "No log file found"
-          echo ""
-          echo "=== Mitmproxy Log ==="
-          cat /tmp/mitmproxy.log 2>/dev/null | tail -100 || echo "No mitmproxy log found"
