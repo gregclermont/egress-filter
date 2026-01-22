@@ -91,6 +91,26 @@ jobs:
           print('Raw requests: OK')
           "
 
+      - name: Test CacheControlAdapter (diagnose Poetry issue)
+        run: |
+          # Test if CacheControl causes the issue
+          pip install cachecontrol requests
+          python3 -c "
+          import requests
+          from cachecontrol import CacheControlAdapter
+
+          print('Testing CacheControlAdapter...')
+          session = requests.Session()
+          adapter = CacheControlAdapter()
+          session.mount('http://', adapter)
+          session.mount('https://', adapter)
+
+          r = session.get('https://pypi.org/simple/requests/')
+          print(f'Status: {r.status_code}')
+          print(f'Content-Length: {len(r.content)}')
+          print('CacheControlAdapter: OK')
+          " || echo "CacheControlAdapter test failed"
+
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
           # Create a virtual environment for poetry to avoid permission issues
