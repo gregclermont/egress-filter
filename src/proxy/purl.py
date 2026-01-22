@@ -2,10 +2,14 @@
 Parse package registry URLs into Package URLs (PURLs).
 
 Supports:
-- npm (registry.npmjs.org)
+- npm (registry.npmjs.org, registry.yarnpkg.com)
 - PyPI (pypi.org, files.pythonhosted.org)
 
-PURL spec: https://github.com/package-url/purl-spec
+References:
+- PURL spec: https://github.com/package-url/purl-spec
+- Test cases from Aikido safe-chain:
+  https://github.com/AikidoSec/safe-chain/blob/main/packages/safe-chain/src/registryProxy/interceptors/npm/npmInterceptor.packageDownload.spec.js
+  https://github.com/AikidoSec/safe-chain/blob/main/packages/safe-chain/src/registryProxy/interceptors/pipInterceptor.spec.js
 """
 
 import re
