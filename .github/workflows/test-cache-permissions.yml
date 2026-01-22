@@ -1,0 +1,103 @@
+name: Test cache permissions
+
+on:
+  push:
+
+jobs:
+  # Test 1: Without our action - baseline
+  without-action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check initial cache state
+        run: |
+          echo "=== Initial state ==="
+          ls -la /home/runner/.cache 2>/dev/null || echo "No .cache directory yet"
+          ls -la /home/runner/.cache/pip 2>/dev/null || echo "No .cache/pip directory yet"
+          id  # Show current user
+
+      - name: Run pip install as user (should work)
+        run: |
+          python3 -m venv /tmp/test-venv
+          /tmp/test-venv/bin/pip install -q poetry
+
+      - name: Check cache after pip
+        run: |
+          echo "=== After pip install ==="
+          ls -la /home/runner/.cache 2>/dev/null || echo "No .cache directory"
+          ls -la /home/runner/.cache/pip 2>/dev/null || echo "No .cache/pip directory"
+
+      - name: Run poetry (should work)
+        run: |
+          mkdir /tmp/poetry-test && cd /tmp/poetry-test
+          cat > pyproject.toml << 'EOF'
+          [tool.poetry]
+          name = "test"
+          version = "0.1.0"
+          description = ""
+          authors = ["Test <test@test.com>"]
+          [tool.poetry.dependencies]
+          python = "^3.12"
+          requests = "^2.31.0"
+          [build-system]
+          requires = ["poetry-core"]
+          build-backend = "poetry.core.masonry.api"
+          EOF
+          /tmp/test-venv/bin/poetry lock -v
+
+  # Test 2: With our action
+  with-action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check initial cache state
+        run: |
+          echo "=== Initial state ==="
+          ls -la /home/runner/.cache 2>/dev/null || echo "No .cache directory yet"
+          id
+
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@sfw
+
+      - name: Check cache after action setup
+        run: |
+          echo "=== After action setup ==="
+          ls -la /home/runner/.cache 2>/dev/null || echo "No .cache directory"
+          ls -la /home/runner/.cache/pip 2>/dev/null || echo "No .cache/pip"
+          ls -la /home/runner/.cache/uv 2>/dev/null || echo "No .cache/uv"
+          # Check ownership
+          stat /home/runner/.cache 2>/dev/null || echo "Cannot stat .cache"
+
+      - name: Run pip install (may fail due to cache permissions)
+        run: |
+          python3 -m venv /tmp/test-venv
+          /tmp/test-venv/bin/pip install -q poetry
+
+      - name: Check cache after pip
+        run: |
+          echo "=== After pip install ==="
+          ls -la /home/runner/.cache 2>/dev/null || echo "No .cache directory"
+
+      - name: Run poetry (may fail without POETRY_CACHE_DIR)
+        run: |
+          mkdir /tmp/poetry-test && cd /tmp/poetry-test
+          cat > pyproject.toml << 'EOF'
+          [tool.poetry]
+          name = "test"
+          version = "0.1.0"
+          description = ""
+          authors = ["Test <test@test.com>"]
+          [tool.poetry.dependencies]
+          python = "^3.12"
+          requests = "^2.31.0"
+          [build-system]
+          requires = ["poetry-core"]
+          build-backend = "poetry.core.masonry.api"
+          EOF
+          /tmp/test-venv/bin/poetry lock -v || echo "Poetry failed (expected if cache is root-owned)"
+
+      - name: Run poetry with POETRY_CACHE_DIR fix
+        run: |
+          cd /tmp/poetry-test
+          export POETRY_CACHE_DIR=/tmp/poetry-cache
+          /tmp/test-venv/bin/poetry lock -v
