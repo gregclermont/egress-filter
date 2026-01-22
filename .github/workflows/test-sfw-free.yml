@@ -79,6 +79,18 @@ jobs:
           grep "SECURITY checking pkg:cargo" /tmp/proxy.log || echo "(no cargo checks found)"
           grep "crates.io\|static.crates.io" /tmp/proxy.log | head -10 || echo "(no crates.io requests found)"
 
+      - name: Test raw Python requests (baseline)
+        run: |
+          # Test that Python requests works through the proxy
+          python3 -c "
+          import requests
+          print('Testing raw requests library...')
+          r = requests.get('https://pypi.org/simple/requests/')
+          print(f'Status: {r.status_code}')
+          print(f'Content-Length: {len(r.content)}')
+          print('Raw requests: OK')
+          "
+
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
           # Create a virtual environment for poetry to avoid permission issues
@@ -89,8 +101,8 @@ jobs:
           mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
           /tmp/poetry-venv/bin/poetry init --no-interaction --name test --dependency requests
 
-          # Install the package (this should go through our transparent proxy)
-          /tmp/poetry-venv/bin/poetry install --no-root
+          # Install the package with verbose output
+          /tmp/poetry-venv/bin/poetry install --no-root -vvv
 
           # Verify it works
           /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)"
