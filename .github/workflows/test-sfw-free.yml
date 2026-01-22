@@ -81,8 +81,8 @@ jobs:
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
-          # Install poetry via pipx (pre-installed on GitHub Actions)
-          pipx install poetry
+          # Install poetry via pip
+          pip install poetry
 
           # Create a poetry project
           mkdir -p poetry-test && cd poetry-test
