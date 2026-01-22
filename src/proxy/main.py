@@ -189,6 +189,34 @@ shared_state = SharedState()
 class MitmproxyAddon:
     """Mitmproxy addon for PID tracking."""
 
+    def client_connected(self, client) -> None:
+        """Called when a client connects."""
+        addr = client.peername if hasattr(client, 'peername') else "?"
+        logger.info(f"CLIENT_CONNECT addr={addr}")
+
+    def client_disconnected(self, client) -> None:
+        """Called when a client disconnects."""
+        addr = client.peername if hasattr(client, 'peername') else "?"
+        logger.info(f"CLIENT_DISCONNECT addr={addr}")
+
+    def server_connect(self, data) -> None:
+        """Called when connecting to server."""
+        addr = data.address if hasattr(data, 'address') else "?"
+        logger.info(f"SERVER_CONNECT addr={addr}")
+
+    def server_disconnected(self, data) -> None:
+        """Called when server disconnects."""
+        addr = data.address if hasattr(data, 'address') else "?"
+        logger.info(f"SERVER_DISCONNECT addr={addr}")
+
+    def tls_start_client(self, data) -> None:
+        """Called when TLS handshake with client starts."""
+        logger.info(f"TLS_CLIENT_START")
+
+    def tls_established_client(self, data) -> None:
+        """Called when TLS handshake with client completes."""
+        logger.info(f"TLS_CLIENT_ESTABLISHED")
+
     def _should_log_full(self, host: str) -> bool:
         """Check if we should log full request/response for this host."""
         # Always log socket.dev
