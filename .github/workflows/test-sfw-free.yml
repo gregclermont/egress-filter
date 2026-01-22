@@ -87,6 +87,7 @@ jobs:
           grep "crates.io\|static.crates.io" /tmp/proxy.log | head -10 || echo "(no crates.io requests found)"
 
       - name: Test raw Python requests (baseline)
+        if: false  # Skip to reduce noise - focus on Poetry
         run: |
           # Test that Python requests works through the proxy
           python3 -c "
@@ -171,6 +172,7 @@ jobs:
           HTTPX_TEST
 
       - name: Test Poetry-style requests (CacheControlAdapter + session.send)
+        if: false  # Skip to reduce noise - this test passes, focus on actual Poetry
         run: |
           python3 -m venv /tmp/poetry-test-venv
           /tmp/poetry-test-venv/bin/pip install -q requests cachecontrol[filecache]

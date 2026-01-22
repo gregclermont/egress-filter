@@ -18,6 +18,25 @@ Poetry 2.3.1 fails to connect to pypi.org through the transparent mitmproxy, whi
 
 ## Key Findings
 
+### NEW: Response IS being sent successfully!
+Latest logs show the complete flow for Poetry requests:
+```
+21:21:16,780 HTTP request (poetry, Accept: application/vnd.pypi.simple.v1+json)
+21:21:16,789 RESPONSE 200 OK, Content-Length=29673
+21:21:16,792 CLIENT_DISCONNECT (normal completion)
+21:21:17,293 DNS lookup (Poetry retries 500ms later!)
+```
+
+The proxy sends a valid 200 OK response with the correct body. Poetry receives it but
+still considers it a failure and retries.
+
+**NEW THEORY**: The issue is in how Poetry processes the response, not in the connection
+or transport layer. Possible causes:
+- Content-Type mismatch (Poetry expects JSON but gets something else?)
+- Invalid JSON parsing
+- Cache-control header issue with CacheControlAdapter
+- gzip decompression issue on the client side
+
 ### 1. Response Hook Never Called for Poetry
 - For working clients (pip, raw requests): `response()` hook is called after `request()` hook
 - For Poetry: `response()` hook is NEVER called

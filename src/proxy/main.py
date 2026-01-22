@@ -296,7 +296,8 @@ class MitmproxyAddon:
             raw_len = len(flow.response.raw_content or b'')
             transfer_encoding = flow.response.headers.get("Transfer-Encoding", "none")
             content_encoding = flow.response.headers.get("Content-Encoding", "none")
-            logger.info(f"<<< RESPONSE {host}: {flow.response.status_code}, Content-Length={content_len_header}, raw={raw_len}, TE={transfer_encoding}, CE={content_encoding} <<<")
+            content_type = flow.response.headers.get("Content-Type", "none")
+            logger.info(f"<<< RESPONSE {host}: {flow.response.status_code}, Content-Length={content_len_header}, raw={raw_len}, TE={transfer_encoding}, CE={content_encoding}, CT={content_type} <<<")
 
     def error(self, flow: http.HTTPFlow) -> None:
         """Called when an error occurs."""
