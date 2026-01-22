@@ -79,6 +79,37 @@ jobs:
           grep "SECURITY checking pkg:cargo" /tmp/proxy.log || echo "(no cargo checks found)"
           grep "crates.io\|static.crates.io" /tmp/proxy.log | head -10 || echo "(no crates.io requests found)"
 
+      - name: Test Cargo malware blocking
+        run: |
+          mkdir -p cargo-malware-test && cd cargo-malware-test
+          cat > Cargo.toml << 'CARGO_EOF'
+          [package]
+          name = "test"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          faster-log = "=1.7.8"
+          CARGO_EOF
+          mkdir -p src && echo 'fn main() {}' > src/main.rs
+          echo "Attempting to fetch malicious cargo package (should be blocked)..."
+          # faster-log 1.7.8 is malware (typosquat of fast_log, exfiltrates crypto keys)
+          if cargo fetch 2>&1; then
+            echo "ERROR: Malware package was NOT blocked!"
+            exit 1
+          else
+            echo "Cargo package was blocked as expected"
+          fi
+
+      - name: Verify Cargo blocking in logs
+        run: |
+          echo "Checking proxy logs for Cargo SECURITY BLOCKED message..."
+          grep "SECURITY BLOCKED pkg:cargo/faster-log" /tmp/proxy.log || {
+            echo "ERROR: No Cargo blocking message found"
+            grep "faster-log" /tmp/proxy.log || echo "(no faster-log in logs)"
+            exit 1
+          }
+
       - name: Show proxy logs
         if: always()
         run: |
