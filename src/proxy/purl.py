@@ -114,10 +114,47 @@ def parse_pypi_url(url: str) -> PackageRef | None:
     return None
 
 
+def parse_cargo_url(url: str) -> PackageRef | None:
+    """
+    Parse Cargo (Rust) registry URLs into PackageRef.
+
+    Supported formats:
+    - https://crates.io/api/v1/crates/{name}/{version}/download
+    - https://static.crates.io/crates/{name}/{name}-{version}.crate
+
+    Note: Index URLs return None since we need a version.
+    """
+    # Semver pattern for Rust: major.minor.patch[-prerelease][+build]
+    version_pattern = r'(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?)'
+
+    # API download URL: /api/v1/crates/{name}/{version}/download
+    api_match = re.search(
+        r'crates\.io/api/v1/crates/([a-zA-Z0-9_-]+)/' + version_pattern + r'/download',
+        url
+    )
+    if api_match:
+        name = api_match.group(1)
+        version = api_match.group(2)
+        return PackageRef(ecosystem="cargo", name=name, version=version)
+
+    # CDN URL: static.crates.io/crates/{name}/{name}-{version}.crate
+    cdn_match = re.search(
+        r'static\.crates\.io/crates/([a-zA-Z0-9_-]+)/[a-zA-Z0-9_-]+-' + version_pattern + r'\.crate',
+        url
+    )
+    if cdn_match:
+        name = cdn_match.group(1)
+        version = cdn_match.group(2)
+        return PackageRef(ecosystem="cargo", name=name, version=version)
+
+    return None
+
+
 # Registry parsers in order of precedence
 _PARSERS = [
     parse_npm_url,
     parse_pypi_url,
+    parse_cargo_url,
 ]
 
 
@@ -183,6 +220,21 @@ if __name__ == "__main__":
         # PyPI - simple index (should return None - no version)
         ("https://pypi.org/simple/requests/", None),
         ("https://pypi.org/project/foobar/", None),
+
+        # Cargo - API download URLs
+        ("https://crates.io/api/v1/crates/serde/1.0.0/download", "pkg:cargo/serde@1.0.0"),
+        ("https://crates.io/api/v1/crates/tokio/1.35.1/download", "pkg:cargo/tokio@1.35.1"),
+        ("https://crates.io/api/v1/crates/my-crate/0.1.0/download", "pkg:cargo/my-crate@0.1.0"),
+        # Cargo - CDN URLs
+        ("https://static.crates.io/crates/serde/serde-1.0.0.crate", "pkg:cargo/serde@1.0.0"),
+        ("https://static.crates.io/crates/tokio/tokio-1.35.1.crate", "pkg:cargo/tokio@1.35.1"),
+        # Cargo - prerelease versions
+        ("https://crates.io/api/v1/crates/my-crate/1.0.0-alpha.1/download", "pkg:cargo/my-crate@1.0.0-alpha.1"),
+        ("https://static.crates.io/crates/my-crate/my-crate-1.0.0-beta.2.crate", "pkg:cargo/my-crate@1.0.0-beta.2"),
+        # Cargo - with build metadata
+        ("https://crates.io/api/v1/crates/pkg/1.0.0+build.123/download", "pkg:cargo/pkg@1.0.0+build.123"),
+        # Cargo - index URLs (should return None - no version)
+        ("https://index.crates.io/se/rd/serde", None),
 
         # Non-registry URLs
         ("https://example.com/foo", None),

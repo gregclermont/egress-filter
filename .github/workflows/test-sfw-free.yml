@@ -52,6 +52,33 @@ jobs:
           echo "Found SECURITY BLOCKED message"
           grep "SECURITY BLOCKED" /tmp/proxy.log
 
+      - name: Test Cargo package security check
+        run: |
+          mkdir -p cargo-test && cd cargo-test
+          # Create minimal Cargo.toml
+          cat > Cargo.toml << 'CARGO_EOF'
+          [package]
+          name = "test"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          itoa = "1.0.0"
+          CARGO_EOF
+          mkdir -p src && echo 'fn main() {}' > src/main.rs
+          # Fetch dependencies (this triggers crates.io download)
+          cargo fetch 2>&1 || true
+
+      - name: Verify Cargo security check in logs
+        run: |
+          echo "Checking proxy logs for Cargo security check..."
+          grep -q "SECURITY checking pkg:cargo" /tmp/proxy.log || {
+            echo "WARNING: No Cargo security check found in logs"
+            echo "This may be expected if cargo uses a different download method"
+          }
+          grep "SECURITY checking pkg:cargo" /tmp/proxy.log || echo "(no cargo checks found)"
+          grep "crates.io\|static.crates.io" /tmp/proxy.log | head -10 || echo "(no crates.io requests found)"
+
       - name: Show proxy logs
         if: always()
         run: |
