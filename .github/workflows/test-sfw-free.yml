@@ -173,7 +173,7 @@ jobs:
       - name: Test Poetry-style requests (CacheControlAdapter + session.send)
         run: |
           python3 -m venv /tmp/poetry-test-venv
-          /tmp/poetry-test-venv/bin/pip install requests cachecontrol
+          /tmp/poetry-test-venv/bin/pip install -q requests cachecontrol[filecache]
           /tmp/poetry-test-venv/bin/python << 'POETRY_HTTP_TEST'
           import requests
           from cachecontrol import CacheControlAdapter
