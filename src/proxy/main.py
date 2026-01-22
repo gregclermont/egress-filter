@@ -101,12 +101,23 @@ if VERBOSE:
         mlog.addHandler(_mitmproxy_handler)
 
 
-def get_comm(pid: int) -> str:
-    """Get command name from /proc."""
+def get_proc_info(pid: int | None) -> dict:
+    """Get process info from /proc: exe, cmdline."""
+    if not pid:
+        return {}
+    result = {}
     try:
-        return Path(f"/proc/{pid}/comm").read_text().strip()
+        result["exe"] = os.readlink(f"/proc/{pid}/exe")
     except (OSError, FileNotFoundError):
-        return "?"
+        pass
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if cmdline:
+            # Null-separated args -> list
+            result["cmdline"] = [arg.decode("utf-8", errors="replace") for arg in cmdline.rstrip(b"\x00").split(b"\x00")]
+    except (OSError, FileNotFoundError):
+        pass
+    return result
 
 
 def get_cgroup() -> str:
@@ -216,15 +227,14 @@ class MitmproxyAddon:
         url = flow.request.pretty_url
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
-        comm = get_comm(pid) if pid else None
         log_connection(
             type="http",
-            src_port=src_port,
             dst_ip=dst_ip,
             dst_port=dst_port,
             url=url,
+            **get_proc_info(pid),
+            src_port=src_port,
             pid=pid,
-            comm=comm,
         )
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
@@ -232,14 +242,13 @@ class MitmproxyAddon:
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
-        comm = get_comm(pid) if pid else None
         log_connection(
             type="tcp",
-            src_port=src_port,
             dst_ip=dst_ip,
             dst_port=dst_port,
+            **get_proc_info(pid),
+            src_port=src_port,
             pid=pid,
-            comm=comm,
         )
 
     def dns_request(self, flow: dns.DNSFlow) -> None:
@@ -253,15 +262,14 @@ class MitmproxyAddon:
 
         if cached:
             pid, dst_ip, dst_port = cached
-            comm = get_comm(pid) if pid else None
             log_connection(
                 type="dns",
-                src_port=src_port,
                 dst_ip=dst_ip,
                 dst_port=dst_port,
                 name=query_name,
+                **get_proc_info(pid),
+                src_port=src_port,
                 pid=pid,
-                comm=comm,
             )
         else:
             # Cache miss - nfqueue should have seen the packet first
@@ -320,15 +328,14 @@ class NfqueueHandler:
                         shared_state.dns_cache[cache_key] = (pid, dst_ip, dst_port)
                     else:
                         # Non-DNS UDP - log here (not handled by mitmproxy)
-                        comm = get_comm(pid) if pid else None
                         log_connection(
                             type="udp",
                             src_ip=src_ip,
-                            src_port=src_port,
                             dst_ip=dst_ip,
                             dst_port=dst_port,
+                            **get_proc_info(pid),
+                            src_port=src_port,
                             pid=pid,
-                            comm=comm,
                         )
         except Exception as e:
             logger.warning(f"Error processing UDP packet: {e}")

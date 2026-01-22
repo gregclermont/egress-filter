@@ -3,7 +3,7 @@
 ## High Priority
 
 - [x] Convert connection log to JSONL, ensure only one event logged per connection
-- [ ] Collect process executable path and command line
+- [x] Collect process executable path and command line
 - [ ] Tighten and organize code for readability
 
 ## Medium Priority
