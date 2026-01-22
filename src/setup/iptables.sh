@@ -38,7 +38,9 @@ apply_rules() {
 
     # TCP: transparent proxy redirect to port 8080
     # Exclude root to prevent mitmproxy redirect loop
+    # Exclude localhost to allow local proxies (e.g., sfw-free)
     rule nat OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
+    rule nat OUTPUT -p tcp -d 127.0.0.0/8 -j RETURN
     rule nat OUTPUT -p tcp -j REDIRECT --to-port 8080
 
     # DNS: redirect packets marked by nfqueue (mark=2) to port 8053
