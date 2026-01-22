@@ -71,13 +71,14 @@ _handler = logging.FileHandler(LOG_FILE)
 _handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
 logger.addHandler(_handler)
 
-# Configure mitmproxy's internal logging (always enabled for debugging)
-_mitmproxy_handler = logging.FileHandler(MITMPROXY_LOG_FILE)
-_mitmproxy_handler.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s'))
-for mlog_name in ["mitmproxy", "mitmproxy.proxy", "mitmproxy.options", "mitmproxy.proxy.layers"]:
-    mlog = logging.getLogger(mlog_name)
-    mlog.setLevel(logging.DEBUG)
-    mlog.addHandler(_mitmproxy_handler)
+# Configure mitmproxy's internal logging (only in verbose mode)
+if VERBOSE:
+    _mitmproxy_handler = logging.FileHandler(MITMPROXY_LOG_FILE)
+    _mitmproxy_handler.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s'))
+    for mlog_name in ["mitmproxy", "mitmproxy.proxy", "mitmproxy.options"]:
+        mlog = logging.getLogger(mlog_name)
+        mlog.setLevel(logging.DEBUG)
+        mlog.addHandler(_mitmproxy_handler)
 
 
 def get_comm(pid: int) -> str:
@@ -187,83 +188,16 @@ shared_state = SharedState()
 
 
 class MitmproxyAddon:
-    """Mitmproxy addon for PID tracking."""
-
-    def client_connected(self, client) -> None:
-        """Called when a client connects."""
-        addr = client.peername if hasattr(client, 'peername') else "?"
-        logger.info(f"CLIENT_CONNECT addr={addr}")
-
-    def client_disconnected(self, client) -> None:
-        """Called when a client disconnects."""
-        addr = client.peername if hasattr(client, 'peername') else "?"
-        logger.info(f"CLIENT_DISCONNECT addr={addr}")
-
-    def server_connect(self, data) -> None:
-        """Called when connecting to server."""
-        addr = data.address if hasattr(data, 'address') else "?"
-        logger.info(f"SERVER_CONNECT addr={addr}")
-
-    def server_disconnected(self, data) -> None:
-        """Called when server disconnects."""
-        addr = data.address if hasattr(data, 'address') else "?"
-        logger.info(f"SERVER_DISCONNECT addr={addr}")
-
-    def tls_start_client(self, data) -> None:
-        """Called when TLS handshake with client starts."""
-        logger.info(f"TLS_CLIENT_START")
-
-    def tls_established_client(self, data) -> None:
-        """Called when TLS handshake with client completes."""
-        logger.info(f"TLS_CLIENT_ESTABLISHED")
-
-    def _should_log_full(self, host: str) -> bool:
-        """Check if we should log full request/response for this host."""
-        # Always log socket.dev
-        if host.endswith(".socket.dev") or host == "socket.dev":
-            return True
-        # Log pypi.org headers only (no body) for debugging Poetry issue
-        if host.endswith("pypi.org") or host == "pypi.org":
-            return True
-        return False
-
-    def _log_headers(self, headers, prefix: str) -> None:
-        """Log all headers with a prefix."""
-        for name, value in headers.items():
-            logger.info(f"{prefix}{name}: {value}")
-
-    def _log_body(self, body: bytes | None, prefix: str, content_type: str = "") -> None:
-        """Log body content with a prefix."""
-        if not body:
-            logger.info(f"{prefix}(empty body)")
-            return
-        # Try to decode as text for readable content types
-        is_text = any(ct in content_type.lower() for ct in ["json", "text", "xml", "javascript"])
-        if is_text:
-            try:
-                text = body.decode("utf-8")
-                for line in text.split("\n"):
-                    logger.info(f"{prefix}{line}")
-            except UnicodeDecodeError:
-                logger.info(f"{prefix}(binary data, {len(body)} bytes)")
-        else:
-            logger.info(f"{prefix}(binary data, {len(body)} bytes, content-type: {content_type})")
+    """Mitmproxy addon for PID tracking and package security checks."""
 
     async def request(self, flow: http.HTTPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
         url = flow.request.pretty_url
-        # In transparent mode, flow.request.host may be IP; get hostname from pretty_host
-        host = flow.request.pretty_host
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
         comm = get_comm(pid) if pid else "?"
-        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm} host={host}")
-
-        # Full logging for debugging
-        if self._should_log_full(host):
-            logger.info(f">>> REQUEST to {host} >>>")
-            self._log_headers(flow.request.headers, ">>> ")
+        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm}")
 
         # Check package downloads for security issues
         pkg_ref = purl.parse_registry_url(url)
@@ -284,26 +218,6 @@ class MitmproxyAddon:
             elif result.action == socket_api.Action.WARN:
                 alert_types = [a.type for a in result.alerts]
                 logger.warning(f"SECURITY WARNING {pkg_purl}: {alert_types}")
-
-    def response(self, flow: http.HTTPFlow) -> None:
-        # In transparent mode, flow.request.host may be IP; get hostname from pretty_host
-        host = flow.request.pretty_host
-
-        # Full logging for debugging
-        if self._should_log_full(host):
-            content_len_header = flow.response.headers.get("Content-Length", "?")
-            # Use raw_content to avoid triggering decompression
-            raw_len = len(flow.response.raw_content or b'')
-            transfer_encoding = flow.response.headers.get("Transfer-Encoding", "none")
-            content_encoding = flow.response.headers.get("Content-Encoding", "none")
-            content_type = flow.response.headers.get("Content-Type", "none")
-            logger.info(f"<<< RESPONSE {host}: {flow.response.status_code}, Content-Length={content_len_header}, raw={raw_len}, TE={transfer_encoding}, CE={content_encoding}, CT={content_type} <<<")
-
-    def error(self, flow: http.HTTPFlow) -> None:
-        """Called when an error occurs."""
-        host = flow.request.pretty_host if flow.request else "?"
-        error_msg = str(flow.error) if flow.error else "unknown"
-        logger.error(f"HTTP ERROR {host}: {error_msg}")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
