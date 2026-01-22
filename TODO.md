@@ -8,7 +8,7 @@
 
 ## Medium Priority
 
-- [ ] Collect GitHub job step info from process env for the log
+- [x] Collect GitHub job step info from process env for the log
 - [ ] Investigate UDP fast path using eBPF TC to mark allowed packets based on 4-tuple and skip nfqueue
 
 ## Low Priority
