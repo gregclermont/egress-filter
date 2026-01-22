@@ -41,11 +41,13 @@ tests/               # Test scripts
 
 ## Running the Workflow
 
-The workflow runs on `workflow_dispatch` (manual trigger):
+The workflow uses `@test` to reference the action code and triggers on push to the `test` branch. To test a branch:
 
 ```bash
-gh workflow run test-transparent-proxy.yml
+git push -f origin HEAD:test
 ```
+
+This pushes your current branch to `test`, which auto-triggers the workflow using your branch's code.
 
 ## Local Development
 

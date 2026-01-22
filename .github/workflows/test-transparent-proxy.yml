@@ -1,6 +1,8 @@
 name: Test transparent proxy
 
 on:
+  push:
+    branches: [test]
   workflow_dispatch:
     inputs:
       verbose:
@@ -18,7 +20,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Setup egress filter
-        uses: gregclermont/egress-filter@main
+        uses: gregclermont/egress-filter@test
         env:
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
 
