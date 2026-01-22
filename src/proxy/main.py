@@ -265,10 +265,11 @@ class MitmproxyAddon:
         # Full logging for debugging
         if self._should_log_full(host):
             content_len_header = flow.response.headers.get("Content-Length", "?")
-            actual_len = len(flow.response.content or b'')
+            # Use raw_content to avoid triggering decompression
+            raw_len = len(flow.response.raw_content or b'')
             transfer_encoding = flow.response.headers.get("Transfer-Encoding", "none")
             content_encoding = flow.response.headers.get("Content-Encoding", "none")
-            logger.info(f"<<< RESPONSE {host}: {flow.response.status_code}, Content-Length={content_len_header}, actual={actual_len}, TE={transfer_encoding}, CE={content_encoding} <<<")
+            logger.info(f"<<< RESPONSE {host}: {flow.response.status_code}, Content-Length={content_len_header}, raw={raw_len}, TE={transfer_encoding}, CE={content_encoding} <<<")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
