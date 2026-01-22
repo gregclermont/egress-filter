@@ -14,3 +14,4 @@ dist/
 
 # Local settings
 .claude/
+.tmp/
