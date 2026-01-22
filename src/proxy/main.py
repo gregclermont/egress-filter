@@ -265,6 +265,7 @@ class MitmproxyAddon:
         # Full logging for debugging
         if self._should_log_full(host):
             logger.info(f"<<< RESPONSE from {host}: {flow.response.status_code} {flow.response.reason}, {len(flow.response.content or b'')} bytes <<<")
+            self._log_headers(flow.response.headers, "<<< ")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
