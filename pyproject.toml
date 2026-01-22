@@ -8,6 +8,7 @@ dependencies = [
     "mitmproxy",
     "netfilterqueue",
     "scapy",
+    "aiohttp",
 ]
 
 [[tool.uv.index]]
