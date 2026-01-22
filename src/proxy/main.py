@@ -224,7 +224,7 @@ class MitmproxyAddon:
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
         comm = get_comm(pid) if pid else "?"
-        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm}")
+        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} host={host!r} pid={pid or '?'} comm={comm}")
 
         # Full logging for socket.dev
         if self._should_log_full(host):
