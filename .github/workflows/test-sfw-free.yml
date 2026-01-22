@@ -1,0 +1,38 @@
+name: Test sfw-free compatibility
+
+on:
+  push:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@sfw
+        env:
+          VERBOSE: "1"
+
+      - name: Install sfw-free
+        run: npm install -g sfw
+
+      - name: Use sfw to install a package
+        run: |
+          mkdir test-project && cd test-project
+          npm init -y
+          sfw npm install is-odd
+
+      - name: Verify installation
+        run: |
+          cd test-project
+          node -e "console.log('is-odd(3):', require('is-odd')(3))"
+
+      - name: Show proxy logs
+        if: always()
+        run: |
+          echo "=== Proxy Log ==="
+          cat /tmp/proxy.log || echo "No log file found"
