@@ -301,24 +301,39 @@ jobs:
           print(f'Raw requests: Status={r.status_code}, Length={len(r.content)}')
           "
 
-          # Create and init project
-          mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
-          /tmp/poetry-venv/bin/poetry init --no-interaction --name test --dependency requests
+          # Create project directory and pyproject.toml manually (to avoid poetry init contacting pypi)
+          mkdir -p /tmp/poetry-test
+          cd /tmp/poetry-test
+          cat > pyproject.toml << 'TOML'
+          [tool.poetry]
+          name = "test"
+          version = "0.1.0"
+          description = ""
+          authors = ["Test <test@test.com>"]
 
-          # Install with strace to capture syscalls
-          echo "=== Starting Poetry install with strace ==="
-          strace -f -e trace=network,read,write -s 200 -o /tmp/poetry-strace.log \
-            /tmp/poetry-venv/bin/poetry install --no-root -v 2>&1
+          [tool.poetry.dependencies]
+          python = "^3.12"
+          requests = "^2.31.0"
+
+          [build-system]
+          requires = ["poetry-core"]
+          build-backend = "poetry.core.masonry.api"
+          TOML
+
+          # Run poetry lock with strace to capture the network activity
+          echo "=== Starting Poetry lock with strace ==="
+          strace -f -e trace=network,read,write,recvfrom -s 500 -o /tmp/poetry-strace.log \
+            /tmp/poetry-venv/bin/poetry lock -v 2>&1
           POETRY_EXIT=$?
           echo "=== Poetry exit code: $POETRY_EXIT ==="
 
           # Show strace output - look for errors around recv/read failures
-          echo "=== Strace: looking for errors ==="
-          grep -E "= -1|ECONNRESET|EPIPE|error" /tmp/poetry-strace.log | tail -50 || echo "(no errors found)"
+          echo "=== Strace: syscall errors ==="
+          grep -E "= -1|ECONNRESET|EPIPE|ETIMEDOUT" /tmp/poetry-strace.log | tail -30 || echo "(no errors found)"
 
-          echo "=== Strace: SSL/network activity for pypi.org connection ==="
-          # Find the socket file descriptors used for pypi.org and look at their traffic
-          grep -E "connect\(.*151\.101\.|read\(|write\(|recv\(" /tmp/poetry-strace.log | tail -100 || echo "(no network activity found)"
+          # Look for SSL read activity - the response should be here
+          echo "=== Strace: read() calls with substantial data ==="
+          grep -E "read\([0-9]+, .{50}" /tmp/poetry-strace.log | tail -50 || echo "(no reads found)"
 
           # Still fail the step if Poetry failed
           exit $POETRY_EXIT
