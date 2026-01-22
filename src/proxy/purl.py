@@ -120,6 +120,7 @@ def parse_cargo_url(url: str) -> PackageRef | None:
 
     Supported formats:
     - https://crates.io/api/v1/crates/{name}/{version}/download
+    - https://static.crates.io/crates/{name}/{version}/download
     - https://static.crates.io/crates/{name}/{name}-{version}.crate
 
     Note: Index URLs return None since we need a version.
@@ -137,14 +138,24 @@ def parse_cargo_url(url: str) -> PackageRef | None:
         version = api_match.group(2)
         return PackageRef(ecosystem="cargo", name=name, version=version)
 
-    # CDN URL: static.crates.io/crates/{name}/{name}-{version}.crate
-    cdn_match = re.search(
+    # CDN download URL: static.crates.io/crates/{name}/{version}/download
+    cdn_download_match = re.search(
+        r'static\.crates\.io/crates/([a-zA-Z0-9_-]+)/' + version_pattern + r'/download',
+        url
+    )
+    if cdn_download_match:
+        name = cdn_download_match.group(1)
+        version = cdn_download_match.group(2)
+        return PackageRef(ecosystem="cargo", name=name, version=version)
+
+    # CDN crate file URL: static.crates.io/crates/{name}/{name}-{version}.crate
+    cdn_crate_match = re.search(
         r'static\.crates\.io/crates/([a-zA-Z0-9_-]+)/[a-zA-Z0-9_-]+-' + version_pattern + r'\.crate',
         url
     )
-    if cdn_match:
-        name = cdn_match.group(1)
-        version = cdn_match.group(2)
+    if cdn_crate_match:
+        name = cdn_crate_match.group(1)
+        version = cdn_crate_match.group(2)
         return PackageRef(ecosystem="cargo", name=name, version=version)
 
     return None
@@ -225,7 +236,10 @@ if __name__ == "__main__":
         ("https://crates.io/api/v1/crates/serde/1.0.0/download", "pkg:cargo/serde@1.0.0"),
         ("https://crates.io/api/v1/crates/tokio/1.35.1/download", "pkg:cargo/tokio@1.35.1"),
         ("https://crates.io/api/v1/crates/my-crate/0.1.0/download", "pkg:cargo/my-crate@0.1.0"),
-        # Cargo - CDN URLs
+        # Cargo - CDN download URLs (sparse index format)
+        ("https://static.crates.io/crates/itoa/1.0.17/download", "pkg:cargo/itoa@1.0.17"),
+        ("https://static.crates.io/crates/serde/1.0.0/download", "pkg:cargo/serde@1.0.0"),
+        # Cargo - CDN crate file URLs
         ("https://static.crates.io/crates/serde/serde-1.0.0.crate", "pkg:cargo/serde@1.0.0"),
         ("https://static.crates.io/crates/tokio/tokio-1.35.1.crate", "pkg:cargo/tokio@1.35.1"),
         # Cargo - prerelease versions
