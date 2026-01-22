@@ -106,6 +106,7 @@ jobs:
           /tmp/test-venv/bin/python -c "
           import requests
           from cachecontrol import CacheControlAdapter
+          import time
 
           print('Testing CacheControlAdapter...')
           session = requests.Session()
@@ -113,9 +114,21 @@ jobs:
           session.mount('http://', adapter)
           session.mount('https://', adapter)
 
+          # Test single request
           r = session.get('https://pypi.org/simple/requests/')
-          print(f'Status: {r.status_code}')
-          print(f'Content-Length: {len(r.content)}')
+          print(f'Single request - Status: {r.status_code}, Length: {len(r.content)}')
+
+          # Test multiple rapid requests (like Poetry does)
+          print('Testing multiple rapid requests...')
+          for i in range(6):
+              try:
+                  # Force new session to simulate Poetry's retry behavior
+                  session2 = requests.Session()
+                  session2.mount('https://', CacheControlAdapter())
+                  r2 = session2.get('https://pypi.org/simple/requests/', timeout=5)
+                  print(f'Request {i+1}: Status {r2.status_code}')
+              except Exception as e:
+                  print(f'Request {i+1}: FAILED - {e}')
           print('CacheControlAdapter: OK')
           "
 
