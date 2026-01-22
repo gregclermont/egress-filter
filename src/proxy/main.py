@@ -192,7 +192,13 @@ class MitmproxyAddon:
 
     def _should_log_full(self, host: str) -> bool:
         """Check if we should log full request/response for this host."""
-        return host.endswith(".socket.dev") or host == "socket.dev"
+        # Always log socket.dev
+        if host.endswith(".socket.dev") or host == "socket.dev":
+            return True
+        # Log pypi.org for debugging Poetry issue
+        if host.endswith("pypi.org") or host == "pypi.org":
+            return True
+        return False
 
     def _log_headers(self, headers, prefix: str) -> None:
         """Log all headers with a prefix."""
