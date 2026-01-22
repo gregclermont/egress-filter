@@ -195,9 +195,9 @@ class MitmproxyAddon:
         # Always log socket.dev
         if host.endswith(".socket.dev") or host == "socket.dev":
             return True
-        # Log pypi.org for debugging Poetry issue
-        if host.endswith("pypi.org") or host == "pypi.org":
-            return True
+        # Disabled: pypi.org logging was for debugging Poetry issue
+        # if host.endswith("pypi.org") or host == "pypi.org":
+        #     return True
         return False
 
     def _log_headers(self, headers, prefix: str) -> None:

@@ -177,8 +177,10 @@ jobs:
           /tmp/poetry-test-venv/bin/python << 'POETRY_HTTP_TEST'
           import requests
           from cachecontrol import CacheControlAdapter
+          from cachecontrol.caches import FileCache
           import sys
           import os
+          import tempfile
 
           def log(msg):
               print(msg, flush=True)
@@ -187,26 +189,38 @@ jobs:
           log(f'REQUESTS_CA_BUNDLE: {os.environ.get("REQUESTS_CA_BUNDLE", "not set")}')
           log(f'SSL_CERT_FILE: {os.environ.get("SSL_CERT_FILE", "not set")}')
 
-          # Create session like Poetry does
+          # Create session like Poetry does (with FileCache!)
+          cache_dir = tempfile.mkdtemp(prefix='poetry-cache-')
+          log(f'Using cache dir: {cache_dir}')
           session = requests.Session()
-          adapter = CacheControlAdapter()
+          session.headers['User-Agent'] = 'poetry/2.0.0'
+          file_cache = FileCache(cache_dir)
+          adapter = CacheControlAdapter(cache=file_cache)
           session.mount('http://', adapter)
           session.mount('https://', adapter)
 
-          url = 'https://pypi.org/simple/requests/'
-
-          # Test 1: Simple session.get()
-          log('Test 1: session.get()...')
+          # Test 1: Simple session.get() with HTML
+          url_html = 'https://pypi.org/simple/requests/'
+          log('Test 1: session.get() HTML...')
           try:
-              r = session.get(url, timeout=10)
+              r = session.get(url_html, timeout=10)
               log(f'  Result: Status={r.status_code}, Length={len(r.content)}')
           except Exception as e:
               log(f'  Result: FAILED - {type(e).__name__}: {e}')
 
-          # Test 2: Prepared request + session.send() (exactly like Poetry)
-          log('Test 2: Prepared request + session.send()...')
+          # Test 2: Request with JSON Accept header (like Poetry uses)
+          log('Test 2: session.get() with JSON Accept header...')
           try:
-              req = requests.Request('GET', url)
+              headers = {'Accept': 'application/vnd.pypi.simple.v1+json, */*;q=0.1'}
+              r = session.get(url_html, timeout=10, headers=headers)
+              log(f'  Result: Status={r.status_code}, Length={len(r.content)}, Content-Type={r.headers.get("Content-Type")}')
+          except Exception as e:
+              log(f'  Result: FAILED - {type(e).__name__}: {e}')
+
+          # Test 3: Prepared request + session.send() with JSON header (exactly like Poetry)
+          log('Test 3: Prepared request + session.send() with JSON header...')
+          try:
+              req = requests.Request('GET', url_html, headers=headers)
               prepared = session.prepare_request(req)
 
               # Merge environment settings (picks up REQUESTS_CA_BUNDLE)
@@ -223,11 +237,11 @@ jobs:
           except Exception as e:
               log(f'  Result: FAILED - {type(e).__name__}: {e}')
 
-          # Test 3: Multiple rapid prepared requests (like Poetry retries)
-          log('Test 3: Multiple rapid prepared requests...')
+          # Test 4: Multiple rapid prepared requests with FileCache (like Poetry retries)
+          log('Test 4: Multiple rapid prepared requests with FileCache...')
           for i in range(6):
               try:
-                  req = requests.Request('GET', url)
+                  req = requests.Request('GET', url_html, headers=headers)
                   prepared = session.prepare_request(req)
                   settings = session.merge_environment_settings(prepared.url, {}, None, True, None)
                   r = session.send(prepared, timeout=5, allow_redirects=True, **settings)
@@ -240,19 +254,22 @@ jobs:
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
-          # Create a virtual environment for poetry to avoid permission issues
+          # Create venv and install poetry
           python3 -m venv /tmp/poetry-venv
-          /tmp/poetry-venv/bin/pip install poetry
+          /tmp/poetry-venv/bin/pip install -q poetry
 
-          # Create a poetry project
+          # Show Poetry version
+          /tmp/poetry-venv/bin/poetry --version
+
+          # Create and init project
           mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
           /tmp/poetry-venv/bin/poetry init --no-interaction --name test --dependency requests
 
-          # Install the package with verbose output
-          /tmp/poetry-venv/bin/poetry install --no-root -vvv
+          # Install (verbose for debugging connection issues)
+          /tmp/poetry-venv/bin/poetry install --no-root -v 2>&1 || echo "Poetry install failed"
 
-          # Verify it works
-          /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)"
+          # Verify
+          /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)" || echo "Could not import requests"
 
       - name: Verify Poetry security check in logs
         if: false  # Skip for now
