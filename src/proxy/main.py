@@ -189,10 +189,7 @@ class MitmproxyAddon:
 
     def _should_log_full(self, host: str) -> bool:
         """Check if we should log full request/response for this host."""
-        result = host.endswith(".socket.dev") or host == "socket.dev"
-        if "socket" in host.lower():
-            logger.info(f"DEBUG _should_log_full: host={host!r} result={result}")
-        return result
+        return host.endswith(".socket.dev") or host == "socket.dev"
 
     def _log_headers(self, headers, prefix: str) -> None:
         """Log all headers with a prefix."""
@@ -220,38 +217,34 @@ class MitmproxyAddon:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
         url = flow.request.pretty_url
-        host = flow.request.host
+        # In transparent mode, flow.request.host may be IP; get hostname from pretty_host
+        host = flow.request.pretty_host
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
         comm = get_comm(pid) if pid else "?"
-        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} host={host!r} pid={pid or '?'} comm={comm}")
+        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm}")
 
         # Full logging for socket.dev
         if self._should_log_full(host):
-            try:
-                logger.info(f">>>>>>>>>> REQUEST to {host} >>>>>>>>>>")
-                logger.info(f">>> {flow.request.method} {flow.request.path} HTTP/{flow.request.http_version}")
-                self._log_headers(flow.request.headers, ">>> ")
-                logger.info(">>>")
-                self._log_body(flow.request.content, ">>> ", flow.request.headers.get("content-type", ""))
-                logger.info(f">>>>>>>>>> END REQUEST >>>>>>>>>>")
-            except Exception as e:
-                logger.error(f"Error logging request: {e}")
+            logger.info(f">>> REQUEST to {host} >>>")
+            logger.info(f">>> {flow.request.method} {flow.request.path} HTTP/{flow.request.http_version}")
+            self._log_headers(flow.request.headers, ">>> ")
+            logger.info(">>>")
+            self._log_body(flow.request.content, ">>> ", flow.request.headers.get("content-type", ""))
+            logger.info(f">>> END REQUEST >>>")
 
     def response(self, flow: http.HTTPFlow) -> None:
-        host = flow.request.host
+        # In transparent mode, flow.request.host may be IP; get hostname from pretty_host
+        host = flow.request.pretty_host
 
         # Full logging for socket.dev
         if self._should_log_full(host):
-            try:
-                logger.info(f"<<<<<<<<<< RESPONSE from {host} <<<<<<<<<<")
-                logger.info(f"<<< HTTP/{flow.response.http_version} {flow.response.status_code} {flow.response.reason}")
-                self._log_headers(flow.response.headers, "<<< ")
-                logger.info("<<<")
-                self._log_body(flow.response.content, "<<< ", flow.response.headers.get("content-type", ""))
-                logger.info(f"<<<<<<<<<< END RESPONSE <<<<<<<<<<")
-            except Exception as e:
-                logger.error(f"Error logging response: {e}")
+            logger.info(f"<<< RESPONSE from {host} <<<")
+            logger.info(f"<<< HTTP/{flow.response.http_version} {flow.response.status_code} {flow.response.reason}")
+            self._log_headers(flow.response.headers, "<<< ")
+            logger.info("<<<")
+            self._log_body(flow.response.content, "<<< ", flow.response.headers.get("content-type", ""))
+            logger.info(f"<<< END RESPONSE <<<")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
