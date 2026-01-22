@@ -30,12 +30,17 @@ Latest logs show the complete flow for Poetry requests:
 The proxy sends a valid 200 OK response with the correct body. Poetry receives it but
 still considers it a failure and retries.
 
-**NEW THEORY**: The issue is in how Poetry processes the response, not in the connection
-or transport layer. Possible causes:
-- Content-Type mismatch (Poetry expects JSON but gets something else?)
-- Invalid JSON parsing
-- Cache-control header issue with CacheControlAdapter
-- gzip decompression issue on the client side
+**CONFIRMED**: The proxy sends a perfect response:
+- Status: 200 OK
+- Content-Type: application/vnd.pypi.simple.v1+json (exactly what Poetry requests)
+- Content-Length matches raw body size
+- Content-Encoding: gzip (Poetry requests this)
+
+**CURRENT THEORY**: The issue is in how Poetry processes the response, not in the proxy:
+1. **CacheControlAdapter serialization issue**: The FileCache might fail to serialize the response
+2. **gzip decompression issue**: Something fails when Poetry decompresses the response
+3. **JSON parsing issue**: The decompressed content might have unexpected characters
+4. **Socket read issue**: Connection reset during body read despite headers being received
 
 ### 1. Response Hook Never Called for Poetry
 - For working clients (pip, raw requests): `response()` hook is called after `request()` hook

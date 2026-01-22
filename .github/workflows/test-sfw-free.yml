@@ -303,8 +303,11 @@ jobs:
           mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
           /tmp/poetry-venv/bin/poetry init --no-interaction --name test --dependency requests
 
-          # Install with very verbose output
-          /tmp/poetry-venv/bin/poetry install --no-root -vvv 2>&1 || echo "Poetry install failed"
+          # Try disabling Poetry's HTTP cache to see if CacheControlAdapter is the issue
+          export POETRY_EXPERIMENTAL_SYSTEM_GIT_CLIENT=true  # May help with some edge cases
+
+          # Install with very verbose output and --no-cache to disable Poetry's resolver cache
+          /tmp/poetry-venv/bin/poetry install --no-root -vvv --no-cache 2>&1 || echo "Poetry install failed"
 
           # Verify
           /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)" || echo "Could not import requests"
