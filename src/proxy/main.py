@@ -195,9 +195,9 @@ class MitmproxyAddon:
         # Always log socket.dev
         if host.endswith(".socket.dev") or host == "socket.dev":
             return True
-        # Disabled: pypi.org logging was for debugging Poetry issue
-        # if host.endswith("pypi.org") or host == "pypi.org":
-        #     return True
+        # Log pypi.org headers only (no body) for debugging Poetry issue
+        if host.endswith("pypi.org") or host == "pypi.org":
+            return True
         return False
 
     def _log_headers(self, headers, prefix: str) -> None:
@@ -233,14 +233,11 @@ class MitmproxyAddon:
         comm = get_comm(pid) if pid else "?"
         logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm}")
 
-        # Full logging for socket.dev
+        # Full logging for debugging
         if self._should_log_full(host):
             logger.info(f">>> REQUEST to {host} >>>")
             logger.info(f">>> {flow.request.method} {flow.request.path} HTTP/{flow.request.http_version}")
             self._log_headers(flow.request.headers, ">>> ")
-            logger.info(">>>")
-            self._log_body(flow.request.content, ">>> ", flow.request.headers.get("content-type", ""))
-            logger.info(f">>> END REQUEST >>>")
 
         # Check package downloads for security issues
         pkg_ref = purl.parse_registry_url(url)
@@ -266,14 +263,9 @@ class MitmproxyAddon:
         # In transparent mode, flow.request.host may be IP; get hostname from pretty_host
         host = flow.request.pretty_host
 
-        # Full logging for socket.dev
+        # Full logging for debugging
         if self._should_log_full(host):
-            logger.info(f"<<< RESPONSE from {host} <<<")
-            logger.info(f"<<< HTTP/{flow.response.http_version} {flow.response.status_code} {flow.response.reason}")
-            self._log_headers(flow.response.headers, "<<< ")
-            logger.info("<<<")
-            self._log_body(flow.response.content, "<<< ", flow.response.headers.get("content-type", ""))
-            logger.info(f"<<< END RESPONSE <<<")
+            logger.info(f"<<< RESPONSE from {host}: {flow.response.status_code} {flow.response.reason}, {len(flow.response.content or b'')} bytes <<<")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
