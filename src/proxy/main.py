@@ -13,10 +13,12 @@ All traffic is attributed to PIDs via BPF maps.
 import asyncio
 import atexit
 import ctypes
+import json
 import logging
 import os
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Optional imports - graceful degradation if not available
@@ -57,9 +59,11 @@ class ConnKeyV4(ctypes.Structure):
 
 # Logging setup
 LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
+CONNECTIONS_FILE = os.environ.get("CONNECTIONS_FILE", "/tmp/connections.jsonl")
 MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", "/tmp/mitmproxy.log")
 VERBOSE = os.environ.get("VERBOSE", "0") == "1"
 
+# Operational logger (human-readable)
 logger = logging.getLogger("egress_proxy")
 logger.setLevel(logging.INFO)
 logger.propagate = False
@@ -67,6 +71,17 @@ logger.handlers.clear()
 _handler = logging.FileHandler(LOG_FILE)
 _handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
 logger.addHandler(_handler)
+
+# Connection events logger (JSONL format)
+_conn_file = open(CONNECTIONS_FILE, "a", buffering=1)  # Line-buffered
+
+
+def log_connection(**kwargs) -> None:
+    """Log a connection event as JSONL."""
+    event = {"ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds")}
+    event.update(kwargs)
+    _conn_file.write(json.dumps(event, separators=(",", ":")) + "\n")
+
 
 # Configure mitmproxy's internal logging (only in verbose mode)
 if VERBOSE:
@@ -185,7 +200,7 @@ shared_state = SharedState()
 
 
 class MitmproxyAddon:
-    """Mitmproxy addon for PID tracking."""
+    """Mitmproxy addon for PID tracking and connection logging."""
 
     def request(self, flow: http.HTTPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
@@ -193,20 +208,35 @@ class MitmproxyAddon:
         url = flow.request.pretty_url
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
-        comm = get_comm(pid) if pid else "?"
-        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm}")
+        comm = get_comm(pid) if pid else None
+        log_connection(
+            type="http",
+            src_port=src_port,
+            dst_ip=dst_ip,
+            dst_port=dst_port,
+            url=url,
+            pid=pid,
+            comm=comm,
+        )
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
-        comm = get_comm(pid) if pid else "?"
-        logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port} pid={pid or '?'} comm={comm}")
+        comm = get_comm(pid) if pid else None
+        log_connection(
+            type="tcp",
+            src_port=src_port,
+            dst_ip=dst_ip,
+            dst_port=dst_port,
+            pid=pid,
+            comm=comm,
+        )
 
     def dns_request(self, flow: dns.DNSFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
-        query_name = flow.request.questions[0].name if flow.request.questions else "?"
+        query_name = flow.request.questions[0].name if flow.request.questions else None
         txid = flow.request.id
 
         # Get info from nfqueue cache (has original 4-tuple from before NAT)
@@ -214,12 +244,20 @@ class MitmproxyAddon:
         cached = shared_state.dns_cache.pop(cache_key, None)
 
         if cached:
-            pid, original_dst_ip, original_dst_port = cached
-            comm = get_comm(pid) if pid else "?"
-            logger.info(f"DNS src_port={src_port} dst={original_dst_ip}:{original_dst_port} name={query_name} txid={txid} pid={pid or '?'} comm={comm}")
+            pid, dst_ip, dst_port = cached
+            comm = get_comm(pid) if pid else None
+            log_connection(
+                type="dns",
+                src_port=src_port,
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                name=query_name,
+                pid=pid,
+                comm=comm,
+            )
         else:
-            # Cache miss - this is a bug, nfqueue should have seen the packet first
-            logger.error(f"DNS cache miss! src_port={src_port} txid={txid} name={query_name} - nfqueue didn't see this packet")
+            # Cache miss - nfqueue should have seen the packet first
+            logger.error(f"DNS cache miss: src_port={src_port} txid={txid} name={query_name}")
 
 
 class NfqueueHandler:
@@ -260,7 +298,6 @@ class NfqueueHandler:
 
                     # Look up PID
                     pid = shared_state.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
-                    comm = get_comm(pid) if pid else "?"
 
                     # DNS detection by packet structure (catches DNS on any port)
                     # This runs in mangle (before NAT), so we see the original destination
@@ -270,12 +307,21 @@ class NfqueueHandler:
                         # Mark packet for iptables to redirect to mitmproxy
                         pkt.set_mark(2)
                         # Cache: (src_port, txid) -> (pid, dst_ip, dst_port)
+                        # Logging happens in mitmproxy's dns_request() to avoid double-logging
                         cache_key = (src_port, txid)
                         shared_state.dns_cache[cache_key] = (pid, dst_ip, dst_port)
-                        logger.info(f"DNS(nfq) src={src_ip}:{src_port} dst={dst_ip}:{dst_port} txid={txid} pid={pid or '?'} comm={comm} mark=2")
                     else:
-                        # Non-DNS UDP
-                        logger.info(f"UDP src={src_ip}:{src_port} dst={dst_ip}:{dst_port} pid={pid or '?'} comm={comm}")
+                        # Non-DNS UDP - log here (not handled by mitmproxy)
+                        comm = get_comm(pid) if pid else None
+                        log_connection(
+                            type="udp",
+                            src_ip=src_ip,
+                            src_port=src_port,
+                            dst_ip=dst_ip,
+                            dst_port=dst_port,
+                            pid=pid,
+                            comm=comm,
+                        )
         except Exception as e:
             logger.warning(f"Error processing UDP packet: {e}")
 
@@ -388,6 +434,7 @@ def cleanup_on_exit():
     _cleanup_done = True
     logger.info("atexit: cleaning up BPF...")
     shared_state.cleanup_bpf()
+    _conn_file.close()
 
 
 # Register atexit handler early
