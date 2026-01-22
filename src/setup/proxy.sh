@@ -96,6 +96,10 @@ start_proxy() {
     echo "REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
     echo "AWS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
     echo "HEX_CACERTS_PATH=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+    # SSL_CERT_FILE for Poetry/httpx and other Python tools
+    echo "SSL_CERT_FILE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+    # CURL_CA_BUNDLE for curl
+    echo "CURL_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
 }
 
 stop_proxy() {
