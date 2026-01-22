@@ -19,6 +19,9 @@ import signal
 import sys
 from pathlib import Path
 
+from . import purl
+from . import socket_api
+
 # Optional imports - graceful degradation if not available
 try:
     from netfilterqueue import NetfilterQueue
@@ -213,7 +216,7 @@ class MitmproxyAddon:
         else:
             logger.info(f"{prefix}(binary data, {len(body)} bytes, content-type: {content_type})")
 
-    def request(self, flow: http.HTTPFlow) -> None:
+    async def request(self, flow: http.HTTPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
         url = flow.request.pretty_url
@@ -232,6 +235,26 @@ class MitmproxyAddon:
             logger.info(">>>")
             self._log_body(flow.request.content, ">>> ", flow.request.headers.get("content-type", ""))
             logger.info(f">>> END REQUEST >>>")
+
+        # Check package downloads for security issues
+        pkg_ref = purl.parse_registry_url(url)
+        if pkg_ref and pkg_ref.version:
+            pkg_purl = pkg_ref.purl
+            logger.info(f"SECURITY checking {pkg_purl}")
+            result = await socket_api.check_package(pkg_purl)
+
+            if result.action == socket_api.Action.BLOCK:
+                reasons = ", ".join(result.block_reasons) or "security alert"
+                logger.warning(f"SECURITY BLOCKED {pkg_purl}: {reasons}")
+                # Return 403 Forbidden to block the download
+                flow.response = http.Response.make(
+                    403,
+                    f"Blocked by egress-filter: {reasons}\n\nPackage: {pkg_ref.name}@{pkg_ref.version}\nPURL: {pkg_purl}\n",
+                    {"Content-Type": "text/plain"},
+                )
+            elif result.action == socket_api.Action.WARN:
+                alert_types = [a.type for a in result.alerts]
+                logger.warning(f"SECURITY WARNING {pkg_purl}: {alert_types}")
 
     def response(self, flow: http.HTTPFlow) -> None:
         # In transparent mode, flow.request.host may be IP; get hostname from pretty_host
@@ -389,6 +412,9 @@ async def run_mitmproxy():
         if master:
             logger.info("Shutting down mitmproxy master...")
             master.shutdown()
+        # Close Socket API client
+        client = socket_api.get_client()
+        await client.close()
 
 
 async def run_nfqueue(handler: NfqueueHandler):

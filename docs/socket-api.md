@@ -143,8 +143,18 @@ Content-Type: application/json
 }
 ```
 
+## Test Data: Known Malware
+
+For testing blocking functionality, Aikido maintains public lists of known malicious packages:
+
+- **npm**: https://malware-list.aikido.dev/malware_predictions.json
+- **PyPI**: https://malware-list.aikido.dev/malware_pypi.json
+
+These are large JSON files containing package names flagged as malicious.
+
 ## References
 
 - [Package URL Specification](https://github.com/package-url/purl-spec)
 - [Deno audit implementation](https://github.com/denoland/deno/blob/main/cli/tools/pm/audit.rs)
 - [bun-security-scanner](https://github.com/SocketDev/bun-security-scanner)
+- [Aikido malware lists](https://malware-list.aikido.dev/)
