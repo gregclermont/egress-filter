@@ -29,6 +29,29 @@ jobs:
           cd test-project
           node -e "console.log('is-odd(3):', require('is-odd')(3))"
 
+      - name: Test malware blocking
+        run: |
+          cd test-project
+          echo "Attempting to install known malware package (should be blocked)..."
+          # atg-atgse is a known malware package (data exfiltration)
+          if npm install atg-atgse@1.0.0 2>&1; then
+            echo "ERROR: Malware package was NOT blocked!"
+            exit 1
+          else
+            echo "Package was blocked as expected"
+          fi
+
+      - name: Verify blocking in logs
+        run: |
+          echo "Checking proxy logs for SECURITY BLOCKED message..."
+          grep -q "SECURITY BLOCKED" /tmp/proxy.log || {
+            echo "ERROR: No SECURITY BLOCKED message found in proxy logs"
+            cat /tmp/proxy.log
+            exit 1
+          }
+          echo "Found SECURITY BLOCKED message"
+          grep "SECURITY BLOCKED" /tmp/proxy.log
+
       - name: Show proxy logs
         if: always()
         run: |
