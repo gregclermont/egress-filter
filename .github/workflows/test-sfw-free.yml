@@ -134,6 +134,7 @@ jobs:
           "
 
       - name: Test httpx (Poetry 2.x uses httpx)
+        if: false  # Skip - not used by Poetry's HTTP layer
         run: |
           python3 -m venv /tmp/httpx-venv
           /tmp/httpx-venv/bin/pip install httpx
@@ -168,6 +169,74 @@ jobs:
 
           log('httpx: ALL TESTS PASSED')
           HTTPX_TEST
+
+      - name: Test Poetry-style requests (CacheControlAdapter + session.send)
+        run: |
+          python3 -m venv /tmp/poetry-test-venv
+          /tmp/poetry-test-venv/bin/pip install requests cachecontrol
+          /tmp/poetry-test-venv/bin/python << 'POETRY_HTTP_TEST'
+          import requests
+          from cachecontrol import CacheControlAdapter
+          import sys
+          import os
+
+          def log(msg):
+              print(msg, flush=True)
+
+          log('Testing Poetry-style HTTP requests...')
+          log(f'REQUESTS_CA_BUNDLE: {os.environ.get("REQUESTS_CA_BUNDLE", "not set")}')
+          log(f'SSL_CERT_FILE: {os.environ.get("SSL_CERT_FILE", "not set")}')
+
+          # Create session like Poetry does
+          session = requests.Session()
+          adapter = CacheControlAdapter()
+          session.mount('http://', adapter)
+          session.mount('https://', adapter)
+
+          url = 'https://pypi.org/simple/requests/'
+
+          # Test 1: Simple session.get()
+          log('Test 1: session.get()...')
+          try:
+              r = session.get(url, timeout=10)
+              log(f'  Result: Status={r.status_code}, Length={len(r.content)}')
+          except Exception as e:
+              log(f'  Result: FAILED - {type(e).__name__}: {e}')
+
+          # Test 2: Prepared request + session.send() (exactly like Poetry)
+          log('Test 2: Prepared request + session.send()...')
+          try:
+              req = requests.Request('GET', url)
+              prepared = session.prepare_request(req)
+
+              # Merge environment settings (picks up REQUESTS_CA_BUNDLE)
+              settings = session.merge_environment_settings(
+                  prepared.url, {}, None, True, None
+              )
+              log(f'  Merged settings: verify={settings.get("verify")}')
+
+              send_kwargs = {'timeout': 10, 'allow_redirects': True}
+              send_kwargs.update(settings)
+
+              r = session.send(prepared, **send_kwargs)
+              log(f'  Result: Status={r.status_code}, Length={len(r.content)}')
+          except Exception as e:
+              log(f'  Result: FAILED - {type(e).__name__}: {e}')
+
+          # Test 3: Multiple rapid prepared requests (like Poetry retries)
+          log('Test 3: Multiple rapid prepared requests...')
+          for i in range(6):
+              try:
+                  req = requests.Request('GET', url)
+                  prepared = session.prepare_request(req)
+                  settings = session.merge_environment_settings(prepared.url, {}, None, True, None)
+                  r = session.send(prepared, timeout=5, allow_redirects=True, **settings)
+                  log(f'  Request {i+1}: Status={r.status_code}')
+              except Exception as e:
+                  log(f'  Request {i+1}: FAILED - {type(e).__name__}: {e}')
+
+          log('Poetry-style HTTP: TESTS COMPLETED')
+          POETRY_HTTP_TEST
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
