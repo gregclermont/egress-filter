@@ -81,18 +81,19 @@ jobs:
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
-          # Install poetry via pip
-          pip install poetry
+          # Create a virtual environment for poetry to avoid permission issues
+          python3 -m venv /tmp/poetry-venv
+          /tmp/poetry-venv/bin/pip install poetry
 
           # Create a poetry project
-          mkdir -p poetry-test && cd poetry-test
-          poetry init --no-interaction --name test --dependency requests
+          mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
+          /tmp/poetry-venv/bin/poetry init --no-interaction --name test --dependency requests
 
           # Install the package (this should go through our transparent proxy)
-          poetry install --no-root
+          /tmp/poetry-venv/bin/poetry install --no-root
 
           # Verify it works
-          poetry run python -c "import requests; print('requests version:', requests.__version__)"
+          /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)"
 
       - name: Verify Poetry security check in logs
         run: |
