@@ -19,8 +19,8 @@ import signal
 import sys
 from pathlib import Path
 
-from . import purl
-from . import socket_api
+import purl
+import socket_api
 
 # Optional imports - graceful degradation if not available
 try:
