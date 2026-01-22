@@ -189,13 +189,14 @@ jobs:
           log(f'REQUESTS_CA_BUNDLE: {os.environ.get("REQUESTS_CA_BUNDLE", "not set")}')
           log(f'SSL_CERT_FILE: {os.environ.get("SSL_CERT_FILE", "not set")}')
 
-          # Create session like Poetry does (with FileCache!)
+          # Create session like Poetry does (with FileCache AND pool_maxsize!)
           cache_dir = tempfile.mkdtemp(prefix='poetry-cache-')
           log(f'Using cache dir: {cache_dir}')
           session = requests.Session()
-          session.headers['User-Agent'] = 'poetry/2.0.0'
+          session.headers['User-Agent'] = 'poetry/2.3.1 CPython/3.12.3 Linux/6.11.0-1018-azure'
           file_cache = FileCache(cache_dir)
-          adapter = CacheControlAdapter(cache=file_cache)
+          # Poetry uses pool_maxsize=10 (requests.adapters.DEFAULT_POOLSIZE)
+          adapter = CacheControlAdapter(cache=file_cache, pool_maxsize=10)
           session.mount('http://', adapter)
           session.mount('https://', adapter)
 
@@ -246,6 +247,26 @@ jobs:
                   settings = session.merge_environment_settings(prepared.url, {}, None, True, None)
                   r = session.send(prepared, timeout=5, allow_redirects=True, **settings)
                   log(f'  Request {i+1}: Status={r.status_code}')
+              except Exception as e:
+                  log(f'  Request {i+1}: FAILED - {type(e).__name__}: {e}')
+
+          # Test 5: New session per request (like Poetry retry with new connections)
+          log('Test 5: New session per request (Poetry retry pattern)...')
+          for i in range(6):
+              try:
+                  # Create new session like Poetry does on retry
+                  new_session = requests.Session()
+                  new_session.headers['User-Agent'] = 'poetry/2.3.1 CPython/3.12.3 Linux/6.11.0-1018-azure'
+                  new_adapter = CacheControlAdapter(cache=FileCache(cache_dir), pool_maxsize=10)
+                  new_session.mount('http://', new_adapter)
+                  new_session.mount('https://', new_adapter)
+
+                  req = requests.Request('GET', url_html, headers=headers)
+                  prepared = new_session.prepare_request(req)
+                  settings = new_session.merge_environment_settings(prepared.url, {}, None, True, None)
+                  r = new_session.send(prepared, timeout=15, allow_redirects=True, **settings)
+                  log(f'  Request {i+1}: Status={r.status_code}')
+                  new_session.close()
               except Exception as e:
                   log(f'  Request {i+1}: FAILED - {type(e).__name__}: {e}')
 
