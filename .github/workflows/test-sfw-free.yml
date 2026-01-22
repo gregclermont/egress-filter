@@ -32,5 +32,9 @@ jobs:
       - name: Show proxy logs
         if: always()
         run: |
-          echo "=== Proxy Log ==="
+          sleep 1  # Allow log flush
+          echo "=== Proxy Log (socket.dev entries) ==="
+          grep -E "(socket\.dev|>>>>>>|<<<<<<)" /tmp/proxy.log || echo "No socket.dev entries found"
+          echo ""
+          echo "=== Full Proxy Log ==="
           cat /tmp/proxy.log || echo "No log file found"

@@ -225,24 +225,24 @@ class MitmproxyAddon:
 
         # Full logging for socket.dev
         if self._should_log_full(host):
-            logger.info(f">>> REQUEST to {host} >>>")
+            logger.info(f">>>>>>>>>> REQUEST to {host} >>>>>>>>>>")
             logger.info(f">>> {flow.request.method} {flow.request.path} HTTP/{flow.request.http_version}")
             self._log_headers(flow.request.headers, ">>> ")
             logger.info(">>>")
             self._log_body(flow.request.content, ">>> ", flow.request.headers.get("content-type", ""))
-            logger.info(">>> END REQUEST >>>")
+            logger.info(f">>>>>>>>>> END REQUEST >>>>>>>>>>")
 
     def response(self, flow: http.HTTPFlow) -> None:
         host = flow.request.host
 
         # Full logging for socket.dev
         if self._should_log_full(host):
-            logger.info(f"<<< RESPONSE from {host} <<<")
+            logger.info(f"<<<<<<<<<< RESPONSE from {host} <<<<<<<<<<")
             logger.info(f"<<< HTTP/{flow.response.http_version} {flow.response.status_code} {flow.response.reason}")
             self._log_headers(flow.response.headers, "<<< ")
             logger.info("<<<")
             self._log_body(flow.response.content, "<<< ", flow.response.headers.get("content-type", ""))
-            logger.info("<<< END RESPONSE <<<")
+            logger.info(f"<<<<<<<<<< END RESPONSE <<<<<<<<<<")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
