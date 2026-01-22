@@ -79,6 +79,32 @@ jobs:
           grep "SECURITY checking pkg:cargo" /tmp/proxy.log || echo "(no cargo checks found)"
           grep "crates.io\|static.crates.io" /tmp/proxy.log | head -10 || echo "(no crates.io requests found)"
 
+      - name: Test Poetry (not supported by sfw, but works with transparent proxy)
+        run: |
+          # Install poetry
+          curl -sSL https://install.python-poetry.org | python3 -
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # Create a poetry project
+          mkdir -p poetry-test && cd poetry-test
+          poetry init --no-interaction --name test --dependency requests
+
+          # Install the package (this should go through our transparent proxy)
+          poetry install --no-root
+
+          # Verify it works
+          poetry run python -c "import requests; print('requests version:', requests.__version__)"
+
+      - name: Verify Poetry security check in logs
+        run: |
+          echo "Checking proxy logs for PyPI security check from Poetry..."
+          grep "SECURITY checking pkg:pypi/requests" /tmp/proxy.log || {
+            echo "WARNING: No PyPI security check found for requests"
+            echo "Checking for any pythonhosted.org traffic..."
+          }
+          grep "pythonhosted.org\|pypi.org" /tmp/proxy.log | head -10 || echo "(no PyPI requests found)"
+          grep "SECURITY checking pkg:pypi" /tmp/proxy.log | head -5 || echo "(no pypi checks found)"
+
       - name: Show proxy logs
         if: always()
         run: |
