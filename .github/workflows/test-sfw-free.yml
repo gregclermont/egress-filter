@@ -137,41 +137,37 @@ jobs:
         run: |
           python3 -m venv /tmp/httpx-venv
           /tmp/httpx-venv/bin/pip install httpx
-          /tmp/httpx-venv/bin/python -c "
+          /tmp/httpx-venv/bin/python << 'HTTPX_TEST'
           import httpx
-          import ssl
+          import sys
           import os
 
-          print('Testing httpx library...')
-          print(f'SSL_CERT_FILE: {os.environ.get(\"SSL_CERT_FILE\", \"not set\")}')
+          def log(msg):
+              print(msg, flush=True)
 
-          # Test with default SSL context
-          print('Test 1: Default SSL context...')
+          log(f'httpx version: {httpx.__version__}')
+          log(f'SSL_CERT_FILE: {os.environ.get("SSL_CERT_FILE", "not set")}')
+
+          # Test 1: Single request with default SSL
+          log('Test 1: Single request with default SSL context...')
           try:
               r = httpx.get('https://pypi.org/simple/requests/', timeout=10)
-              print(f'  Status: {r.status_code}, Length: {len(r.content)}')
+              log(f'  Result: Status={r.status_code}, Length={len(r.content)}')
           except Exception as e:
-              print(f'  FAILED: {e}')
+              log(f'  Result: FAILED - {type(e).__name__}: {e}')
+              sys.exit(1)
 
-          # Test with explicit verify path
-          print('Test 2: Explicit verify=/tmp/mitmproxy-ca-cert.pem...')
+          # Test 2: Using Client (like Poetry does)
+          log('Test 2: Using httpx.Client...')
           try:
-              r = httpx.get('https://pypi.org/simple/requests/', verify='/tmp/mitmproxy-ca-cert.pem', timeout=10)
-              print(f'  Status: {r.status_code}, Length: {len(r.content)}')
+              with httpx.Client(timeout=10) as client:
+                  r = client.get('https://pypi.org/simple/requests/')
+                  log(f'  Result: Status={r.status_code}, Length={len(r.content)}')
           except Exception as e:
-              print(f'  FAILED: {e}')
+              log(f'  Result: FAILED - {type(e).__name__}: {e}')
 
-          # Test multiple rapid requests (simulating Poetry's retry behavior)
-          print('Test 3: Multiple rapid requests...')
-          for i in range(6):
-              try:
-                  r = httpx.get('https://pypi.org/simple/requests/', timeout=5)
-                  print(f'  Request {i+1}: Status {r.status_code}')
-              except Exception as e:
-                  print(f'  Request {i+1}: FAILED - {e}')
-
-          print('httpx: DONE')
-          "
+          log('httpx: ALL TESTS PASSED')
+          HTTPX_TEST
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
