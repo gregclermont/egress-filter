@@ -277,6 +277,8 @@ jobs:
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
+          set +e  # Disable errexit to ensure we capture all output
+
           # Create venv and install poetry
           python3 -m venv /tmp/poetry-venv
           /tmp/poetry-venv/bin/pip install -q poetry
@@ -303,20 +305,23 @@ jobs:
           mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
           /tmp/poetry-venv/bin/poetry init --no-interaction --name test --dependency requests
 
-          # Try disabling Poetry's HTTP cache to see if CacheControlAdapter is the issue
-          export POETRY_EXPERIMENTAL_SYSTEM_GIT_CLIENT=true  # May help with some edge cases
+          # Install with strace to capture syscalls
+          echo "=== Starting Poetry install with strace ==="
+          strace -f -e trace=network,read,write -s 200 -o /tmp/poetry-strace.log \
+            /tmp/poetry-venv/bin/poetry install --no-root -v 2>&1
+          POETRY_EXIT=$?
+          echo "=== Poetry exit code: $POETRY_EXIT ==="
 
-          # Install with very verbose output
-          # Use strace to see what's happening at the syscall level
-          strace -f -e trace=network,read,write -o /tmp/poetry-strace.log \
-            /tmp/poetry-venv/bin/poetry install --no-root -v 2>&1 || echo "Poetry install failed"
+          # Show strace output - look for errors around recv/read failures
+          echo "=== Strace: looking for errors ==="
+          grep -E "= -1|ECONNRESET|EPIPE|error" /tmp/poetry-strace.log | tail -50 || echo "(no errors found)"
 
-          # Show relevant strace output (last 100 lines)
-          echo "=== Strace (last 100 lines) ==="
-          tail -100 /tmp/poetry-strace.log || echo "No strace log"
+          echo "=== Strace: SSL/network activity for pypi.org connection ==="
+          # Find the socket file descriptors used for pypi.org and look at their traffic
+          grep -E "connect\(.*151\.101\.|read\(|write\(|recv\(" /tmp/poetry-strace.log | tail -100 || echo "(no network activity found)"
 
-          # Verify
-          /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)" || echo "Could not import requests"
+          # Still fail the step if Poetry failed
+          exit $POETRY_EXIT
 
       - name: Verify Poetry security check in logs
         if: false  # Skip for now
