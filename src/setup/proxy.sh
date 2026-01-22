@@ -91,6 +91,13 @@ start_proxy() {
     cp "$cert_file" /tmp/mitmproxy-ca-cert.pem
     chmod 644 /tmp/mitmproxy-ca-cert.pem
 
+    # Restore ownership of directories we created as root (via sudo -E)
+    # This prevents permission issues for user tools that share these directories
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        [[ -d /home/runner/.cache ]] && chown -R "$SUDO_USER:$SUDO_USER" /home/runner/.cache
+        [[ -d /home/runner/.mitmproxy ]] && chown -R "$SUDO_USER:$SUDO_USER" /home/runner/.mitmproxy
+    fi
+
     # Set CA env vars for subsequent steps (wide CI tool support)
     echo "NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
     echo "REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
