@@ -187,14 +187,62 @@ shared_state = SharedState()
 class MitmproxyAddon:
     """Mitmproxy addon for PID tracking."""
 
+    def _should_log_full(self, host: str) -> bool:
+        """Check if we should log full request/response for this host."""
+        return host.endswith(".socket.dev") or host == "socket.dev"
+
+    def _log_headers(self, headers, prefix: str) -> None:
+        """Log all headers with a prefix."""
+        for name, value in headers.items():
+            logger.info(f"{prefix}{name}: {value}")
+
+    def _log_body(self, body: bytes | None, prefix: str, content_type: str = "") -> None:
+        """Log body content with a prefix."""
+        if not body:
+            logger.info(f"{prefix}(empty body)")
+            return
+        # Try to decode as text for readable content types
+        is_text = any(ct in content_type.lower() for ct in ["json", "text", "xml", "javascript"])
+        if is_text:
+            try:
+                text = body.decode("utf-8")
+                for line in text.split("\n"):
+                    logger.info(f"{prefix}{line}")
+            except UnicodeDecodeError:
+                logger.info(f"{prefix}(binary data, {len(body)} bytes)")
+        else:
+            logger.info(f"{prefix}(binary data, {len(body)} bytes, content-type: {content_type})")
+
     def request(self, flow: http.HTTPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
         url = flow.request.pretty_url
+        host = flow.request.host
 
         pid = shared_state.lookup_pid(dst_ip, src_port, dst_port)
         comm = get_comm(pid) if pid else "?"
         logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} pid={pid or '?'} comm={comm}")
+
+        # Full logging for socket.dev
+        if self._should_log_full(host):
+            logger.info(f">>> REQUEST to {host} >>>")
+            logger.info(f">>> {flow.request.method} {flow.request.path} HTTP/{flow.request.http_version}")
+            self._log_headers(flow.request.headers, ">>> ")
+            logger.info(">>>")
+            self._log_body(flow.request.content, ">>> ", flow.request.headers.get("content-type", ""))
+            logger.info(">>> END REQUEST >>>")
+
+    def response(self, flow: http.HTTPFlow) -> None:
+        host = flow.request.host
+
+        # Full logging for socket.dev
+        if self._should_log_full(host):
+            logger.info(f"<<< RESPONSE from {host} <<<")
+            logger.info(f"<<< HTTP/{flow.response.http_version} {flow.response.status_code} {flow.response.reason}")
+            self._log_headers(flow.response.headers, "<<< ")
+            logger.info("<<<")
+            self._log_body(flow.response.content, "<<< ", flow.response.headers.get("content-type", ""))
+            logger.info("<<< END RESPONSE <<<")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
