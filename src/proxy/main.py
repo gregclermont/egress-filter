@@ -77,9 +77,17 @@ _conn_file = open(CONNECTIONS_FILE, "a", buffering=1)  # Line-buffered
 
 
 def log_connection(**kwargs) -> None:
-    """Log a connection event as JSONL."""
+    """Log a connection event as JSONL (pid and src_port at end for readability)."""
+    # Extract fields we want at the end
+    pid = kwargs.pop("pid", None)
+    src_port = kwargs.pop("src_port", None)
+    # Build event with ts first, then remaining fields, then pid/src_port at end
     event = {"ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds")}
     event.update(kwargs)
+    if src_port is not None:
+        event["src_port"] = src_port
+    if pid is not None:
+        event["pid"] = pid
     _conn_file.write(json.dumps(event, separators=(",", ":")) + "\n")
 
 
