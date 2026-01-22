@@ -320,6 +320,9 @@ jobs:
           build-backend = "poetry.core.masonry.api"
           TOML
 
+          # Set Poetry cache to a writable location (avoid /home/runner/.cache permissions issue)
+          export POETRY_CACHE_DIR=/tmp/poetry-cache
+
           # Run poetry lock with strace to capture the network activity
           echo "=== Starting Poetry lock with strace ==="
           strace -f -e trace=network,read,write,recvfrom -s 500 -o /tmp/poetry-strace.log \
