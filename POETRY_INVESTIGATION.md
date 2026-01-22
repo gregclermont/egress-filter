@@ -6,11 +6,7 @@ Poetry 2.3.1 now works correctly through the transparent mitmproxy.
 
 **Root Cause**: Cache directory permissions issue, NOT a network/proxy problem.
 
-**Solution**: Set `POETRY_CACHE_DIR` to a writable location before running Poetry:
-```bash
-export POETRY_CACHE_DIR=/tmp/poetry-cache
-poetry lock -v
-```
+**Root Fix**: The action's `sudo -E` preserved `HOME=/home/runner`, causing root processes (uv, mitmproxy) to create root-owned directories in `/home/runner/.cache`. Fixed by using a controlled environment that excludes HOME, so root processes use `/root/` instead.
 
 ## Timeline
 
@@ -27,20 +23,20 @@ poetry lock -v
 4. **Manual Poetry-style tests passed**: CacheControlAdapter + FileCache + session.send() all worked
 
 ### The Real Issue
-The `/home/runner/.cache` directory was not writable. This caused Poetry's internal cache system to fail, which manifested as apparent network failures.
+The `/home/runner/.cache` directory was owned by root, not the runner user. This happened because our action used `sudo -E` which preserved `HOME=/home/runner`. When uv and mitmproxy ran as root, they created directories in `/home/runner/.cache` owned by root.
 
-When Poetry's cache failed to write, it would:
+When Poetry tried to use its cache, the permissions failure manifested as apparent network failures:
 1. Receive the HTTP response successfully
-2. Fail to cache the response
+2. Fail to write to cache (permission denied)
 3. Consider the request failed
 4. Retry (creating a new connection)
 5. Repeat until exhausting retries
 
 ### The Fix
-Simply set `POETRY_CACHE_DIR` to a writable location:
-```bash
-export POETRY_CACHE_DIR=/tmp/poetry-cache
-```
+Changed from `sudo -E` to `sudo env VAR=value ...` with a controlled set of environment variables that **excludes HOME**:
+- Root processes now use `/root/` for caches (uv → `/root/.local/bin`, mitmproxy → `/root/.mitmproxy`)
+- `/home/runner/.cache` stays runner-owned
+- No workarounds needed (POETRY_CACHE_DIR, chown, etc.)
 
 ## What Now Works
 - Raw Python `requests.get()` ✅
@@ -54,11 +50,14 @@ export POETRY_CACHE_DIR=/tmp/poetry-cache
 
 1. **Misleading error messages**: "All attempts to connect failed" was actually a cache write failure
 2. **Symptom vs. cause**: The fast client disconnect wasn't a network issue - it was Poetry aborting after a cache failure
-3. **Environment matters**: GitHub Actions runners have specific permission constraints on ~/.cache
+3. **Environment matters**: `sudo -E` is dangerous - it passes HOME which causes root to create files in the user's home directory
+4. **Controlled environments**: Use explicit `sudo env VAR=value` instead of `sudo -E` to control exactly what gets passed
 
 ## Relevant Files
-- `.github/workflows/test-sfw-free.yml` - Test workflow with the fix
-- `src/proxy/main.py` - mitmproxy addon (works correctly)
+- `src/action/pre.js` - Uses controlled sudo environment
+- `src/action/post.js` - Uses controlled sudo environment
+- `src/setup/proxy.sh` - Uses explicit `/root/` paths
+- `.github/workflows/test-sfw-free.yml` - Test workflow
 
 ## Environment
 - Poetry version: 2.3.1

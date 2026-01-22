@@ -277,33 +277,13 @@ jobs:
 
       - name: Test Poetry (not supported by sfw, but works with transparent proxy)
         run: |
-          set +e  # Disable errexit to ensure we capture all output
-
           # Create venv and install poetry
           python3 -m venv /tmp/poetry-venv
           /tmp/poetry-venv/bin/pip install -q poetry
-
-          # Show Poetry version
           /tmp/poetry-venv/bin/poetry --version
 
-          # Debug: Check CA bundle environment
-          echo "REQUESTS_CA_BUNDLE=$REQUESTS_CA_BUNDLE"
-          echo "SSL_CERT_FILE=$SSL_CERT_FILE"
-          ls -la $REQUESTS_CA_BUNDLE || echo "CA file not found"
-
-          # Debug: Test raw requests from poetry venv (to rule out venv-specific issues)
-          /tmp/poetry-venv/bin/python -c "
-          import requests
-          import os
-          print('Testing from poetry venv...')
-          print('REQUESTS_CA_BUNDLE:', os.environ.get('REQUESTS_CA_BUNDLE'))
-          r = requests.get('https://pypi.org/simple/requests/')
-          print(f'Raw requests: Status={r.status_code}, Length={len(r.content)}')
-          "
-
-          # Create project directory and pyproject.toml manually (to avoid poetry init contacting pypi)
-          mkdir -p /tmp/poetry-test
-          cd /tmp/poetry-test
+          # Create project with dependency
+          mkdir -p /tmp/poetry-test && cd /tmp/poetry-test
           cat > pyproject.toml << 'TOML'
           [tool.poetry]
           name = "test"
@@ -320,26 +300,8 @@ jobs:
           build-backend = "poetry.core.masonry.api"
           TOML
 
-          # Set Poetry cache to a writable location (avoid /home/runner/.cache permissions issue)
-          export POETRY_CACHE_DIR=/tmp/poetry-cache
-
-          # Run poetry lock with strace to capture the network activity
-          echo "=== Starting Poetry lock with strace ==="
-          strace -f -e trace=network,read,write,recvfrom -s 500 -o /tmp/poetry-strace.log \
-            /tmp/poetry-venv/bin/poetry lock -v 2>&1
-          POETRY_EXIT=$?
-          echo "=== Poetry exit code: $POETRY_EXIT ==="
-
-          # Show strace output - look for errors around recv/read failures
-          echo "=== Strace: syscall errors ==="
-          grep -E "= -1|ECONNRESET|EPIPE|ETIMEDOUT" /tmp/poetry-strace.log | tail -30 || echo "(no errors found)"
-
-          # Look for SSL read activity - the response should be here
-          echo "=== Strace: read() calls with substantial data ==="
-          grep -E "read\([0-9]+, .{50}" /tmp/poetry-strace.log | tail -50 || echo "(no reads found)"
-
-          # Still fail the step if Poetry failed
-          exit $POETRY_EXIT
+          # Run poetry lock (should work without POETRY_CACHE_DIR workaround)
+          /tmp/poetry-venv/bin/poetry lock -v
 
       - name: Verify Poetry security check in logs
         if: false  # Skip for now
