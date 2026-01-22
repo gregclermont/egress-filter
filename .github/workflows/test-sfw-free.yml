@@ -306,8 +306,14 @@ jobs:
           # Try disabling Poetry's HTTP cache to see if CacheControlAdapter is the issue
           export POETRY_EXPERIMENTAL_SYSTEM_GIT_CLIENT=true  # May help with some edge cases
 
-          # Install with very verbose output and --no-cache to disable Poetry's resolver cache
-          /tmp/poetry-venv/bin/poetry install --no-root -vvv --no-cache 2>&1 || echo "Poetry install failed"
+          # Install with very verbose output
+          # Use strace to see what's happening at the syscall level
+          strace -f -e trace=network,read,write -o /tmp/poetry-strace.log \
+            /tmp/poetry-venv/bin/poetry install --no-root -v 2>&1 || echo "Poetry install failed"
+
+          # Show relevant strace output (last 100 lines)
+          echo "=== Strace (last 100 lines) ==="
+          tail -100 /tmp/poetry-strace.log || echo "No strace log"
 
           # Verify
           /tmp/poetry-venv/bin/poetry run python -c "import requests; print('requests version:', requests.__version__)" || echo "Could not import requests"
