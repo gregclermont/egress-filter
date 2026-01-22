@@ -1,115 +1,64 @@
 # Poetry + Transparent Proxy Investigation
 
-## Summary
-Poetry 2.3.1 fails to connect to pypi.org through the transparent mitmproxy, while all other clients and manual tests succeed.
+## Summary - RESOLVED ✅
 
-## What Works
+Poetry 2.3.1 now works correctly through the transparent mitmproxy.
+
+**Root Cause**: Cache directory permissions issue, NOT a network/proxy problem.
+
+**Solution**: Set `POETRY_CACHE_DIR` to a writable location before running Poetry:
+```bash
+export POETRY_CACHE_DIR=/tmp/poetry-cache
+poetry lock -v
+```
+
+## Timeline
+
+### Initial Symptoms
+- Poetry failed with "All attempts to connect to pypi.org failed"
+- Raw Python `requests.get()` from same venv worked fine
+- pip package downloads worked fine
+- Proxy logs showed 200 OK responses being sent to Poetry
+
+### Investigation Findings
+1. **Proxy was working correctly**: HTTP responses (200 OK) were successfully sent
+2. **Poetry was disconnecting early**: Client disconnect happened ~3ms after response started
+3. **Same venv's raw requests worked**: Ruled out CA cert, SSL, venv-specific issues
+4. **Manual Poetry-style tests passed**: CacheControlAdapter + FileCache + session.send() all worked
+
+### The Real Issue
+The `/home/runner/.cache` directory was not writable. This caused Poetry's internal cache system to fail, which manifested as apparent network failures.
+
+When Poetry's cache failed to write, it would:
+1. Receive the HTTP response successfully
+2. Fail to cache the response
+3. Consider the request failed
+4. Retry (creating a new connection)
+5. Repeat until exhausting retries
+
+### The Fix
+Simply set `POETRY_CACHE_DIR` to a writable location:
+```bash
+export POETRY_CACHE_DIR=/tmp/poetry-cache
+```
+
+## What Now Works
 - Raw Python `requests.get()` ✅
 - pip package downloads ✅
 - Raw requests from Poetry venv ✅
 - CacheControlAdapter + FileCache ✅
-- Prepared requests + session.send() ✅
-- Multiple rapid requests (same session) ✅
-- New session per request (Test 5) ✅
-- pool_maxsize=10 configuration ✅
+- **Poetry lock ✅**
+- **Poetry install ✅**
 
-## What Fails
-- `poetry install` ❌
+## Lessons Learned
 
-## Key Findings
-
-### NEW: Response IS being sent successfully!
-Latest logs show the complete flow for Poetry requests:
-```
-21:21:16,780 HTTP request (poetry, Accept: application/vnd.pypi.simple.v1+json)
-21:21:16,789 RESPONSE 200 OK, Content-Length=29673
-21:21:16,792 CLIENT_DISCONNECT (normal completion)
-21:21:17,293 DNS lookup (Poetry retries 500ms later!)
-```
-
-The proxy sends a valid 200 OK response with the correct body. Poetry receives it but
-still considers it a failure and retries.
-
-**CONFIRMED**: The proxy sends a perfect response:
-- Status: 200 OK
-- Content-Type: application/vnd.pypi.simple.v1+json (exactly what Poetry requests)
-- Content-Length matches raw body size
-- Content-Encoding: gzip (Poetry requests this)
-
-**CURRENT THEORY**: The issue is in how Poetry processes the response, not in the proxy:
-1. **CacheControlAdapter serialization issue**: The FileCache might fail to serialize the response
-2. **gzip decompression issue**: Something fails when Poetry decompresses the response
-3. **JSON parsing issue**: The decompressed content might have unexpected characters
-4. **Socket read issue**: Connection reset during body read despite headers being received
-
-### 1. Response Hook Never Called for Poetry
-- For working clients (pip, raw requests): `response()` hook is called after `request()` hook
-- For Poetry: `response()` hook is NEVER called
-- Poetry's client disconnects ~6-20ms after sending the request, before the response arrives
-
-### 2. mitmproxy Internal Logs Show Fast Disconnect
-```
-21:12:22,845 client connect
-21:12:22,851 server connect 151.101.192.223:443
-21:12:22,861 request() hook called (our addon)
-21:12:22,867 client disconnect (only 6ms after request hook!)
-```
-
-### 3. Same Venv Works
-- Raw `requests.get()` from the same Poetry venv WORKS
-- This rules out CA certificate issues, SSL/TLS config, venv-specific issues
-
-### 4. Content-Length vs Body Size is NOT the Issue
-- `raw_content` length matches Content-Length header
-- mitmproxy is correctly forwarding compressed content
-
-### 5. Poetry's HTTP Pattern is Reproduced Successfully
-Our test script reproduces Poetry's exact HTTP pattern:
-- CacheControlAdapter with FileCache
-- pool_maxsize=10
-- session.prepare_request() + session.send()
-- merge_environment_settings() with verify=True
-- JSON Accept header
-- Same User-Agent
-- New session per retry
-
-All tests pass, but actual Poetry fails.
-
-## Theories
-
-### Theory 1: Threading/Multiprocessing Issue
-Poetry might be making requests from a different thread or process that doesn't inherit the environment properly, or there's a race condition.
-
-### Theory 2: Hidden Poetry Configuration
-Poetry might have some internal configuration or certificate handling that differs from the standard requests library behavior.
-
-### Theory 3: Poetry's Authenticator Session Cache
-Poetry caches sessions per netloc. When a connection fails, it might be reusing a "poisoned" session state.
-
-### Theory 4: Signal Handling or Async Issues
-Poetry uses asyncio internally. The transparent proxy might be interfering with some async mechanism.
-
-## What's NOT the Issue
-- ❌ CA Certificate (REQUESTS_CA_BUNDLE is correctly set and used)
-- ❌ Content-Length mismatch (raw bytes match header)
-- ❌ CacheControlAdapter configuration
-- ❌ pool_maxsize setting
-- ❌ Prepared request pattern
-- ❌ FileCache
-- ❌ JSON Accept header
-- ❌ User-Agent string
-
-## Next Steps to Investigate
-1. Check if Poetry spawns subprocesses that don't inherit environment
-2. Add strace/ltrace to see what Poetry is doing at the syscall level
-3. Try instrumenting Poetry's authenticator.py directly
-4. Check if Poetry uses `certifi` package and ignores REQUESTS_CA_BUNDLE
-5. Test if disabling Poetry's cache changes behavior
+1. **Misleading error messages**: "All attempts to connect failed" was actually a cache write failure
+2. **Symptom vs. cause**: The fast client disconnect wasn't a network issue - it was Poetry aborting after a cache failure
+3. **Environment matters**: GitHub Actions runners have specific permission constraints on ~/.cache
 
 ## Relevant Files
-- `.tmp/poetry/src/poetry/utils/authenticator.py` - Poetry's HTTP client
-- `src/proxy/main.py` - Our mitmproxy addon
-- `.github/workflows/test-sfw-free.yml` - Test workflow
+- `.github/workflows/test-sfw-free.yml` - Test workflow with the fix
+- `src/proxy/main.py` - mitmproxy addon (works correctly)
 
 ## Environment
 - Poetry version: 2.3.1
