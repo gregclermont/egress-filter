@@ -264,8 +264,11 @@ class MitmproxyAddon:
 
         # Full logging for debugging
         if self._should_log_full(host):
-            logger.info(f"<<< RESPONSE from {host}: {flow.response.status_code} {flow.response.reason}, {len(flow.response.content or b'')} bytes <<<")
-            self._log_headers(flow.response.headers, "<<< ")
+            content_len_header = flow.response.headers.get("Content-Length", "?")
+            actual_len = len(flow.response.content or b'')
+            transfer_encoding = flow.response.headers.get("Transfer-Encoding", "none")
+            content_encoding = flow.response.headers.get("Content-Encoding", "none")
+            logger.info(f"<<< RESPONSE {host}: {flow.response.status_code}, Content-Length={content_len_header}, actual={actual_len}, TE={transfer_encoding}, CE={content_encoding} <<<")
 
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
