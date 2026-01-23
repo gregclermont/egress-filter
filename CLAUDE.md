@@ -16,7 +16,15 @@ eBPF-based connection-to-PID tracker integrated with mitmproxy transparent proxy
 src/
 ├── action/          # GitHub Action JS code (pre/main/post hooks)
 ├── bpf/             # BPF C source
-├── proxy/           # Python proxy code
+├── proxy/           # Python proxy package
+│   ├── main.py      # Orchestration, async runners, signal handling
+│   ├── bpf.py       # BPF program loading, PID lookup
+│   ├── logging.py   # Log configuration, JSONL connection logging
+│   ├── proc.py      # Process info from /proc (exe, cmdline, GitHub step)
+│   ├── utils.py     # Utilities (ip_to_int, get_cgroup, constants)
+│   └── handlers/    # Protocol handlers
+│       ├── mitmproxy.py  # HTTP/TCP/DNS via mitmproxy
+│       └── nfqueue.py    # UDP via netfilterqueue
 └── setup/           # Environment setup/teardown scripts
 dist/
 ├── pre/main/post/   # Compiled JS bundles
@@ -26,10 +34,11 @@ tests/               # Test scripts
 
 ## Key Files
 
-- `src/proxy/main.py` - mitmproxy addon with BPF-based PID tracking + nfqueue UDP handler
+- `src/proxy/main.py` - orchestration, async event loop, shutdown handling
+- `src/proxy/bpf.py` - BPF loading and PID lookup via maps
+- `src/proxy/handlers/` - protocol-specific connection handling
 - `src/bpf/conn_tracker.bpf.c` - BPF program for connection tracking + IPv6 blocking
 - `src/setup/proxy.sh` - proxy lifecycle (install deps, start, stop)
-- `src/setup/iptables.sh` - iptables rules management
 - `.github/workflows/test-transparent-proxy.yml` - CI workflow
 
 ## How It Works
@@ -59,7 +68,7 @@ uv sync
 uv run tinybpf docker-compile src/bpf/conn_tracker.bpf.c -o dist/bpf/conn_tracker.bpf.o
 
 # Run proxy (requires root for BPF)
-sudo .venv/bin/python src/proxy/main.py
+sudo PYTHONPATH=src .venv/bin/python -m proxy.main
 ```
 
 ## BPF Map Structure

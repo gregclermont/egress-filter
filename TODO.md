@@ -4,7 +4,7 @@
 
 - [x] Convert connection log to JSONL, ensure only one event logged per connection
 - [x] Collect process executable path and command line
-- [ ] Tighten and organize code for readability
+- [x] Tighten and organize code for readability
 
 ## Medium Priority
 
@@ -13,7 +13,7 @@
 
 ## Low Priority
 
-- [ ] Review main.py: remove unused/unnecessary code, reorder for readability, consider splitting into multiple files
+- [x] Review main.py: remove unused/unnecessary code, reorder for readability, consider splitting into multiple files
 - [ ] setup/proxy.sh: consider combining the two waiting loops (port 8080 and CA certificate) into one
 - [ ] Check if we need both UDP BPF handlers; add comment explaining why we track loopback for UDP; investigate if needed for TCP
 - [ ] Consider moving package.json / package-lock.json to src/action/
