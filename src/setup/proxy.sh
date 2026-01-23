@@ -101,21 +101,24 @@ start_proxy() {
 stop_proxy() {
     echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
 
-    # Send SIGTERM - Python handles graceful shutdown with 3s timeout
-    # Pattern matches both "python -m proxy.main" and old "python src/proxy/main.py"
+    # Kill proxy and any child processes (mitmproxy spawns workers)
+    # Pattern matches "python -m proxy.main" and "python src/proxy/main.py"
     pkill -TERM -f "python.*proxy\.main" 2>/dev/null || true
+    # Also kill mitmproxy directly in case it got orphaned
+    pkill -TERM -f "mitmproxy" 2>/dev/null || true
 
     # Wait for graceful shutdown (Python's SHUTDOWN_TIMEOUT is 3s)
     local i=0
-    while pgrep -f "python.*proxy\.main" >/dev/null 2>&1 && [ $i -lt 40 ]; do
+    while (pgrep -f "python.*proxy\.main" || pgrep -f "mitmproxy") >/dev/null 2>&1 && [ $i -lt 40 ]; do
         sleep 0.1
         i=$((i+1))
     done
 
     # Force kill if still running
-    if pgrep -f "python.*proxy\.main" >/dev/null 2>&1; then
+    if (pgrep -f "python.*proxy\.main" || pgrep -f "mitmproxy") >/dev/null 2>&1; then
         echo "Graceful shutdown failed, sending SIGKILL" | tee -a /tmp/proxy.log
         pkill -KILL -f "python.*proxy\.main" 2>/dev/null || true
+        pkill -KILL -f "mitmproxy" 2>/dev/null || true
     fi
 
     echo "Proxy stopped" | tee -a /tmp/proxy.log
