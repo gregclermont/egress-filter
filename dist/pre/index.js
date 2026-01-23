@@ -85856,7 +85856,11 @@ async function run() {
     core.info('Egress filter proxy is running');
   } catch (error) {
     core.setFailed(error.message);
+    process.exit(1);
   }
+
+  // Exit explicitly to avoid hanging on unresolved promises from @actions/cache
+  process.exit(0);
 }
 
 run();
