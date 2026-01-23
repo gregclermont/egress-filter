@@ -7,7 +7,7 @@
 
 set -u
 
-PROXY_LOG="${PROXY_LOG_FILE:-/tmp/proxy.log}"
+CONNECTIONS_LOG="${CONNECTIONS_FILE:-/tmp/connections.jsonl}"
 VERBOSE="${VERBOSE:-0}"
 
 # Colors for output
@@ -45,8 +45,8 @@ run_test() {
 
     # Mark log position before test
     local log_lines_before=0
-    if [[ -f "$PROXY_LOG" ]]; then
-        log_lines_before=$(wc -l < "$PROXY_LOG")
+    if [[ -f "$CONNECTIONS_LOG" ]]; then
+        log_lines_before=$(wc -l < "$CONNECTIONS_LOG")
     fi
 
     # Run command in background, capture PID
@@ -75,15 +75,15 @@ run_test() {
     # Give proxy a moment to log
     sleep 0.5
 
-    # Check if PID appears in new log entries
+    # Check if PID appears in new log entries (JSONL format: "pid":1234)
     local result="FAIL"
-    if [[ -f "$PROXY_LOG" ]]; then
+    if [[ -f "$CONNECTIONS_LOG" ]]; then
         local new_lines
-        new_lines=$(tail -n +$((log_lines_before + 1)) "$PROXY_LOG" 2>/dev/null || true)
+        new_lines=$(tail -n +$((log_lines_before + 1)) "$CONNECTIONS_LOG" 2>/dev/null || true)
 
-        if echo "$new_lines" | grep -q "pid=$pid"; then
+        if echo "$new_lines" | grep -q "\"pid\":$pid[,}]"; then
             result="PASS"
-            details=$(echo "$new_lines" | grep "pid=$pid" | head -1)
+            details=$(echo "$new_lines" | grep "\"pid\":$pid[,}]" | head -1)
             log -e "${GREEN}PASS${NC} - Found pid=$pid in logs"
             log "$details"
         else
@@ -93,7 +93,7 @@ run_test() {
             log "$new_lines" | tail -5
         fi
     else
-        details="Log file not found: $PROXY_LOG"
+        details="Log file not found: $CONNECTIONS_LOG"
         log -e "${RED}FAIL${NC} - $details"
     fi
 
@@ -135,11 +135,11 @@ if [[ "$VERBOSE" == "1" ]]; then
     echo "PID Tracking Comprehensive Test Suite"
     echo "========================================"
     echo ""
-    echo "Log file: $PROXY_LOG"
+    echo "Connections log: $CONNECTIONS_LOG"
     echo "Date: $(date)"
     echo ""
-    if [[ ! -f "$PROXY_LOG" ]]; then
-        echo "WARNING: Log file does not exist yet"
+    if [[ ! -f "$CONNECTIONS_LOG" ]]; then
+        echo "WARNING: Connections log file does not exist yet"
     fi
 else
     echo -n "Running tests "

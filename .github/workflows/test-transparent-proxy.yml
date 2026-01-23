@@ -1,6 +1,8 @@
 name: Test transparent proxy
 
 on:
+  push:
+    branches: [test]
   workflow_dispatch:
     inputs:
       verbose:
@@ -15,10 +17,10 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 2
     steps:
       - name: Setup egress filter
-        uses: gregclermont/egress-filter@main
+        uses: gregclermont/egress-filter@test
         env:
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
 
@@ -30,16 +32,19 @@ jobs:
       - name: Run PID tracking tests
         run: ./tests/test_pid_tracking.sh
         env:
-          PROXY_LOG_FILE: /tmp/proxy.log
+          CONNECTIONS_FILE: /tmp/connections.jsonl
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
+
+      - name: Show connection events
+        if: always()
+        run: cat /tmp/connections.jsonl || echo "No connections log found"
 
       - name: Show proxy logs
         if: always()
         env:
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
         run: |
-          echo "=== Proxy Log ==="
-          cat /tmp/proxy.log || echo "No log file found"
+          cat /tmp/proxy.log || echo "No proxy log found"
           if [ "$VERBOSE" = "1" ] && [ -f /tmp/mitmproxy.log ]; then
             echo ""
             echo "=== Mitmproxy Log (verbose) ==="

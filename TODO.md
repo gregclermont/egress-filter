@@ -2,18 +2,18 @@
 
 ## High Priority
 
-- [ ] Convert connection log to JSONL, ensure only one event logged per connection
-- [ ] Collect process executable path and command line
-- [ ] Tighten and organize code for readability
+- [x] Convert connection log to JSONL, ensure only one event logged per connection
+- [x] Collect process executable path and command line
+- [x] Tighten and organize code for readability
 
 ## Medium Priority
 
-- [ ] Collect GitHub job step info from process env for the log
+- [x] Collect GitHub job step info from process env for the log
 - [ ] Investigate UDP fast path using eBPF TC to mark allowed packets based on 4-tuple and skip nfqueue
 
 ## Low Priority
 
-- [ ] Review main.py: remove unused/unnecessary code, reorder for readability, consider splitting into multiple files
+- [x] Review main.py: remove unused/unnecessary code, reorder for readability, consider splitting into multiple files
 - [ ] setup/proxy.sh: consider combining the two waiting loops (port 8080 and CA certificate) into one
 - [ ] Check if we need both UDP BPF handlers; add comment explaining why we track loopback for UDP; investigate if needed for TCP
 - [ ] Consider moving package.json / package-lock.json to src/action/

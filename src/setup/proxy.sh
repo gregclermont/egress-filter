@@ -47,8 +47,8 @@ start_proxy() {
     trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
 
     # Start proxy (exclude root's traffic via iptables to prevent loops)
-    env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" \
-        "$REPO_ROOT"/.venv/bin/python "$REPO_ROOT/src/proxy/main.py" > /tmp/proxy-stdout.log 2>&1 &
+    env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
+        "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 
     # Wait for proxy to be listening
@@ -106,19 +106,20 @@ stop_proxy() {
     echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
 
     # Send SIGTERM - Python handles graceful shutdown with 3s timeout
-    pkill -TERM -f "python.*src/proxy/main" 2>/dev/null || true
+    # Pattern matches both "python -m proxy.main" and old "python src/proxy/main.py"
+    pkill -TERM -f "python.*proxy\.main" 2>/dev/null || true
 
     # Wait for graceful shutdown (Python's SHUTDOWN_TIMEOUT is 3s)
     local i=0
-    while pgrep -f "python.*src/proxy/main" >/dev/null 2>&1 && [ $i -lt 40 ]; do
+    while pgrep -f "python.*proxy\.main" >/dev/null 2>&1 && [ $i -lt 40 ]; do
         sleep 0.1
         i=$((i+1))
     done
 
     # Force kill if still running
-    if pgrep -f "python.*src/proxy/main" >/dev/null 2>&1; then
+    if pgrep -f "python.*proxy\.main" >/dev/null 2>&1; then
         echo "Graceful shutdown failed, sending SIGKILL" | tee -a /tmp/proxy.log
-        pkill -KILL -f "python.*src/proxy/main" 2>/dev/null || true
+        pkill -KILL -f "python.*proxy\.main" 2>/dev/null || true
     fi
 
     echo "Proxy stopped" | tee -a /tmp/proxy.log
