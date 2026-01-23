@@ -40,6 +40,8 @@ install_deps() {
     uv sync --quiet
 }
 
+PIDFILE="/tmp/proxy.pid"
+
 start_proxy() {
     cd "$REPO_ROOT"
 
@@ -50,6 +52,9 @@ start_proxy() {
     env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
         "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
+
+    # Write pidfile for reliable shutdown
+    echo "$proxy_pid" > "$PIDFILE"
 
     # Wait for proxy to be listening
     local counter=0
@@ -105,24 +110,32 @@ start_proxy() {
 stop_proxy() {
     echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
 
-    # Kill proxy and any child processes (mitmproxy spawns workers)
-    # Pattern matches "python -m proxy.main" and "python src/proxy/main.py"
-    pkill -TERM -f "python.*proxy\.main" 2>/dev/null || true
-    # Also kill mitmproxy directly in case it got orphaned
-    pkill -TERM -f "mitmproxy" 2>/dev/null || true
+    # Kill proxy using pidfile (more reliable than pattern matching)
+    if [ -f "$PIDFILE" ]; then
+        local pid
+        pid=$(cat "$PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Sending SIGTERM to proxy (PID $pid)" | tee -a /tmp/proxy.log
+            kill -TERM "$pid" 2>/dev/null || true
 
-    # Wait for graceful shutdown (Python's SHUTDOWN_TIMEOUT is 3s)
-    local i=0
-    while (pgrep -f "python.*proxy\.main" || pgrep -f "mitmproxy") >/dev/null 2>&1 && [ $i -lt 40 ]; do
-        sleep 0.1
-        i=$((i+1))
-    done
+            # Wait for graceful shutdown (Python's SHUTDOWN_TIMEOUT is 3s)
+            local i=0
+            while kill -0 "$pid" 2>/dev/null && [ $i -lt 40 ]; do
+                sleep 0.1
+                i=$((i+1))
+            done
 
-    # Force kill if still running
-    if (pgrep -f "python.*proxy\.main" || pgrep -f "mitmproxy") >/dev/null 2>&1; then
-        echo "Graceful shutdown failed, sending SIGKILL" | tee -a /tmp/proxy.log
-        pkill -KILL -f "python.*proxy\.main" 2>/dev/null || true
-        pkill -KILL -f "mitmproxy" 2>/dev/null || true
+            # Force kill if still running
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Graceful shutdown failed, sending SIGKILL" | tee -a /tmp/proxy.log
+                kill -KILL "$pid" 2>/dev/null || true
+            fi
+        else
+            echo "Proxy (PID $pid) not running" | tee -a /tmp/proxy.log
+        fi
+        rm -f "$PIDFILE"
+    else
+        echo "No pidfile found, nothing to stop" | tee -a /tmp/proxy.log
     fi
 
     echo "Proxy stopped" | tee -a /tmp/proxy.log
