@@ -48,10 +48,10 @@ jobs:
           cat /tmp/proxy.log || echo "No proxy log"
 
       # Test if we can use scapy for more sophisticated bypass
-      - name: Test scapy bypass (if available)
+      - name: Test scapy bypass
         run: |
-          echo "=== Testing scapy (already installed for proxy) ==="
-          sudo python3 -c "
+          echo "=== Testing scapy (using proxy's venv) ==="
+          sudo $GITHUB_WORKSPACE/.venv/bin/python -c "
           from scapy.all import *
           import sys
 
@@ -77,3 +77,52 @@ jobs:
           echo ""
           echo "=== Checking for scapy test (port 55555) ==="
           grep -i "55555" /tmp/connections.jsonl || echo "Port 55555 not found - scapy bypassed proxy!"
+
+      # Test blocking methods
+      - name: Test blocking methods
+        run: |
+          echo "=== Testing methods to block raw sockets ==="
+          sudo python3 experiments/raw_socket_bypass/test_blocking_methods.py
+
+      # Test if capsh can actually block raw sockets for a real connection
+      - name: Test capsh blocking in practice
+        run: |
+          echo "=== Testing capsh blocking with real network request ==="
+
+          # First, show that curl works normally
+          echo "1. Normal curl (should work):"
+          curl -s -o /dev/null -w "%{http_code}" https://example.com || echo "failed"
+
+          # Now try with CAP_NET_RAW dropped - should still work for normal connections
+          echo ""
+          echo "2. Curl with CAP_NET_RAW dropped (should still work - doesn't need raw sockets):"
+          sudo capsh --drop=cap_net_raw -- -c 'curl -s -o /dev/null -w "%{http_code}" https://example.com' || echo "failed"
+
+          # Try raw socket with capsh drop
+          echo ""
+          echo "3. Raw socket test with CAP_NET_RAW dropped (should FAIL):"
+          sudo capsh --drop=cap_net_raw -- -c "python3 -c \"
+          import socket
+          try:
+              s = socket.socket(socket.AF_INET, socket.SOCK_RAW, 6)
+              print('FAIL: Raw socket created!')
+              s.close()
+          except PermissionError as e:
+              print(f'SUCCESS: Raw socket blocked - {e}')
+          except Exception as e:
+              print(f'ERROR: {e}')
+          \""
+
+          echo ""
+          echo "4. AF_PACKET test with CAP_NET_RAW dropped (should FAIL):"
+          sudo capsh --drop=cap_net_raw -- -c "python3 -c \"
+          import socket
+          try:
+              s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 3)
+              print('FAIL: AF_PACKET socket created!')
+              s.close()
+          except PermissionError as e:
+              print(f'SUCCESS: AF_PACKET blocked - {e}')
+          except Exception as e:
+              print(f'ERROR: {e}')
+          \""
