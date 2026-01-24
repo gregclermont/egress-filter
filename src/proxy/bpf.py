@@ -6,7 +6,7 @@ from pathlib import Path
 import tinybpf
 
 from . import logging as proxy_logging
-from .utils import get_cgroup, ip_to_int, IPPROTO_TCP
+from .utils import ip_to_int, IPPROTO_TCP
 
 
 class ConnKeyV4(ctypes.Structure):
@@ -39,28 +39,53 @@ class BPFState:
 
     def setup(self):
         """Load and attach BPF programs."""
-        cgroup = get_cgroup()
-        proxy_logging.logger.info(f"Attaching to cgroup {cgroup}")
-
         proxy_logging.logger.info(f"Loading BPF from {self.bpf_path}")
         self.bpf_obj = tinybpf.load(self.bpf_path)
         self.bpf_obj.__enter__()
 
-        # IPv4 tracking: TCP via cgroup sockops, UDP via kprobe
-        self.bpf_links.append(self.bpf_obj.program("handle_sockops").attach_cgroup(cgroup))
+        # Root cgroup - catches all processes including containers
+        root_cgroup = "/sys/fs/cgroup"
+
+        # TCP tracking: cgroup/connect4 attached to root cgroup
+        self.bpf_links.append(self.bpf_obj.program("cgroup_connect4").attach_cgroup(root_cgroup))
+
+        # UDP tracking: kprobe (cgroup hooks don't work for connected UDP - see BPF comments)
         self.bpf_links.append(self.bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg"))
 
-        # IPv6 blocking (forces apps to use IPv4, which goes through transparent proxy)
-        self.bpf_links.append(self.bpf_obj.program("block_connect6").attach_cgroup(cgroup))
-        self.bpf_links.append(self.bpf_obj.program("block_sendmsg6").attach_cgroup(cgroup))
+        # IPv6 blocking: cgroup hooks
+        self.bpf_links.append(self.bpf_obj.program("block_connect6").attach_cgroup(root_cgroup))
+        self.bpf_links.append(self.bpf_obj.program("block_sendmsg6").attach_cgroup(root_cgroup))
 
         self.map_v4 = self.bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
 
         proxy_logging.logger.info("BPF loaded and attached")
 
+    def dump_map(self, path: str = "/tmp/bpf_map_dump.txt"):
+        """Dump BPF map contents for debugging."""
+        if not self.map_v4:
+            return
+        try:
+            with open(path, "w") as f:
+                f.write("=== BPF Map Contents (conn_to_pid_v4) ===\n")
+                f.write(f"{'DST_IP':<16} {'SRC_PORT':<10} {'DST_PORT':<10} {'PROTO':<6} {'PID':<10}\n")
+                f.write("-" * 60 + "\n")
+                count = 0
+                for key, pid in self.map_v4.items():
+                    dst_ip = ".".join(str((key.dst_ip >> (8 * i)) & 0xFF) for i in range(4))
+                    proto = "TCP" if key.protocol == 6 else "UDP" if key.protocol == 17 else str(key.protocol)
+                    f.write(f"{dst_ip:<16} {key.src_port:<10} {key.dst_port:<10} {proto:<6} {pid:<10}\n")
+                    count += 1
+                f.write("-" * 60 + "\n")
+                f.write(f"Total entries: {count}\n")
+            proxy_logging.logger.info(f"BPF map dumped to {path} ({count} entries)")
+        except Exception as e:
+            proxy_logging.logger.warning(f"Failed to dump BPF map: {e}")
+
     def cleanup(self):
         """Cleanup BPF resources."""
         proxy_logging.logger.info("Cleaning up BPF...")
+        # Dump map contents for debugging before cleanup
+        self.dump_map()
         for link in self.bpf_links:
             try:
                 link.destroy()

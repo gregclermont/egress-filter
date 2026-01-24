@@ -41,6 +41,7 @@ install_deps() {
 }
 
 PIDFILE="/tmp/proxy.pid"
+SCOPE_NAME="egress-filter-proxy"
 
 start_proxy() {
     cd "$REPO_ROOT"
@@ -48,8 +49,11 @@ start_proxy() {
     # Cleanup iptables on failure to avoid breaking runner communication
     trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
 
-    # Start proxy (exclude root's traffic via iptables to prevent loops)
-    env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
+    # Start proxy in its own cgroup scope using systemd-run
+    # This allows iptables to exclude proxy traffic by cgroup instead of UID,
+    # enabling us to capture traffic from root processes (like docker --network=host)
+    systemd-run --scope --unit="$SCOPE_NAME" \
+        env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
         "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 
@@ -106,7 +110,7 @@ start_proxy() {
 stop_proxy() {
     echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
 
-    # Kill proxy using pidfile (more reliable than pattern matching)
+    # First try graceful shutdown via pidfile (allows cleanup before systemd kills the scope)
     if [ -f "$PIDFILE" ]; then
         local pid
         pid=$(cat "$PIDFILE")
@@ -126,12 +130,14 @@ stop_proxy() {
                 echo "Graceful shutdown failed, sending SIGKILL" | tee -a /tmp/proxy.log
                 kill -KILL "$pid" 2>/dev/null || true
             fi
-        else
-            echo "Proxy (PID $pid) not running" | tee -a /tmp/proxy.log
         fi
         rm -f "$PIDFILE"
-    else
-        echo "No pidfile found, nothing to stop" | tee -a /tmp/proxy.log
+    fi
+
+    # Clean up the systemd scope if it's still running
+    if systemctl is-active --quiet "$SCOPE_NAME.scope" 2>/dev/null; then
+        echo "Stopping systemd scope $SCOPE_NAME.scope" | tee -a /tmp/proxy.log
+        systemctl stop "$SCOPE_NAME.scope" 2>/dev/null || true
     fi
 
     echo "Proxy stopped" | tee -a /tmp/proxy.log

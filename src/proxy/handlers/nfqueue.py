@@ -30,21 +30,43 @@ class NfqueueHandler:
                  /        \\
                yes         no
                 ↓           ↓
-           mark=2        (just log)
+           mark=2        mark=4
+           (redirect)    (fastpath)
            cache 4-tuple
-                ↓
-           nat: mark=2 → REDIRECT :8053
+                ↓           ↓
+           repeat()     repeat()
+                ↓           ↓
+           mark=2 →     mark&4 → CONNMARK save
+           RETURN       RETURN
+                ↓           ↓
+           nat: mark&2 → REDIRECT :8053
                 ↓
            mitmproxy (dns_request looks up cache by src_port+txid)
+
+    Fast-path (non-DNS only): The packet mark is saved to conntrack via CONNMARK.
+    Subsequent packets with the same 4-tuple match connmark and skip nfqueue.
+    DNS packets do NOT get fast-path - every query goes through nfqueue for logging.
+    This prevents bypass where only the first DNS query would be proxied.
+
+    We use repeat() instead of accept() because accept() skips remaining iptables
+    rules, so the mark wouldn't be visible.
     """
+
+    # Mark bits (can be combined)
+    MARK_DNS_REDIRECT = 2   # Redirect to mitmproxy DNS port
+    MARK_FASTPATH = 4       # Save to conntrack for fast-path
 
     def __init__(self, bpf: BPFState):
         self.bpf = bpf
         self.nfqueue = None
         self.queue_num = 1
+        self.packet_count = 0  # For debugging fast-path
 
     def handle_packet(self, pkt):
         """Process a packet from nfqueue. ALWAYS accepts for safety."""
+        self.packet_count += 1
+        mark = self.MARK_FASTPATH  # Default: just fast-path
+
         try:
             if HAS_SCAPY:
                 raw = pkt.get_payload()
@@ -65,8 +87,8 @@ class NfqueueHandler:
                     if ip.haslayer(DNS):
                         dns_layer = ip[DNS]
                         txid = dns_layer.id
-                        # Mark packet for iptables to redirect to mitmproxy
-                        pkt.set_mark(2)
+                        # Mark for redirect only (no fast-path for DNS - we want to see every query)
+                        mark = self.MARK_DNS_REDIRECT
                         # Cache: (src_port, txid) -> (pid, dst_ip, dst_port)
                         # Logging happens in mitmproxy's dns_request() to avoid double-logging
                         cache_key = (src_port, txid)
@@ -75,7 +97,6 @@ class NfqueueHandler:
                         # Non-DNS UDP - log here (not handled by mitmproxy)
                         proxy_logging.log_connection(
                             type="udp",
-                            src_ip=src_ip,
                             dst_ip=dst_ip,
                             dst_port=dst_port,
                             **get_proc_info(pid),
@@ -85,8 +106,12 @@ class NfqueueHandler:
         except Exception as e:
             proxy_logging.logger.warning(f"Error processing UDP packet: {e}")
 
-        # ALWAYS accept - we're just logging for now
-        pkt.accept()
+        # Set mark and use repeat() to reinject packet at start of chain.
+        # This ensures iptables sees the mark (accept() may skip subsequent rules).
+        # The CONNMARK save rule runs before NFQUEUE, so on repeat it saves
+        # the mark to conntrack and returns, avoiding re-queuing.
+        pkt.set_mark(mark)
+        pkt.repeat()
 
     def setup(self) -> bool:
         """Setup nfqueue binding. Returns True if successful."""
@@ -113,6 +138,7 @@ class NfqueueHandler:
 
     def cleanup(self):
         """Cleanup nfqueue."""
+        proxy_logging.logger.info(f"nfqueue processed {self.packet_count} packets")
         if self.nfqueue:
             try:
                 self.nfqueue.unbind()

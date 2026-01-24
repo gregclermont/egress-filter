@@ -21,32 +21,56 @@ apply_rules() {
         fi
     }
 
+    # Cgroup path for the proxy (set by proxy.sh using systemd-run)
+    local proxy_cgroup="system.slice/egress-filter-proxy.scope"
+
     # Block direct proxy connections (mark in mangle, drop in filter)
     # Prevents apps from bypassing transparent redirect by connecting
     # directly to localhost:8080 or :8053
-    rule mangle OUTPUT -p tcp -d 127.0.0.1 --dport 8080 -m owner ! --uid-owner 0 -j MARK --set-mark 1
-    rule mangle OUTPUT -p udp -d 127.0.0.1 --dport 8053 -m owner ! --uid-owner 0 -j MARK --set-mark 1
+    # Exclude proxy's own cgroup from this rule
+    rule mangle OUTPUT -p tcp -d 127.0.0.1 --dport 8080 -m cgroup ! --path "$proxy_cgroup" -j MARK --set-mark 1
+    rule mangle OUTPUT -p udp -d 127.0.0.1 --dport 8053 -m cgroup ! --path "$proxy_cgroup" -j MARK --set-mark 1
     rule filter OUTPUT -m mark --mark 1 -j DROP
 
     # UDP: nfqueue for DNS detection + PID tracking
-    # Exclude systemd-resolve (system DNS stub, if exists) and root (mitmproxy)
+    # Fast-path: skip nfqueue if conntrack already marked (subsequent non-DNS packets)
+    rule mangle OUTPUT -p udp -m connmark --mark 4/4 -j RETURN
+    # Handle packets just processed by nfqueue (marked with repeat verdict)
+    # DNS (mark=2): just skip re-queuing (no fast-path - every query goes through nfqueue)
+    rule mangle OUTPUT -p udp -m mark --mark 2 -j RETURN
+    # Non-DNS (mark=4): save to conntrack for fast-path, then return
+    rule mangle OUTPUT -p udp -m mark --mark 4/4 -j CONNMARK --save-mark
+    rule mangle OUTPUT -p udp -m mark --mark 4/4 -j RETURN
+    # Exclude systemd-resolve (system DNS stub) and proxy cgroup
     if id -u systemd-resolve &>/dev/null; then
         rule mangle OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
     fi
-    rule mangle OUTPUT -p udp -m owner --uid-owner 0 -j RETURN
+    rule mangle OUTPUT -p udp -m cgroup --path "$proxy_cgroup" -j RETURN
     rule mangle OUTPUT -p udp -j NFQUEUE --queue-num 1
 
     # TCP: transparent proxy redirect to port 8080
-    # Exclude root to prevent mitmproxy redirect loop
-    rule nat OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
+    # Exclude proxy cgroup to prevent redirect loop
+    rule nat OUTPUT -p tcp -m cgroup --path "$proxy_cgroup" -j RETURN
     rule nat OUTPUT -p tcp -j REDIRECT --to-port 8080
 
-    # DNS: redirect packets marked by nfqueue (mark=2) to port 8053
-    rule nat OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
+    # DNS: redirect packets marked by nfqueue (bit 2 set, could be mark 2 or 6)
+    rule nat OUTPUT -p udp -m mark --mark 2/2 -j REDIRECT --to-port 8053
 
-    # Note: No IPv6 rules needed because:
-    #   1. IPv6 is blocked at the socket level by the BPF program
-    #   2. GitHub-hosted runners don't have IPv6 enabled
+    # Docker container traffic (bridge mode)
+    # Intercept traffic from docker0 for PID tracking and proxying
+    # REDIRECT works in PREROUTING because packet is already at host
+    if ip link show docker0 &>/dev/null; then
+        # TCP from containers: redirect to proxy
+        rule nat PREROUTING -i docker0 -p tcp -j REDIRECT --to-port 8080
+        # UDP from containers: fast-path check, handle marked packets, then nfqueue
+        rule mangle PREROUTING -i docker0 -p udp -m connmark --mark 4/4 -j RETURN
+        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 2 -j RETURN
+        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j CONNMARK --save-mark
+        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j RETURN
+        rule mangle PREROUTING -i docker0 -p udp -j NFQUEUE --queue-num 1
+        # DNS from containers: redirect marked packets to mitmproxy
+        rule nat PREROUTING -i docker0 -p udp -m mark --mark 2/2 -j REDIRECT --to-port 8053
+    fi
 }
 
 setup() {

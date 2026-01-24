@@ -29,11 +29,8 @@ jobs:
           sparse-checkout: tests
           fetch-depth: 1
 
-      - name: Run PID tracking tests
-        run: ./tests/test_pid_tracking.sh
-        env:
-          CONNECTIONS_FILE: /tmp/connections.jsonl
-          VERBOSE: ${{ inputs.verbose && '1' || '0' }}
+      - name: Run connection tracking tests
+        run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl
 
       - name: Show connection events
         if: always()
@@ -50,3 +47,25 @@ jobs:
             echo "=== Mitmproxy Log (verbose) ==="
             cat /tmp/mitmproxy.log
           fi
+
+      - name: Show conntrack marks (UDP fast-path)
+        if: always()
+        run: |
+          echo "=== iptables mangle OUTPUT counters ==="
+          sudo iptables -t mangle -L OUTPUT -v -n 2>/dev/null | head -20 || true
+          echo ""
+          echo "=== UDP connections with fast-path mark (4) ==="
+          sudo conntrack -L -p udp 2>/dev/null | grep -E "mark=[4-7]" | head -20 || echo "No marked connections"
+          echo ""
+          echo "=== All UDP conntrack entries (sample) ==="
+          sudo conntrack -L -p udp 2>/dev/null | head -10 || true
+
+      - name: Show BPF map dump
+        if: always()
+        run: |
+          # Stop proxy gracefully to trigger map dump
+          sudo ${{ env.EGRESS_FILTER_ROOT || '/home/runner/work/_actions/gregclermont/egress-filter/test' }}/src/setup/proxy.sh stop || true
+          cat /tmp/bpf_map_dump.txt || echo "No BPF map dump found"
+          echo ""
+          echo "=== Proxy shutdown log ==="
+          tail -5 /tmp/proxy.log 2>/dev/null || true
