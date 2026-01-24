@@ -59,6 +59,10 @@ class BPFState:
         self.bpf_links.append(self.bpf_obj.program("block_connect6").attach_cgroup(root_cgroup))
         self.bpf_links.append(self.bpf_obj.program("block_sendmsg6").attach_cgroup(root_cgroup))
 
+        # Raw socket blocking: cgroup/sock_create hook
+        # Blocks SOCK_RAW and AF_PACKET to prevent iptables bypass
+        self.bpf_links.append(self.bpf_obj.program("block_raw_sockets").attach_cgroup(root_cgroup))
+
         self.map_v4 = self.bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
 
         proxy_logging.logger.info("BPF loaded and attached")

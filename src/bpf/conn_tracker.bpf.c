@@ -16,6 +16,14 @@
 #define AF_INET 2
 #endif
 
+#ifndef AF_PACKET
+#define AF_PACKET 17
+#endif
+
+#ifndef SOCK_RAW
+#define SOCK_RAW 3
+#endif
+
 #ifndef IPPROTO_TCP
 #define IPPROTO_TCP 6
 #endif
@@ -62,6 +70,33 @@ int block_connect6(struct bpf_sock_addr *ctx) {
 SEC("cgroup/sendmsg6")
 int block_sendmsg6(struct bpf_sock_addr *ctx) {
     return 0;  // Block
+}
+
+// ============================================
+// Raw socket blocking
+// ============================================
+// Block raw sockets to prevent iptables bypass. Without this, processes
+// with CAP_NET_RAW can craft packets that skip our transparent proxy:
+//
+// - SOCK_RAW: Can craft IP packets, bypasses iptables in some cases
+// - AF_PACKET: Operates at Layer 2, completely bypasses iptables
+//
+// This hook fires on socket() syscall for all processes in the cgroup.
+
+SEC("cgroup/sock_create")
+int block_raw_sockets(struct bpf_sock *sk) {
+    if (!sk)
+        return 1;  // Allow (shouldn't happen)
+
+    // Block AF_PACKET entirely - Layer 2 access bypasses all IP filtering
+    if (sk->family == AF_PACKET)
+        return 0;  // Block
+
+    // Block SOCK_RAW for any protocol - prevents IP header manipulation
+    if (sk->type == SOCK_RAW)
+        return 0;  // Block
+
+    return 1;  // Allow
 }
 
 // ============================================

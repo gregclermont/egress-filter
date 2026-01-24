@@ -192,27 +192,35 @@ This document compares the original design (`gha-egress-firewall-design.md`) wit
   - Defense in depth once PID tracking proven reliable
   - Separate toggle from monitor/enforce mode
 
-#### Investigate feasibility
+#### Research completed
 
-- [ ] **Block raw sockets (SOCK_RAW)**
-  - Allows crafting packets that bypass iptables
-  - Options: eBPF `cgroup/sock_create` hook, or seccomp
-  - Check if CAP_NET_RAW is available on GHA runners
+- [ ] **Block raw sockets (SOCK_RAW)** - FEASIBLE via capsh
+  - **Finding:** CAP_NET_RAW is available on GHA runners - all raw socket types work
+  - **Risk:** AF_PACKET sockets completely bypass iptables (can craft packets at Ethernet layer)
+  - **Solution:** `capsh --drop=cap_net_raw` successfully blocks raw sockets
+  - **Verified:** Normal network operations (curl, etc.) still work without CAP_NET_RAW
+  - **Implementation:** Wrap user commands with capsh, or use systemd CapabilityBoundingSet
+  - See: `experiments/raw_socket_bypass/` for test scripts
+
+- [x] **eBPF LSM hooks** - NOT AVAILABLE on GHA runners
+  - **Finding:** BPF not in active LSMs: `lockdown,capability,landlock,yama,apparmor,ima,evm`
+  - **Alternative:** cgroup BPF hooks (cgroup/sock_create) ARE available
+
+- [x] **Seccomp filtering** - AVAILABLE
+  - **Finding:** seccomp available with actions: `kill_process kill_thread trap errno user_notif trace log allow`
+  - Can be used to block specific syscalls (socket with SOCK_RAW, unshare with CLONE_NEWNET)
+
+#### Still to investigate
 
 - [ ] **Block network namespace creation**
   - `unshare(CLONE_NEWNET)` creates netns where iptables rules don't apply
   - Options: seccomp to block `unshare`/`clone` with CLONE_NEWNET
   - Ties into "disable containers" (Docker uses netns)
 
-- [ ] **Seccomp filtering**
-  - Block specific syscalls (unshare, clone flags, etc.)
-  - Research how to apply to all processes on GHA runners
-  - Check what GHA allows
-
-- [ ] **eBPF LSM hooks**
-  - Powerful security controls at LSM layer
-  - Requires `CONFIG_BPF_LSM` in kernel
-  - Check if enabled on GHA runners
+- [ ] **cgroup/sock_create hook** for raw socket blocking
+  - Alternative to capsh approach
+  - Can filter by socket type, family, protocol at kernel level
+  - Already have cgroup BPF infrastructure in place
 
 ### Phase 6: Convenience Features
 
