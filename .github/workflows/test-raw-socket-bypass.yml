@@ -52,10 +52,8 @@ jobs:
       - name: Test scapy bypass (should be blocked)
         run: |
           echo "=== Testing scapy (should be BLOCKED by cgroup/sock_create) ==="
-          # The action sets EGRESS_FILTER_ROOT to its installation directory
-          VENV_PYTHON="${EGRESS_FILTER_ROOT:-.}/.venv/bin/python"
-          echo "Using: $VENV_PYTHON"
-          "$VENV_PYTHON" -c "
+          pip install scapy -q
+          python3 -c "
           import sys
           try:
               from scapy.all import *
