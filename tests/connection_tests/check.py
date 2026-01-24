@@ -33,12 +33,38 @@ def load_connections(path: Path) -> list:
     return connections
 
 
-def find_connection(connections: list, marker: str) -> dict | None:
-    """Find a connection log entry by marker in cmdline."""
+def find_connection(connections: list, marker: str, conn_type: str) -> dict | None:
+    """Find a connection log entry by marker in cmdline and matching type.
+
+    Args:
+        connections: List of connection log entries
+        marker: Test marker to find in cmdline (e.g., "H001", "B002")
+        conn_type: Expected connection type from test definition (e.g., "http", "https", "dns")
+
+    The conn_type maps to log entry types:
+        - "http" -> type="http" (port 80)
+        - "https" -> type="http" (port 443, MITM'd) or type="https" (passthrough)
+        - "dns" -> type="dns"
+        - "udp" / "udp_connected" -> type="udp"
+        - "tcp" / "tcp6" -> type="tcp"
+    """
+    # Map test types to acceptable log types
+    type_map = {
+        "http": ["http"],
+        "https": ["http", "https"],  # "http" when MITM'd (we see decrypted), "https" for passthrough
+        "dns": ["dns"],
+        "udp": ["udp"],
+        "udp_connected": ["udp"],
+        "tcp": ["tcp"],
+        "tcp6": ["tcp"],
+    }
+    acceptable_types = type_map.get(conn_type, [conn_type])
+
     for conn in connections:
         cmdline = conn.get("cmdline", [])
-        # Marker should be in cmdline (as argument to make_connection.py)
-        if marker in str(cmdline):
+        log_type = conn.get("type", "")
+        # Marker should be in cmdline AND type should match
+        if marker in str(cmdline) and log_type in acceptable_types:
             return conn
     return None
 
@@ -88,8 +114,8 @@ def main():
         expect_logged = expected.get("expect_logged", True)
         description = expected.get("description", "")
 
-        # Find matching connection in log
-        conn = find_connection(connections, marker)
+        # Find matching connection in log (must match both marker AND type)
+        conn = find_connection(connections, marker, conn_type)
 
         if not expect_logged:
             # Should NOT be in log
