@@ -33,6 +33,14 @@ apply_rules() {
     rule filter OUTPUT -m mark --mark 1 -j DROP
 
     # UDP: nfqueue for DNS detection + PID tracking
+    # Fast-path: skip nfqueue if conntrack already marked (subsequent non-DNS packets)
+    rule mangle OUTPUT -p udp -m connmark --mark 4/4 -j RETURN
+    # Handle packets just processed by nfqueue (marked with repeat verdict)
+    # DNS (mark=2): just skip re-queuing (no fast-path - every query goes through nfqueue)
+    rule mangle OUTPUT -p udp -m mark --mark 2 -j RETURN
+    # Non-DNS (mark=4): save to conntrack for fast-path, then return
+    rule mangle OUTPUT -p udp -m mark --mark 4/4 -j CONNMARK --save-mark
+    rule mangle OUTPUT -p udp -m mark --mark 4/4 -j RETURN
     # Exclude systemd-resolve (system DNS stub) and proxy cgroup
     if id -u systemd-resolve &>/dev/null; then
         rule mangle OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
@@ -45,8 +53,8 @@ apply_rules() {
     rule nat OUTPUT -p tcp -m cgroup --path "$proxy_cgroup" -j RETURN
     rule nat OUTPUT -p tcp -j REDIRECT --to-port 8080
 
-    # DNS: redirect packets marked by nfqueue (mark=2) to port 8053
-    rule nat OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
+    # DNS: redirect packets marked by nfqueue (bit 2 set, could be mark 2 or 6)
+    rule nat OUTPUT -p udp -m mark --mark 2/2 -j REDIRECT --to-port 8053
 
     # Docker container traffic (bridge mode)
     # Intercept traffic from docker0 for PID tracking and proxying
@@ -54,10 +62,14 @@ apply_rules() {
     if ip link show docker0 &>/dev/null; then
         # TCP from containers: redirect to proxy
         rule nat PREROUTING -i docker0 -p tcp -j REDIRECT --to-port 8080
-        # UDP from containers: nfqueue for DNS detection + PID tracking
+        # UDP from containers: fast-path check, handle marked packets, then nfqueue
+        rule mangle PREROUTING -i docker0 -p udp -m connmark --mark 4/4 -j RETURN
+        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 2 -j RETURN
+        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j CONNMARK --save-mark
+        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j RETURN
         rule mangle PREROUTING -i docker0 -p udp -j NFQUEUE --queue-num 1
         # DNS from containers: redirect marked packets to mitmproxy
-        rule nat PREROUTING -i docker0 -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
+        rule nat PREROUTING -i docker0 -p udp -m mark --mark 2/2 -j REDIRECT --to-port 8053
     fi
 }
 
