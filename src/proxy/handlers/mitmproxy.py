@@ -1,10 +1,10 @@
 """Mitmproxy addon for connection logging."""
 
-from mitmproxy import http, tcp, dns
+from mitmproxy import http, tcp, dns, tls
 
 from ..bpf import BPFState
 from .. import logging as proxy_logging
-from ..proc import get_proc_info
+from ..proc import get_proc_info, is_container_process
 
 
 class MitmproxyAddon:
@@ -12,6 +12,32 @@ class MitmproxyAddon:
 
     def __init__(self, bpf: BPFState):
         self.bpf = bpf
+
+    def tls_clienthello(self, data: tls.ClientHelloData) -> None:
+        """Handle TLS ClientHello - passthrough for container processes.
+
+        Container processes don't have access to mitmproxy's CA cert,
+        so we skip MITM and just log the connection with SNI hostname.
+        """
+        src_port = data.context.client.peername[1] if data.context.client.peername else 0
+        dst_ip, dst_port = data.context.server.address if data.context.server.address else ("unknown", 0)
+        sni = data.client_hello.sni
+
+        pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+
+        if pid and is_container_process(pid):
+            # Log the connection with SNI as the hostname
+            proxy_logging.log_connection(
+                type="https",
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                host=sni,
+                **get_proc_info(pid),
+                src_port=src_port,
+                pid=pid,
+            )
+            # Skip MITM - pass through encrypted traffic unmodified
+            data.ignore_connection = True
 
     def request(self, flow: http.HTTPFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0

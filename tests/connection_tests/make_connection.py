@@ -28,12 +28,9 @@ def make_http(url: str) -> dict:
 
 def make_https(url: str) -> dict:
     import urllib.request
-    import ssl
-    # Allow self-signed certs for testing with mitmproxy
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    urllib.request.urlopen(url, timeout=5, context=ctx)
+    # Use default SSL context - container TLS is passed through (not MITM'd),
+    # host TLS uses mitmproxy CA from system trust store
+    urllib.request.urlopen(url, timeout=5)
     return {"type": "https", "url": url}
 
 
@@ -64,13 +61,20 @@ def make_udp_connected(target: str) -> dict:
 
 
 def make_tcp(target: str) -> dict:
+    import time
     host, port = target.rsplit(":", 1)
     port = int(port)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(5)
     try:
         sock.connect((host, port))
-    except (socket.timeout, ConnectionRefusedError, OSError):
+        # Send data to trigger mitmproxy's tcp_start hook
+        # (bare connects without data don't trigger the hook)
+        sock.send(b"test\r\n")
+        # Wait briefly so process is still alive when mitmproxy logs it
+        # (otherwise /proc/<pid>/cmdline is gone before we can read it)
+        time.sleep(0.2)
+    except (socket.timeout, ConnectionRefusedError, OSError, BrokenPipeError):
         pass  # Connection attempt is enough for logging
     finally:
         sock.close()

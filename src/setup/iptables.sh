@@ -21,6 +21,15 @@ apply_rules() {
         fi
     }
 
+    rule6() {
+        local table="$1"; shift
+        if [[ "$ignore_errors" == "true" ]]; then
+            ip6tables -t "$table" "$action" "$@" 2>/dev/null || true
+        else
+            ip6tables -t "$table" "$action" "$@"
+        fi
+    }
+
     # Cgroup path for the proxy (set by proxy.sh using systemd-run)
     local proxy_cgroup="system.slice/egress-filter-proxy.scope"
 
@@ -71,6 +80,10 @@ apply_rules() {
         # DNS from containers: redirect marked packets to mitmproxy
         rule nat PREROUTING -i docker0 -p udp -m mark --mark 2/2 -j REDIRECT --to-port 8053
     fi
+
+    # Note: IPv6 blocking for containers is handled by BPF cgroup hooks (cgroup/connect6,
+    # cgroup/sendmsg6). Cgroups are orthogonal to network namespaces, so the hooks fire
+    # for all processes including bridge containers.
 }
 
 setup() {
@@ -91,6 +104,7 @@ cleanup() {
     iptables -t mangle -F 2>/dev/null || true
     iptables -t nat -F 2>/dev/null || true
     iptables -t filter -F 2>/dev/null || true
+    ip6tables -t filter -F 2>/dev/null || true
 }
 
 case "${1:-}" in

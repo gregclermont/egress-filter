@@ -43,11 +43,14 @@ class BPFState:
         self.bpf_obj = tinybpf.load(self.bpf_path)
         self.bpf_obj.__enter__()
 
-        # Root cgroup - catches all processes including containers
+        # Root cgroup - for IPv6 blocking only (cgroups are orthogonal to network namespaces)
         root_cgroup = "/sys/fs/cgroup"
 
-        # TCP tracking: cgroup/connect4 attached to root cgroup
-        self.bpf_links.append(self.bpf_obj.program("cgroup_connect4").attach_cgroup(root_cgroup))
+        # TCP tracking: kprobe/tcp_connect
+        # Note: cgroup/connect4 can't be used because at connect() time the kernel
+        # hasn't assigned the ephemeral source port yet (src_port=0). The kprobe
+        # fires later in the connection sequence with valid src_port.
+        self.bpf_links.append(self.bpf_obj.program("kprobe_tcp_connect").attach_kprobe("tcp_connect"))
 
         # UDP tracking: kprobe (cgroup hooks don't work for connected UDP - see BPF comments)
         self.bpf_links.append(self.bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg"))
@@ -77,6 +80,7 @@ class BPFState:
                     count += 1
                 f.write("-" * 60 + "\n")
                 f.write(f"Total entries: {count}\n")
+
             proxy_logging.logger.info(f"BPF map dumped to {path} ({count} entries)")
         except Exception as e:
             proxy_logging.logger.warning(f"Failed to dump BPF map: {e}")

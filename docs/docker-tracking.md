@@ -43,14 +43,14 @@ No additional configuration needed.
 
 ### How It Works
 
-We use BPF hooks attached to the root cgroup (`/sys/fs/cgroup`), which catches all processes system-wide including containers:
+We use kprobes which are kernel-wide and catch all processes regardless of network namespace:
 
-**TCP**: `cgroup/connect4` hook
+**TCP**: `kprobe/tcp_connect` hook
 ```c
-SEC("cgroup/connect4")
-int cgroup_connect4(struct bpf_sock_addr *ctx) {
-    // Fires at connect() time, src_port already assigned for TCP
-    // Records (dst_ip, src_port, dst_port) → PID
+SEC("kprobe/tcp_connect")
+int kprobe_tcp_connect(struct pt_regs *ctx) {
+    // Fires at connect() time, captures 4-tuple and PID
+    // Kernel-wide: works for host, host-mode, AND bridge containers
 }
 ```
 
@@ -62,9 +62,7 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
 }
 ```
 
-**Why root cgroup works for containers**: When attached to the root cgroup, BPF hooks fire for all processes in the cgroup hierarchy, including Docker containers which run under `/sys/fs/cgroup/system.slice/docker-*.scope`.
-
-**Why kprobe for UDP**: At UDP `connect()` time, the socket isn't bound yet—`src_port` is 0. The kprobe fires after the port is assigned.
+**Why kprobe instead of cgroup hooks**: Cgroup hooks (`cgroup/connect4`) do fire for all processes including containers (cgroups are orthogonal to network namespaces), but at `connect()` time the source port hasn't been assigned yet (`src_port=0`). Since we need the source port for the 4-tuple key, we can't use cgroup hooks for TCP tracking. The `kprobe/tcp_connect` fires later in the connection sequence, after the kernel has assigned the ephemeral port.
 
 ### Recovering Original Destination
 
@@ -108,10 +106,18 @@ Since all components match, the BPF map lookup succeeds.
 
 ### Files
 
-- `src/bpf/conn_tracker.bpf.c`: `cgroup/connect4` for TCP, `kprobe/udp_sendmsg` for UDP
-- `src/proxy/bpf.py`: Attaches BPF programs to root cgroup and kprobes
-- `src/setup/iptables.sh`: PREROUTING rules for docker0 interface
+- `src/bpf/conn_tracker.bpf.c`: `kprobe/tcp_connect` for TCP, `kprobe/udp_sendmsg` for UDP, cgroup hooks for IPv6 blocking
+- `src/proxy/bpf.py`: Attaches BPF programs to kprobes and root cgroup
+- `src/setup/iptables.sh`: PREROUTING rules for docker0
 - `tests/connection_tests/`: Python test framework with Docker tests
+
+## IPv6 Blocking
+
+IPv6 must be blocked to force traffic through the IPv4 transparent proxy.
+
+**All processes** (host, host-mode containers, and bridge containers) are blocked by BPF cgroup hooks (`cgroup/connect6`, `cgroup/sendmsg6`). Cgroups are orthogonal to network namespaces, so these hooks fire for all processes regardless of their network namespace.
+
+Applications receive `EPERM` (Operation not permitted) when attempting IPv6 connections.
 
 ## Limitations
 

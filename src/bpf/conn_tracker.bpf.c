@@ -65,34 +65,54 @@ int block_sendmsg6(struct bpf_sock_addr *ctx) {
 }
 
 // ============================================
-// TCP: cgroup/connect4 (IPv4 only)
+// TCP: kprobe/tcp_connect
 // ============================================
-// We use cgroup/connect4 attached to the root cgroup (/sys/fs/cgroup).
-// Root cgroup hooks catch ALL processes including containers.
+// Why kprobe instead of cgroup/connect4?
 //
-// Unlike UDP (where src_port is 0 at connect time), TCP's source port
-// is assigned during connect() before the cgroup hook fires.
+// Investigation confirmed: cgroup hooks DO fire for all processes including
+// containers (cgroups are orthogonal to network namespaces), but at connect()
+// time the kernel hasn't assigned the ephemeral source port yet (src_port=0).
+// Since we need src_port for the 4-tuple key, cgroup/connect4 can't be used.
+//
+// The kprobe fires later in the connection sequence, after the kernel has
+// assigned the ephemeral port.
 
-SEC("cgroup/connect4")
-int cgroup_connect4(struct bpf_sock_addr *ctx) {
-    // Only track TCP (UDP is handled by kprobe)
-    if (ctx->protocol != IPPROTO_TCP)
-        return 1;
+SEC("kprobe/tcp_connect")
+int kprobe_tcp_connect(struct pt_regs *ctx) {
+    struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
-    u16 src_port = ctx->sk->src_port;
+    if (!sk)
+        return 0;
+
+    // Only track IPv4 (IPv6 is blocked by cgroup hooks)
+    u16 family;
+    BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
+    if (family != AF_INET)
+        return 0;
+
+    u16 src_port;
+    BPF_CORE_READ_INTO(&src_port, sk, __sk_common.skc_num);
     if (src_port == 0)
-        return 1;
+        return 0;
+
+    u32 dst_ip;
+    u16 dst_port;
+    BPF_CORE_READ_INTO(&dst_ip, sk, __sk_common.skc_daddr);
+    BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
+
+    if (dst_ip == 0)
+        return 0;
 
     struct conn_key_v4 key = {
-        .dst_ip = ctx->user_ip4,
+        .dst_ip = dst_ip,
         .src_port = src_port,
-        .dst_port = bpf_ntohl(ctx->user_port) >> 16,
+        .dst_port = bpf_ntohs(dst_port),
         .protocol = IPPROTO_TCP,
     };
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
 
-    return 1;
+    return 0;
 }
 
 // ============================================
