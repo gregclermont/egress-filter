@@ -209,12 +209,12 @@ This document compares the original design (`gha-egress-firewall-design.md`) wit
   - **Finding:** seccomp available with actions: `kill_process kill_thread trap errno user_notif trace log allow`
   - Can be used to block specific syscalls (socket with SOCK_RAW, unshare with CLONE_NEWNET)
 
-#### Still to investigate
-
-- [ ] **Block network namespace creation**
-  - `unshare(CLONE_NEWNET)` creates netns where iptables rules don't apply
-  - Options: seccomp to block `unshare`/`clone` with CLONE_NEWNET, or BPF hook
-  - Ties into "disable containers" (Docker uses netns)
+- [x] **Block network namespace creation** - IMPLEMENTED via sysctl
+  - **Risk:** `unshare --user --net` creates netns where iptables rules don't apply
+  - **Solution:** `sysctl -w kernel.unprivileged_userns_clone=0`
+  - **Verified:** Blocks unprivileged netns, Docker still works (daemon is root)
+  - **Note:** Privileged netns (`sudo unshare --net`) requires "disable sudo" to block
+  - See: `experiments/netns_bypass/` for test scripts
 
 ### Phase 6: Convenience Features
 

