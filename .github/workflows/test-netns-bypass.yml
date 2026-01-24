@@ -1,0 +1,131 @@
+name: Test netns bypass
+
+on:
+  push:
+    branches: [research/netns-bypass]
+  workflow_dispatch:
+
+jobs:
+  test-netns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Test WITHOUT any protections first
+      - name: Test netns capabilities (baseline)
+        run: |
+          echo "=== Testing network namespace capabilities (baseline) ==="
+          sudo python3 experiments/netns_bypass/test_netns.py
+
+      # Test unprivileged unshare
+      - name: Test unprivileged unshare
+        run: |
+          echo "=== Testing unprivileged unshare --net ==="
+          # This tests if a regular user can create netns
+          unshare --user --net ip link show || echo "Unprivileged unshare failed (may be blocked)"
+
+      # Check sysctl settings
+      - name: Check sysctl namespace settings
+        run: |
+          echo "=== Sysctl namespace settings ==="
+          sysctl kernel.unprivileged_userns_clone 2>/dev/null || echo "Setting not found"
+          cat /proc/sys/user/max_user_namespaces
+          cat /proc/sys/user/max_net_namespaces 2>/dev/null || echo "max_net_namespaces not found"
+
+      # Test blocking via sysctl
+      - name: Test sysctl blocking
+        run: |
+          echo "=== Testing sysctl blocking of unprivileged userns ==="
+
+          echo "1. Current setting:"
+          cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo "not found"
+
+          echo ""
+          echo "2. Trying unprivileged unshare (should work):"
+          unshare --user --net echo "SUCCESS: unprivileged netns created" || echo "BLOCKED"
+
+          echo ""
+          echo "3. Disabling unprivileged_userns_clone:"
+          sudo sysctl -w kernel.unprivileged_userns_clone=0 || echo "Failed to set sysctl"
+
+          echo ""
+          echo "4. Trying unprivileged unshare again (should fail):"
+          unshare --user --net echo "SECURITY ISSUE: still works!" || echo "SUCCESS: blocked by sysctl"
+
+          echo ""
+          echo "5. Privileged unshare still works (needs sudo):"
+          sudo unshare --net echo "Privileged netns created (expected)"
+
+          echo ""
+          echo "6. Re-enabling for other tests:"
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+
+      # Test AppArmor
+      - name: Check AppArmor capabilities
+        run: |
+          echo "=== AppArmor status ==="
+          sudo aa-status || echo "aa-status failed"
+
+          echo ""
+          echo "=== Current process profile ==="
+          cat /proc/self/attr/current || echo "No profile"
+
+          echo ""
+          echo "=== Can we load custom profiles? ==="
+          # Create a test profile
+          cat << 'PROFILE' | sudo tee /etc/apparmor.d/test-block-netns
+          #include <tunables/global>
+
+          profile test-block-netns {
+            #include <abstractions/base>
+
+            # Allow most things
+            /** rwmlkix,
+
+            # But deny CAP_SYS_ADMIN (needed for netns without userns)
+            deny capability sys_admin,
+          }
+          PROFILE
+
+          echo ""
+          echo "Loading profile..."
+          sudo apparmor_parser -r /etc/apparmor.d/test-block-netns && echo "Profile loaded!" || echo "Failed to load"
+
+          echo ""
+          echo "Testing with profile..."
+          sudo aa-exec -p test-block-netns -- unshare --net echo "SECURITY ISSUE: netns created despite profile" || echo "SUCCESS: AppArmor blocked netns"
+
+          echo ""
+          echo "Cleanup..."
+          sudo apparmor_parser -R /etc/apparmor.d/test-block-netns 2>/dev/null || true
+          sudo rm -f /etc/apparmor.d/test-block-netns
+
+      # Set up the proxy
+      - name: Setup egress filter
+        uses: ./
+        env:
+          VERBOSE: "1"
+
+      # Test with proxy running
+      - name: Test netns with proxy active
+        run: |
+          echo "=== Testing netns bypass with proxy active ==="
+
+          echo "1. Can we still create netns?"
+          sudo unshare --net ip link show && echo "Yes, netns creation works"
+
+          echo ""
+          echo "2. Our iptables rules:"
+          sudo iptables -t nat -L -n | head -20
+
+          echo ""
+          echo "3. Inside a new netns, there are NO iptables rules:"
+          sudo unshare --net iptables -t nat -L -n || echo "(iptables may not work in empty netns)"
+
+      - name: Show proxy logs
+        if: always()
+        run: |
+          echo "=== Proxy log ==="
+          cat /tmp/proxy.log || echo "No proxy log"
