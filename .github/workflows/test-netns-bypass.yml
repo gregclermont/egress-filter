@@ -102,27 +102,31 @@ jobs:
           sudo apparmor_parser -R /etc/apparmor.d/test-block-netns 2>/dev/null || true
           sudo rm -f /etc/apparmor.d/test-block-netns
 
-      # Set up the proxy
+      # Set up the proxy (now includes unprivileged_userns_clone=0)
       - name: Setup egress filter
         uses: ./
         env:
           VERBOSE: "1"
 
-      # Test with proxy running
-      - name: Test netns with proxy active
+      # Test that netns is blocked with proxy active
+      - name: Test netns blocking with proxy active
         run: |
-          echo "=== Testing netns bypass with proxy active ==="
+          echo "=== Testing netns blocking with proxy active ==="
 
-          echo "1. Can we still create netns?"
-          sudo unshare --net ip link show && echo "Yes, netns creation works"
-
-          echo ""
-          echo "2. Our iptables rules:"
-          sudo iptables -t nat -L -n | head -20
+          echo "1. Check sysctl was set by proxy startup:"
+          cat /proc/sys/kernel/unprivileged_userns_clone
 
           echo ""
-          echo "3. Inside a new netns, there are NO iptables rules:"
-          sudo unshare --net iptables -t nat -L -n || echo "(iptables may not work in empty netns)"
+          echo "2. Unprivileged netns should be BLOCKED:"
+          unshare --user --net echo "SECURITY ISSUE: netns created!" || echo "SUCCESS: unprivileged netns blocked"
+
+          echo ""
+          echo "3. Docker should still work:"
+          docker run --rm alpine echo "SUCCESS: Docker works"
+
+          echo ""
+          echo "4. Privileged netns still works (needs sudo - will be blocked when sudo disabled):"
+          sudo unshare --net echo "Privileged netns created (expected until sudo disabled)"
 
       # Test if Docker still works with unprivileged_userns_clone=0
       - name: Test Docker with sysctl disabled
