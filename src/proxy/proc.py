@@ -4,6 +4,19 @@ import os
 from pathlib import Path
 
 
+def is_container_process(pid: int) -> bool:
+    """Check if a process is running inside a Docker container.
+
+    Detects Docker containers by checking for 'docker-' in the cgroup path.
+    Container processes have cgroups like /system.slice/docker-<id>.scope
+    """
+    try:
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text()
+        return "docker-" in cgroup or "/docker/" in cgroup
+    except (OSError, FileNotFoundError):
+        return False
+
+
 def get_github_step(pid: int) -> str | None:
     """Get GitHub Actions step identifier by walking up the process tree."""
     visited = set()
