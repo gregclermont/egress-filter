@@ -47,6 +47,18 @@ apply_rules() {
 
     # DNS: redirect packets marked by nfqueue (mark=2) to port 8053
     rule nat OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
+
+    # Docker container traffic (bridge mode)
+    # Intercept traffic from docker0 for PID tracking and proxying
+    # REDIRECT works in PREROUTING because packet is already at host
+    if ip link show docker0 &>/dev/null; then
+        # TCP from containers: redirect to proxy
+        rule nat PREROUTING -i docker0 -p tcp -j REDIRECT --to-port 8080
+        # UDP from containers: nfqueue for DNS detection + PID tracking
+        rule mangle PREROUTING -i docker0 -p udp -j NFQUEUE --queue-num 1
+        # DNS from containers: redirect marked packets to mitmproxy
+        rule nat PREROUTING -i docker0 -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
+    fi
 }
 
 setup() {
