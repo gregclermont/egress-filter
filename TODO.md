@@ -9,7 +9,11 @@
 ## Medium Priority
 
 - [x] Collect GitHub job step info from process env for the log
-- [ ] Investigate UDP fast path using eBPF TC to mark allowed packets based on 4-tuple and skip nfqueue
+- [x] Investigate UDP fast path using eBPF TC to mark allowed packets based on 4-tuple and skip nfqueue
+  - Implemented using conntrack marks instead of eBPF TC (simpler)
+  - nfqueue sets packet mark, uses repeat() verdict to reinject at chain start
+  - CONNMARK save rule catches repeated packets, saves mark to conntrack
+  - Subsequent packets match connmark and skip nfqueue (fast-path confirmed working)
 
 ## Low Priority
 
@@ -19,7 +23,11 @@
 - [ ] Consider moving python package management files to src/proxy/
 - [ ] Disable sudo (backup /etc/sudoers.d/runner, make it empty, restore at end)
 - [ ] Disable docker/containers (disable sudo to prevent reinstall, uninstall docker, nuke files, break socket perms)
-- [ ] Test how the proxy handles traffic from docker containers
+- [x] Test how the proxy handles traffic from docker containers
+  - Bridge mode (default): bypasses proxy (container's network namespace)
+  - Bridge mode + DNAT: traffic proxied + PID tracked via kprobe + SO_ORIGINAL_DST
+  - Host mode: traffic proxied + PID tracked via kprobe
+  - PID tracking works for bridge+DNAT and host mode (kprobe/tcp_connect is kernel-wide)
 
 ## Done
 
