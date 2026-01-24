@@ -1,0 +1,79 @@
+name: Test raw socket bypass
+
+on:
+  push:
+    branches: [research/raw-socket-bypass]
+  workflow_dispatch:
+
+jobs:
+  test-raw-sockets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # First, test WITHOUT proxy to see baseline capabilities
+      - name: Test raw sockets (no proxy)
+        run: |
+          echo "=== Testing raw socket capabilities WITHOUT proxy ==="
+          sudo python3 experiments/raw_socket_bypass/test_raw_sockets.py
+
+      # Now set up the proxy
+      - name: Setup egress filter
+        uses: ./
+        env:
+          VERBOSE: "1"
+
+      # Test WITH proxy running
+      - name: Test raw sockets (with proxy)
+        run: |
+          echo "=== Testing raw socket capabilities WITH proxy ==="
+          sudo python3 experiments/raw_socket_bypass/test_raw_sockets.py
+
+      # Check if raw packets appeared in proxy logs
+      - name: Check proxy logs for raw packets
+        if: always()
+        run: |
+          echo "=== Connection events (should NOT show raw socket traffic if bypassed) ==="
+          cat /tmp/connections.jsonl || echo "No connections log"
+          echo ""
+          echo "=== Looking for port 44444 (our test source port) ==="
+          grep -i "44444" /tmp/connections.jsonl || echo "Not found - raw packet bypassed proxy!"
+
+      - name: Show proxy logs
+        if: always()
+        run: |
+          echo "=== Proxy log ==="
+          cat /tmp/proxy.log || echo "No proxy log"
+
+      # Test if we can use scapy for more sophisticated bypass
+      - name: Test scapy bypass (if available)
+        run: |
+          echo "=== Testing scapy (already installed for proxy) ==="
+          sudo python3 -c "
+          from scapy.all import *
+          import sys
+
+          print('Scapy available, testing packet crafting...')
+
+          # Try to send a SYN packet via raw socket
+          try:
+              pkt = IP(dst='93.184.216.34')/TCP(sport=55555, dport=80, flags='S')
+              print(f'Crafted packet: {pkt.summary()}')
+
+              # send() uses raw sockets
+              send(pkt, verbose=True)
+              print('SUCCESS: Packet sent via scapy - may have bypassed proxy!')
+          except Exception as e:
+              print(f'FAILED: {e}')
+          "
+
+      - name: Final connection log check
+        if: always()
+        run: |
+          echo "=== Final connection log ==="
+          cat /tmp/connections.jsonl || echo "No connections log"
+          echo ""
+          echo "=== Checking for scapy test (port 55555) ==="
+          grep -i "55555" /tmp/connections.jsonl || echo "Port 55555 not found - scapy bypassed proxy!"
