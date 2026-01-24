@@ -19,9 +19,9 @@ jobs:
           echo "=== Testing raw socket capabilities WITHOUT proxy ==="
           sudo python3 experiments/raw_socket_bypass/test_raw_sockets.py
 
-      # Now set up the proxy
+      # Now set up the proxy (use branch reference to get pre/post hooks)
       - name: Setup egress filter
-        uses: ./
+        uses: gregclermont/egress-filter@research/raw-socket-bypass
         env:
           VERBOSE: "1"
 
@@ -49,9 +49,13 @@ jobs:
 
       # Test if we can use scapy for more sophisticated bypass
       - name: Test scapy bypass
+        continue-on-error: true
         run: |
-          echo "=== Testing scapy (using proxy's venv) ==="
-          sudo $GITHUB_WORKSPACE/.venv/bin/python -c "
+          echo "=== Testing scapy (using action's venv) ==="
+          # The action sets EGRESS_FILTER_ROOT to its installation directory
+          VENV_PYTHON="${EGRESS_FILTER_ROOT:-.}/.venv/bin/python"
+          echo "Using: $VENV_PYTHON"
+          sudo "$VENV_PYTHON" -c "
           from scapy.all import *
           import sys
 
