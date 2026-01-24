@@ -58,9 +58,7 @@ jobs:
           echo "5. Privileged unshare still works (needs sudo):"
           sudo unshare --net echo "Privileged netns created (expected)"
 
-          echo ""
-          echo "6. Re-enabling for other tests:"
-          sudo sysctl -w kernel.unprivileged_userns_clone=1
+          # Note: NOT re-enabling - proxy.sh sets this to 0 and we want to verify it stays blocked
 
       # Test AppArmor
       - name: Check AppArmor capabilities
@@ -129,25 +127,12 @@ jobs:
           echo "4. Privileged netns still works (needs sudo - will be blocked when sudo disabled):"
           sudo unshare --net echo "Privileged netns created (expected until sudo disabled)"
 
-      # Test if Docker still works with unprivileged_userns_clone=0
-      - name: Test Docker with sysctl disabled
+      # Verify Docker still works (sysctl already set by proxy)
+      - name: Verify Docker works with blocking active
         run: |
-          echo "=== Testing Docker with unprivileged_userns_clone=0 ==="
-
-          echo "1. Disable unprivileged user namespaces:"
-          sudo sysctl -w kernel.unprivileged_userns_clone=0
-
-          echo ""
-          echo "2. Try to run a Docker container:"
+          echo "=== Verifying Docker works with unprivileged_userns_clone=0 ==="
+          echo "sysctl value: $(cat /proc/sys/kernel/unprivileged_userns_clone)"
           docker run --rm alpine echo "SUCCESS: Docker works with unprivileged_userns_clone=0"
-
-          echo ""
-          echo "3. Docker with network:"
-          docker run --rm alpine ping -c 1 8.8.8.8 || echo "Network test done"
-
-          echo ""
-          echo "4. Re-enable for cleanup:"
-          sudo sysctl -w kernel.unprivileged_userns_clone=1
 
       - name: Show proxy logs
         if: always()
