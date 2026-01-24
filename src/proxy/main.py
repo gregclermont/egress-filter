@@ -13,6 +13,7 @@ All traffic is attributed to PIDs via BPF maps.
 import asyncio
 import atexit
 import os
+import shutil
 import signal
 import sys
 
@@ -20,11 +21,27 @@ from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 
 from .bpf import BPFState
+from .control import ControlServer
 from .handlers import MitmproxyAddon, NfqueueHandler
 from . import logging as proxy_logging
 
+# Paths for sudo disable/restore
+SUDOERS_FILE = "/etc/sudoers.d/runner"
+SUDOERS_BACKUP = "/tmp/sudoers-runner-backup"
+
 # Graceful shutdown timeout (seconds)
 SHUTDOWN_TIMEOUT = 3.0
+
+
+def restore_sudo():
+    """Restore sudo access for runner user so post-hook can call proxy.sh stop."""
+    try:
+        if os.path.exists(SUDOERS_BACKUP):
+            shutil.copy(SUDOERS_BACKUP, SUDOERS_FILE)
+            os.remove(SUDOERS_BACKUP)
+            proxy_logging.logger.info("Sudo restored for runner user")
+    except Exception as e:
+        proxy_logging.logger.warning(f"Failed to restore sudo: {e}")
 
 
 async def run_mitmproxy(bpf: BPFState):
@@ -144,6 +161,14 @@ async def async_main():
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
 
+    # Create control socket for authenticated shutdown
+    async def trigger_shutdown():
+        proxy_logging.logger.info("Authenticated shutdown triggered via control socket")
+        stop_event.set()
+
+    control_server = ControlServer(trigger_shutdown)
+    await control_server.start()
+
     # Create tasks
     nfqueue_handler = NfqueueHandler(bpf)
     mitmproxy_task = asyncio.create_task(run_mitmproxy(bpf), name="mitmproxy")
@@ -168,6 +193,12 @@ async def async_main():
         proxy_logging.logger.info("Shutting down...")
         stop_task.cancel()  # Cancel the stop_event.wait() task
         await shutdown_tasks(tasks)
+
+        # Stop control socket
+        await control_server.stop()
+
+        # Restore sudo so post-hook can call proxy.sh stop
+        restore_sudo()
 
         # Cleanup BPF (also handled by atexit as fallback)
         atexit.unregister(cleanup)

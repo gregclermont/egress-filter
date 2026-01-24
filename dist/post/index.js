@@ -85758,10 +85758,13 @@ const cache = __nccwpck_require__(5116);
 const core = __nccwpck_require__(37484);
 const exec = __nccwpck_require__(95236);
 const fs = __nccwpck_require__(79896);
+const net = __nccwpck_require__(69278);
 const path = __nccwpck_require__(16928);
 
 // Compute action root at runtime (2 levels up from dist/post/)
 const getActionPath = () => [__dirname, '..', '..'].reduce((a, b) => path.resolve(a, b));
+
+const CONTROL_SOCKET_PATH = '/tmp/egress-filter-control.sock';
 
 async function saveVenvCache(actionPath) {
   const cacheKey = core.getState('cache-key');
@@ -85798,28 +85801,76 @@ async function saveVenvCache(actionPath) {
   }
 }
 
+/**
+ * Send shutdown command to proxy via authenticated control socket.
+ * The proxy verifies our identity (exe, parent exe, cgroup, GITHUB_ACTION)
+ * before accepting the shutdown request.
+ */
+async function shutdownProxy() {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(CONTROL_SOCKET_PATH)) {
+      core.warning('Control socket not found, proxy may not be running');
+      resolve(false);
+      return;
+    }
+
+    const socket = net.createConnection(CONTROL_SOCKET_PATH);
+    let response = '';
+
+    socket.setTimeout(10000); // 10 second timeout
+
+    socket.on('connect', () => {
+      core.info('Connected to control socket, sending shutdown...');
+      socket.write('shutdown\n');
+    });
+
+    socket.on('data', (data) => {
+      response += data.toString();
+    });
+
+    socket.on('end', () => {
+      response = response.trim();
+      if (response.startsWith('ok:')) {
+        core.info(`Proxy shutdown initiated: ${response}`);
+        resolve(true);
+      } else {
+        core.error(`Proxy shutdown failed: ${response}`);
+        reject(new Error(response));
+      }
+    });
+
+    socket.on('timeout', () => {
+      socket.destroy();
+      reject(new Error('Control socket timeout'));
+    });
+
+    socket.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
 async function run() {
   const actionPath = getActionPath();
   const setupDir = path.join(actionPath, 'src', 'setup');
 
-  // Build environment variables to pass through sudo.
-  // We exclude HOME so that root uses its own home directory (/root).
-  // We use 'sudo env VAR=value ...' because sudo doesn't pass env vars by default.
-  const sudoEnv = [
-    `PATH=${process.env.PATH}`,
-    `EGRESS_FILTER_ROOT=${actionPath}`,
-  ];
+  // Step 1: Request authenticated shutdown via control socket
+  // This restores sudo access so we can call proxy.sh stop
+  core.info('Requesting proxy shutdown via control socket...');
+  try {
+    await shutdownProxy();
+    core.info('Proxy acknowledged shutdown, sudo restored');
+  } catch (error) {
+    core.warning(`Control socket shutdown failed: ${error.message}`);
+    // Continue anyway - try the cleanup steps
+  }
 
-  // IMPORTANT: Clean iptables FIRST, before stopping proxy
-  // Otherwise traffic is still redirected to port 8080 after proxy dies,
-  // which breaks runner communication with GitHub (jobs appear stuck)
-  core.info('Cleaning up iptables...');
-  await exec.exec('sudo', ['env', ...sudoEnv, path.join(setupDir, 'iptables.sh'), 'cleanup'], {
-    ignoreReturnCode: true,
-  });
+  // Wait for proxy to restore sudo and exit
+  await new Promise(resolve => setTimeout(resolve, 500));
 
-  core.info('Stopping proxy...');
-  await exec.exec('sudo', ['env', ...sudoEnv, path.join(setupDir, 'proxy.sh'), 'stop'], {
+  // Step 2: Full cleanup via proxy.sh stop (iptables, sysctl, etc.)
+  core.info('Running proxy.sh stop...');
+  await exec.exec('sudo', [path.join(setupDir, 'proxy.sh'), 'stop'], {
     ignoreReturnCode: true,
   });
 

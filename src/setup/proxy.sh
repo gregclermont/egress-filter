@@ -42,6 +42,7 @@ install_deps() {
 
 PIDFILE="/tmp/proxy.pid"
 SCOPE_NAME="egress-filter-proxy"
+SUDOERS_BACKUP="/tmp/sudoers-runner-backup"
 
 start_proxy() {
     cd "$REPO_ROOT"
@@ -116,14 +117,46 @@ start_proxy() {
     chmod 644 /tmp/mitmproxy-ca-cert.pem
 
     # Set CA env vars for subsequent steps (wide CI tool support)
-    echo "NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
-    echo "REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
-    echo "AWS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
-    echo "HEX_CACERTS_PATH=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+    # GITHUB_ENV is only available in GHA step context
+    if [ -n "$GITHUB_ENV" ]; then
+        echo "NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+        echo "REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+        echo "AWS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+        echo "HEX_CACERTS_PATH=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+    fi
+
+    # Disable sudo for the runner user to prevent iptables bypass.
+    #
+    # Without this, an attacker could run:
+    #   sudo iptables -F  # Flush all rules, bypass proxy completely
+    #
+    # We backup and empty the sudoers.d/runner file. The proxy (running as root)
+    # restores it on shutdown via the authenticated control socket.
+    #
+    # This is done LAST so all setup is complete before we lose sudo.
+    local sudoers_file="/etc/sudoers.d/runner"
+    if [ -f "$sudoers_file" ]; then
+        cp "$sudoers_file" "$SUDOERS_BACKUP"
+        truncate -s 0 "$sudoers_file"
+        echo "Sudo disabled for runner user"
+    fi
 }
 
 stop_proxy() {
     echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
+
+    # IMPORTANT: Clean iptables FIRST, before anything else.
+    # Otherwise traffic is still redirected to port 8080 after proxy dies,
+    # which breaks runner communication with GitHub (jobs appear stuck).
+    "$SCRIPT_DIR"/iptables.sh cleanup 2>/dev/null || true
+
+    # Restore sudo for runner user (backup created in start_proxy)
+    local sudoers_file="/etc/sudoers.d/runner"
+    if [ -f "$SUDOERS_BACKUP" ]; then
+        cp "$SUDOERS_BACKUP" "$sudoers_file"
+        rm -f "$SUDOERS_BACKUP"
+        echo "Sudo restored for runner user" | tee -a /tmp/proxy.log
+    fi
 
     # Restore unprivileged user namespace creation (cleanup)
     sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
