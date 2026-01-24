@@ -5,7 +5,6 @@
 // Provides 4-tuple→PID correlation for mitmproxy to attribute connections
 // to processes. IPv4 only - all IPv6 is blocked to force apps through
 // the transparent proxy (IPv6 would bypass iptables REDIRECT).
-//
 
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -66,44 +65,56 @@ int block_sendmsg6(struct bpf_sock_addr *ctx) {
 }
 
 // ============================================
-// TCP: sock_ops (IPv4 only)
+// TCP: cgroup/connect4 (IPv4 only)
 // ============================================
+// We use cgroup/connect4 attached to the root cgroup (/sys/fs/cgroup).
+// Root cgroup hooks catch ALL processes including containers.
+//
+// Unlike UDP (where src_port is 0 at connect time), TCP's source port
+// is assigned during connect() before the cgroup hook fires.
 
-SEC("sockops")
-int handle_sockops(struct bpf_sock_ops *skops) {
-    if (skops->family != AF_INET)
-        return 1;
-    if (skops->op != BPF_SOCK_OPS_TCP_CONNECT_CB)
+SEC("cgroup/connect4")
+int cgroup_connect4(struct bpf_sock_addr *ctx) {
+    // Only track TCP (UDP is handled by kprobe)
+    if (ctx->protocol != IPPROTO_TCP)
         return 1;
 
-    u16 src_port = skops->local_port;
+    u16 src_port = ctx->sk->src_port;
     if (src_port == 0)
         return 1;
 
-    u16 dst_port = bpf_ntohs(skops->remote_port >> 16);
-
     struct conn_key_v4 key = {
-        .dst_ip = skops->remote_ip4,
+        .dst_ip = ctx->user_ip4,
         .src_port = src_port,
-        .dst_port = dst_port,
+        .dst_port = bpf_ntohl(ctx->user_port) >> 16,
         .protocol = IPPROTO_TCP,
     };
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
+
     return 1;
 }
 
 // ============================================
 // UDP: kprobe
 // ============================================
-// We use kprobe instead of the simpler cgroup/sendmsg4 hook because
-// cgroup hooks don't fire for loopback destinations (127.0.0.0/8).
-// DNS queries to systemd-resolved (127.0.0.53) would be missed.
+// We use kprobe instead of cgroup hooks for UDP because:
 //
-// The kprobe fires system-wide (not just our cgroup), but the overhead
-// is negligible: most UDP is from job processes anyway, and extra map
-// entries for system services are harmless (LRU-evicted, never queried
-// since iptables filters by uid before packets reach nfqueue).
+// 1. cgroup/sendmsg4 doesn't work for connected UDP sockets.
+//    When send() is called without a destination (connected socket),
+//    user_ip4 is 0. We tried falling back to ctx->sk but it doesn't
+//    contain the connected destination.
+//
+// 2. cgroup/connect4 can't help because at connect() time for UDP,
+//    the socket isn't bound yet - src_port is 0. The ephemeral port
+//    is only assigned when actually sending data.
+//
+// 3. Dual-hook approach (connect4 stores cookie->dest, sendmsg4 completes)
+//    was tested but TCP tracking broke for host processes while Docker
+//    containers still worked. Root cause unknown.
+//
+// The kprobe fires after the socket is bound and has access to both
+// msg_name (for sendto) and socket state (for connected sockets).
 
 SEC("kprobe/udp_sendmsg")
 int kprobe_udp_sendmsg(struct pt_regs *ctx) {
