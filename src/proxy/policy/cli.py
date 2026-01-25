@@ -25,7 +25,7 @@ except ImportError:
 
 from parsimonious.exceptions import ParseError
 
-from .parser import GRAMMAR, PolicyVisitor
+from .parser import GRAMMAR, PolicyVisitor, parse_policy, rule_to_dict
 
 
 def find_policies_in_workflow(workflow: dict) -> list[tuple[str, str]]:
@@ -94,6 +94,11 @@ def main():
     parser.add_argument(
         "-q", "--quiet", action="store_true", help="Only output errors, no summary"
     )
+    parser.add_argument(
+        "--dump-rules",
+        action="store_true",
+        help="Output all parsed rules as JSON to stdout",
+    )
 
     args = parser.parse_args()
 
@@ -118,7 +123,23 @@ def main():
 
     if not policies:
         if not args.quiet:
-            print(f"No egress-filter policies found in {args.workflow}")
+            print(
+                f"No egress-filter policies found in {args.workflow}", file=sys.stderr
+            )
+        if args.dump_rules:
+            print("[]")
+        sys.exit(0)
+
+    # Handle --dump-rules mode
+    if args.dump_rules:
+        import json
+
+        all_rules = []
+        for location, policy_text in policies:
+            rules = parse_policy(policy_text)
+            for rule in rules:
+                all_rules.append(rule_to_dict(rule))
+        print(json.dumps(all_rules, indent=2))
         sys.exit(0)
 
     # Validate each policy
