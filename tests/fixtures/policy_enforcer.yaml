@@ -1,0 +1,677 @@
+# Test suite for PolicyEnforcer end-to-end scenarios
+#
+# Each test defines:
+#   - name: Description of the scenario
+#   - policy: Policy text
+#   - dns_cache: (optional) Pre-populated DNS cache entries
+#   - audit_mode: (optional) Enable audit mode (default: false)
+#   - checks: Sequence of connection checks and DNS events
+#
+# Check types:
+#   - https: HTTPS connection (sni, dst_ip, dst_port, proc)
+#   - http: HTTP request (url, method, dst_ip, dst_port, proc)
+#   - tcp: Raw TCP connection (dst_ip, dst_port, proc)
+#   - dns: DNS query (query_name, dst_ip, dst_port, proc)
+#   - udp: UDP packet (dst_ip, dst_port, proc)
+#   - dns_response: Record DNS response (query_name, ips, ttl) - not a check, updates cache
+#
+# Process info (proc) is optional:
+#   - exe: Executable path
+#   - cmdline: Command line arguments (list)
+#   - cgroup: Cgroup path
+#   - step: GitHub Actions step name
+
+tests:
+  # =============================================================================
+  # Basic HTTPS scenarios
+  # =============================================================================
+
+  - name: HTTPS with SNI matching host rule
+    policy: |
+      github.com
+    checks:
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        verdict: block
+
+  - name: HTTPS with wildcard host rule
+    policy: |
+      *.github.com
+    checks:
+      - type: https
+        sni: api.github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: https
+        sni: raw.githubusercontent.com
+        dst_ip: 185.199.108.133
+        dst_port: 443
+        verdict: block
+
+      # Wildcard doesn't match root domain
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+  - name: HTTPS without SNI uses DNS cache
+    policy: |
+      github.com
+    dns_cache:
+      - hostname: github.com
+        ips: [140.82.121.4, 140.82.121.5]
+        ttl: 300
+    checks:
+      - type: https
+        sni: null
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: https
+        sni: null
+        dst_ip: 140.82.121.5
+        dst_port: 443
+        verdict: allow
+
+      # IP not in cache
+      - type: https
+        sni: null
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        verdict: block
+
+  - name: HTTPS without SNI matches IP rule
+    policy: |
+      140.82.121.0/24:443
+    checks:
+      - type: https
+        sni: null
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+  # =============================================================================
+  # HTTP URL and path matching
+  # =============================================================================
+
+  - name: HTTP URL rule matching
+    policy: |
+      https://api.github.com/*
+    checks:
+      - type: http
+        url: https://api.github.com/repos/owner/repo
+        method: GET
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: http
+        url: https://api.github.com/users/octocat
+        method: GET
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: http
+        url: https://example.com/api
+        method: GET
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        verdict: block
+
+  - name: HTTP method restrictions
+    policy: |
+      GET https://api.github.com/*
+    checks:
+      - type: http
+        url: https://api.github.com/repos
+        method: GET
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: http
+        url: https://api.github.com/repos
+        method: HEAD
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+      - type: http
+        url: https://api.github.com/repos
+        method: POST
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+  - name: HTTP path rules with URL base header
+    policy: |
+      [https://api.github.com]
+      GET /repos/*
+      POST /repos/*/issues
+      GET|POST /gists
+    checks:
+      # GET repos - allowed
+      - type: http
+        url: https://api.github.com/repos/owner/repo
+        method: GET
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      # POST issues - allowed
+      - type: http
+        url: https://api.github.com/repos/owner/issues
+        method: POST
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      # DELETE issues - blocked
+      - type: http
+        url: https://api.github.com/repos/owner/issues/1
+        method: DELETE
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+      # GET gists - allowed
+      - type: http
+        url: https://api.github.com/gists
+        method: GET
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      # POST gists - allowed
+      - type: http
+        url: https://api.github.com/gists
+        method: POST
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      # Wrong path - blocked
+      - type: http
+        url: https://api.github.com/users/octocat
+        method: GET
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+  # =============================================================================
+  # TCP with DNS cache correlation
+  # =============================================================================
+
+  - name: TCP allowed via pre-populated DNS cache
+    policy: |
+      github.com:22
+    dns_cache:
+      - hostname: github.com
+        ips: [140.82.121.4]
+        ttl: 300
+    checks:
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 22
+        verdict: allow
+
+      # Wrong port
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 80
+        verdict: block
+
+      # IP not in cache
+      - type: tcp
+        dst_ip: 93.184.216.34
+        dst_port: 22
+        verdict: block
+
+  - name: TCP with DNS response during flow
+    policy: |
+      github.com:22
+    checks:
+      # Initially blocked - no DNS cache
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 22
+        verdict: block
+
+      # DNS response populates cache
+      - type: dns_response
+        query_name: github.com
+        ips: [140.82.121.4, 140.82.121.5]
+        ttl: 300
+
+      # Now allowed via cache
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 22
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 140.82.121.5
+        dst_port: 22
+        verdict: allow
+
+  - name: TCP allowed by IP rule without DNS
+    policy: |
+      140.82.121.0/24:*
+    checks:
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 22
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 140.82.121.100
+        dst_port: 8080
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 140.82.122.1
+        dst_port: 22
+        verdict: block
+
+  # =============================================================================
+  # DNS queries
+  # =============================================================================
+
+  - name: DNS query matching host rules
+    policy: |
+      github.com:53/udp
+      *.github.com:53/udp
+    checks:
+      - type: dns
+        query_name: github.com
+        dst_ip: 8.8.8.8
+        dst_port: 53
+        verdict: allow
+
+      - type: dns
+        query_name: api.github.com
+        dst_ip: 8.8.8.8
+        dst_port: 53
+        verdict: allow
+
+      - type: dns
+        query_name: example.com
+        dst_ip: 8.8.8.8
+        dst_port: 53
+        verdict: block
+
+  - name: DNS to specific servers only
+    policy: |
+      # Allow any query to these DNS servers
+      8.8.8.8:53/udp
+      1.1.1.1:53/udp
+    checks:
+      - type: udp
+        dst_ip: 8.8.8.8
+        dst_port: 53
+        verdict: allow
+
+      - type: udp
+        dst_ip: 1.1.1.1
+        dst_port: 53
+        verdict: allow
+
+      - type: udp
+        dst_ip: 9.9.9.9
+        dst_port: 53
+        verdict: block
+
+  # =============================================================================
+  # UDP (non-DNS)
+  # =============================================================================
+
+  - name: UDP allowed by IP and port
+    policy: |
+      123.45.67.89:123/udp
+    checks:
+      - type: udp
+        dst_ip: 123.45.67.89
+        dst_port: 123
+        verdict: allow
+
+      - type: udp
+        dst_ip: 123.45.67.89
+        dst_port: 124
+        verdict: block
+
+      # TCP doesn't match UDP rule
+      - type: tcp
+        dst_ip: 123.45.67.89
+        dst_port: 123
+        verdict: block
+
+  # =============================================================================
+  # Process attribute matching
+  # =============================================================================
+
+  - name: Restrict by executable path
+    policy: |
+      github.com exe=/usr/bin/git
+    checks:
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          exe: /usr/bin/git
+        verdict: allow
+
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          exe: /usr/bin/curl
+        verdict: block
+
+      # No process info - blocked
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+  - name: Executable wildcard matching
+    policy: |
+      npmjs.org exe=*/node
+    checks:
+      - type: https
+        sni: npmjs.org
+        dst_ip: 104.16.0.1
+        dst_port: 443
+        proc:
+          exe: /usr/local/bin/node
+        verdict: allow
+
+      - type: https
+        sni: npmjs.org
+        dst_ip: 104.16.0.1
+        dst_port: 443
+        proc:
+          exe: /home/user/.nvm/versions/node/v18/bin/node
+        verdict: allow
+
+      - type: https
+        sni: npmjs.org
+        dst_ip: 104.16.0.1
+        dst_port: 443
+        proc:
+          exe: /usr/bin/python
+        verdict: block
+
+  - name: Restrict by GitHub Actions step
+    policy: |
+      *.npmjs.org step=Install*
+    checks:
+      - type: https
+        sni: registry.npmjs.org
+        dst_ip: 104.16.0.1
+        dst_port: 443
+        proc:
+          step: Install dependencies
+        verdict: allow
+
+      - type: https
+        sni: registry.npmjs.org
+        dst_ip: 104.16.0.1
+        dst_port: 443
+        proc:
+          step: Run tests
+        verdict: block
+
+  - name: Multiple attribute constraints
+    policy: |
+      github.com exe=*/git step=Checkout*
+    checks:
+      # Both match
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          exe: /usr/bin/git
+          step: Checkout code
+        verdict: allow
+
+      # exe matches, step doesn't
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          exe: /usr/bin/git
+          step: Run tests
+        verdict: block
+
+      # step matches, exe doesn't
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          exe: /usr/bin/curl
+          step: Checkout code
+        verdict: block
+
+  # =============================================================================
+  # Audit mode
+  # =============================================================================
+
+  - name: Audit mode allows blocked connections
+    policy: |
+      github.com
+    audit_mode: true
+    checks:
+      # Normally allowed - still allowed
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      # Would be blocked - allowed in audit mode
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        verdict: allow
+
+  # =============================================================================
+  # Complex real-world scenarios
+  # =============================================================================
+
+  - name: GitHub Actions typical workflow
+    policy: |
+      # GitHub API and git operations
+      github.com
+      github.com:22
+      *.github.com
+      *.githubusercontent.com
+
+      # Package registries
+      registry.npmjs.org
+      *.npmjs.org
+
+      # DNS
+      [:53/udp]
+      8.8.8.8
+      1.1.1.1
+    checks:
+      # Clone via HTTPS
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      # API calls
+      - type: https
+        sni: api.github.com
+        dst_ip: 140.82.121.6
+        dst_port: 443
+        verdict: allow
+
+      # Download release assets
+      - type: https
+        sni: objects.githubusercontent.com
+        dst_ip: 185.199.108.133
+        dst_port: 443
+        verdict: allow
+
+      # npm install
+      - type: https
+        sni: registry.npmjs.org
+        dst_ip: 104.16.0.1
+        dst_port: 443
+        verdict: allow
+
+      # DNS queries
+      - type: udp
+        dst_ip: 8.8.8.8
+        dst_port: 53
+        verdict: allow
+
+      # Blocked: unknown host
+      - type: https
+        sni: evil.com
+        dst_ip: 1.2.3.4
+        dst_port: 443
+        verdict: block
+
+  - name: SSH git clone flow with DNS
+    policy: |
+      github.com:22
+    checks:
+      # Initial TCP blocked (no DNS cache yet)
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 22
+        verdict: block
+
+      # Simulate DNS resolution
+      - type: dns_response
+        query_name: github.com
+        ips: [140.82.121.4]
+        ttl: 300
+
+      # Now SSH works
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 22
+        verdict: allow
+
+  - name: API with read-only restrictions
+    policy: |
+      [GET|HEAD]
+      https://api.github.com/*
+    checks:
+      # Read operations allowed
+      - type: http
+        url: https://api.github.com/repos/owner/repo
+        method: GET
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: http
+        url: https://api.github.com/repos/owner/repo
+        method: HEAD
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      # Write operations blocked
+      - type: http
+        url: https://api.github.com/repos/owner/repo
+        method: POST
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+      - type: http
+        url: https://api.github.com/repos/owner/repo
+        method: PUT
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+      - type: http
+        url: https://api.github.com/repos/owner/repo
+        method: DELETE
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: block
+
+  - name: Internal network ranges
+    policy: |
+      # Allow all internal traffic
+      10.0.0.0/8:*
+      172.16.0.0/12:*
+      192.168.0.0/16:*
+    checks:
+      - type: tcp
+        dst_ip: 10.1.2.3
+        dst_port: 8080
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 172.20.0.5
+        dst_port: 443
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 192.168.1.100
+        dst_port: 22
+        verdict: allow
+
+      # External blocked
+      - type: tcp
+        dst_ip: 8.8.8.8
+        dst_port: 53
+        verdict: block
+
+  - name: Multiple port rules
+    policy: |
+      github.com:22|443|9418
+    dns_cache:
+      - hostname: github.com
+        ips: [140.82.121.4]
+        ttl: 300
+    checks:
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 22
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 9418
+        verdict: allow
+
+      - type: tcp
+        dst_ip: 140.82.121.4
+        dst_port: 80
+        verdict: block

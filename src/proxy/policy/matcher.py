@@ -2,14 +2,14 @@
 
 import fnmatch
 import re
-import struct
 import socket
+import struct
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from .types import Rule, AttrValue
 from .parser import parse_policy
+from .types import AttrValue, Rule
 
 
 @dataclass
@@ -245,8 +245,7 @@ def match_attrs(rule: Rule, event: ConnectionEvent) -> bool:
         if key == "step":
             if event.step is None:
                 return False
-            actual = value.value if isinstance(value, AttrValue) else value
-            if event.step != actual:
+            if not match_attr_value(value, event.step):
                 return False
             continue
 
