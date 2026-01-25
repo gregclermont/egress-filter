@@ -278,11 +278,15 @@ jobs:
                 - uses: owner/egress-filter@v1
                   with:
                     policy: |
-                      # Minimal user policy - only allow example.com and test UDP
+                      # Minimal user policy - only allow what the test scripts need
                       # Let --include-defaults handle GitHub infrastructure
+
+                      # Test connections (not covered by defaults)
                       example.com
                       [:*/udp]
                       8.8.8.8
+                      [:22]
+                      github.com
           EOF
 
           echo "=== Analysis with --include-defaults ==="
