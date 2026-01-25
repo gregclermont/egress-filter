@@ -285,8 +285,10 @@ jobs:
                       example.com
                       [:*/udp]
                       8.8.8.8
+
+                      # TCP test to github.com:22 - use CIDR since CLI doesn't have DNS correlation
                       [:22]
-                      github.com
+                      140.82.0.0/16
           EOF
 
           echo "=== Analysis with --include-defaults ==="
