@@ -16,7 +16,6 @@
 #   - attrs: Dict of attributes (exe, arg, step, cgroup, etc.) or empty
 
 tests:
-
   # =============================================================================
   # Basic rules with implicit defaults
   # =============================================================================
@@ -253,6 +252,83 @@ tests:
         port: "*"
         protocol: tcp
         methods: null
+        url_base: null
+        attrs: {}
+
+  # =============================================================================
+  # Invalid rules (should be rejected/skipped)
+  # =============================================================================
+
+  - name: Invalid IP rejected as hostname (TLD must start with letter)
+    policy: |
+      256.0.0.0
+      1.2.3
+      999.999.999.999
+      github.com
+    rules:
+      # Only github.com should parse - invalid IPs are rejected
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Protocol suffix without port rejected
+    policy: |
+      github.com/udp
+      8.8.8.8/udp
+      github.com:53/udp
+    rules:
+      # Only the one with explicit port should parse
+      - type: host
+        target: github.com
+        port: [53]
+        protocol: udp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: URL with query string rejected
+    policy: |
+      https://api.github.com/search?q=test
+      https://api.github.com/search
+    rules:
+      # Only the one without query string should parse
+      - type: url
+        target: https://api.github.com/search
+        port: [443]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+
+  - name: URL with fragment rejected
+    policy: |
+      https://example.com/path#fragment
+      https://example.com/path
+    rules:
+      # Only the one without fragment should parse
+      - type: url
+        target: https://example.com/path
+        port: [443]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+
+  - name: Wildcard in URL hostname rejected
+    policy: |
+      https://*.github.com/foo
+      https://api.github.com/*
+    rules:
+      # Wildcard in hostname rejected, wildcard in path OK
+      - type: url
+        target: https://api.github.com/*
+        port: [443]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
         url_base: null
         attrs: {}
 

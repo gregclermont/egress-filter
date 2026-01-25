@@ -22,7 +22,6 @@
 #   - step: GitHub Actions step
 
 tests:
-
   # =============================================================================
   # Basic hostname matching
   # =============================================================================
@@ -835,6 +834,61 @@ tests:
           dst_ip: 8.8.8.8
           dst_port: 53
           name: other.com
+        verdict: block
+
+  - name: DNS IP rule matches server not query name
+    policy: |
+      8.8.8.8:53/udp
+    connections:
+      # IP rule allows any query to that DNS server
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: anything.com
+        verdict: allow
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: evil.com
+        verdict: allow
+      # Different server is blocked
+      - event:
+          type: dns
+          dst_ip: 1.1.1.1
+          dst_port: 53
+          name: anything.com
+        verdict: block
+
+  - name: DNS combined IP and hostname rules
+    policy: |
+      # Allow any query to Google DNS
+      8.8.8.8:53/udp
+      # Allow github queries to any server
+      *.github.com:53/udp
+      github.com:53/udp
+    connections:
+      # Any query to Google DNS - allowed by IP rule
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: evil.com
+        verdict: allow
+      # Github query to other server - allowed by hostname rule
+      - event:
+          type: dns
+          dst_ip: 1.1.1.1
+          dst_port: 53
+          name: api.github.com
+        verdict: allow
+      # Non-github query to non-Google server - blocked
+      - event:
+          type: dns
+          dst_ip: 1.1.1.1
+          dst_port: 53
+          name: evil.com
         verdict: block
 
   # =============================================================================
