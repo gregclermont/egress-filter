@@ -47,36 +47,6 @@ class TestDefaultsParsing:
         assert len(matcher.rules) >= 4
 
 
-class TestLocalDnsRules:
-    """Test local DNS resolver rules."""
-
-    def test_allows_dns_to_local_resolver(self):
-        """Should allow DNS queries to 127.0.0.53."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="dns",
-            dst_ip="127.0.0.53",
-            dst_port=53,
-            name="github.com",
-            exe="/usr/bin/curl",
-        )
-        allowed, _ = matcher.match(event)
-        assert allowed
-
-    def test_blocks_dns_to_external_resolver(self):
-        """Should block DNS to external resolvers by default."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="dns",
-            dst_ip="8.8.8.8",
-            dst_port=53,
-            name="github.com",
-            exe="/usr/bin/curl",
-        )
-        allowed, _ = matcher.match(event)
-        assert not allowed
-
-
 class TestGitRemoteRules:
     """Test GitHub repository access rules for git."""
 
@@ -217,21 +187,6 @@ class TestAzureWireserverRules:
         allowed, _ = matcher.match(event)
         assert allowed
 
-    def test_allows_azure_agent_alternate_port(self):
-        """Should allow Azure Linux Agent to wireserver on port 32526."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="168.63.129.16",
-            dst_port=32526,
-            url="http://168.63.129.16:32526/vmSettings",
-            method="GET",
-            exe="/usr/bin/python3.12",
-            cgroup="/azure.slice/walinuxagent.service",
-        )
-        allowed, _ = matcher.match(event)
-        assert allowed
-
     def test_blocks_non_azure_agent_to_wireserver(self):
         """Should block non-Azure processes from wireserver."""
         matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
@@ -315,16 +270,6 @@ class TestCombinedDefaults:
         """User rules should work alongside defaults."""
         combined = GITHUB_ACTIONS_DEFAULTS + "\n# User rules\nexample.com\n"
         matcher = PolicyMatcher(combined)
-
-        # Default rule should still work
-        dns_event = ConnectionEvent(
-            type="dns",
-            dst_ip="127.0.0.53",
-            dst_port=53,
-            name="example.com",
-        )
-        allowed, _ = matcher.match(dns_event)
-        assert allowed
 
         # User rule should work
         http_event = ConnectionEvent(

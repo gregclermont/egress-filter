@@ -1,0 +1,41 @@
+name: Test baseline (no egress)
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          # Empty policy - block everything, log what's needed
+          policy: ""
+
+      - name: Baseline test (no network)
+        run: |
+          echo "Starting baseline test..."
+          sleep 5
+          echo "Baseline test complete."
+
+      - name: Show connection events
+        if: always()
+        run: cat /tmp/connections.jsonl || echo "No connections log found"
+
+      - name: Show proxy logs
+        if: always()
+        run: cat /tmp/proxy.log || echo "No proxy log found"
+
+      - name: Stop proxy and show BPF map
+        if: always()
+        run: |
+          sudo ${{ env.EGRESS_FILTER_ROOT || '/home/runner/work/_actions/gregclermont/egress-filter/test' }}/src/setup/proxy.sh stop || true
+          cat /tmp/bpf_map_dump.txt || echo "No BPF map dump found"

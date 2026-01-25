@@ -1,0 +1,4 @@
+# file: /Users/user/src/egress-filter/src/proxy/policy/cli.py
+# hypothesis_version: 6.150.3
+
+[443, '#', '-', '--analyze-log', '--dump-rules', '--include-defaults', '--include-preset', '--quiet', '--strict', '--verbose', '-q', '-v', '/egress-filter', 'ALLOWED connections:', 'CONNECTIONS.jsonl', 'GET', 'NAME', 'Rule', '[]', '__main__', 'allowed', 'append', 'blocked', 'conn', 'count', 'dns', 'dst_ip', 'dst_port', 'egress-filter@', 'exe', 'host', 'http', 'https', 'jobs', 'method', 'name', 'policy', 'step', 'steps', 'store_true', 'tcp', 'type', 'udp', 'unknown', 'url', 'uses', 'with', 'workflow']

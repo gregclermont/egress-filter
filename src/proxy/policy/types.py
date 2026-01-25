@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 RuleType = Literal["host", "wildcard_host", "ip", "cidr", "url", "path"]
 Protocol = Literal["tcp", "udp"]
 
@@ -37,6 +36,7 @@ class HeaderContext:
     protocol: Protocol = "tcp"
     methods: list[str] | None = None  # None means use defaults per rule type
     url_base: str | None = None
+    attrs: dict[str, str | AttrValue] = field(default_factory=dict)
 
     def reset(self) -> None:
         """Reset to default values."""
@@ -44,3 +44,4 @@ class HeaderContext:
         self.protocol = "tcp"
         self.methods = None
         self.url_base = None
+        self.attrs = {}

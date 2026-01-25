@@ -1,0 +1,4 @@
+# file: /Users/user/src/egress-filter/src/proxy/policy/enforcer.py
+# hypothesis_version: 6.150.3
+
+['ProcessInfo', 'allow', 'block', 'cgroup', 'cmdline', 'dns', 'exe', 'http', 'https', 'step', 'tcp', 'udp']

@@ -15,35 +15,7 @@ GITHUB_ACTIONS_DEFAULTS = """
 # They are restrictive by design - each rule is scoped to specific executables
 # or cgroups where possible to prevent abuse.
 
-# -----------------------------------------------------------------------------
-# Local DNS resolver (systemd-resolved on Ubuntu runners)
-# All processes need to resolve hostnames via the local resolver.
-# -----------------------------------------------------------------------------
-[:53/udp]
-127.0.0.53
-
-# -----------------------------------------------------------------------------
-# GitHub repository operations (actions/checkout, git push, etc.)
-# Only allows git executables to access GitHub.
-# -----------------------------------------------------------------------------
-[*]
-github.com exe=`/usr/lib/git-core/git-remote-*`
-*.github.com exe=`/usr/lib/git-core/git-remote-*`
-
-# -----------------------------------------------------------------------------
-# GitHub Actions services (artifact upload, cache, etc.)
-# Only allows the actions-runner node process to access these services.
-# -----------------------------------------------------------------------------
-[*]
-*.actions.githubusercontent.com exe=`/home/runner/actions-runner/*/node*/bin/node`
-*.githubusercontent.com exe=`/home/runner/actions-runner/*/node*/bin/node`
-
-# -----------------------------------------------------------------------------
-# Azure wireserver (metadata/heartbeat for GitHub-hosted runners)
-# Only allows the Azure Linux Agent to access the wireserver.
-# -----------------------------------------------------------------------------
-[:*]
-168.63.129.16 cgroup=`/azure.slice/*`
+# TODO: Determine minimal required rules from baseline testing
 """
 
 # Optional presets that users can include
@@ -53,11 +25,11 @@ DOCKER_PRESET = """
 # =============================================================================
 # Allows the Docker daemon to pull images from Docker Hub.
 
-[*]
-registry-1.docker.io exe=/usr/bin/dockerd
-auth.docker.io exe=/usr/bin/dockerd
-*.docker.io exe=/usr/bin/dockerd
-production.cloudflare.docker.com exe=/usr/bin/dockerd
+[exe=/usr/bin/dockerd]
+registry-1.docker.io
+auth.docker.io
+*.docker.io
+production.cloudflare.docker.com
 """
 
 # Registry of available presets

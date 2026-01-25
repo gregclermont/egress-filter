@@ -28,8 +28,11 @@ inline_comment  = ws+ comment
 newline         = "\n" / "\r\n"
 ws              = " " / "\t"
 
-header          = ws* "[" header_attrs? "]" inline_comment? ws*
-header_attrs    = url_base / method_attr / port_proto_attr
+header          = ws* "[" header_content? "]" inline_comment? ws*
+header_content  = url_base / method_header / port_proto_header / kv_only_header
+method_header   = method_attr kv_attrs?
+port_proto_header = port_proto_attr kv_attrs?
+kv_only_header  = kv_attr (ws+ kv_attr)*
 url_base        = scheme "://" hostname url_port? url_path?
 port_proto_attr = port_attr proto_attr?
 
@@ -76,7 +79,7 @@ arg_indexed     = "arg[" ~"[0-9]+" "]"
 kv_value        = backtick_value / quoted_value / unquoted_value
 backtick_value  = "`" ~"[^`]*" "`"
 quoted_value    = "\"" ~"[^\"]*" "\""
-unquoted_value  = ~"[^\\s#]+"
+unquoted_value  = ~"[^\\s#\\]]+"
 """)
 
 
@@ -139,14 +142,14 @@ class PolicyVisitor(NodeVisitor):
         return visited_children[0] if visited_children else None
 
     def visit_header(self, node, visited_children):
-        # ws* "[" header_attrs? "]" inline_comment? ws*
-        _, _, header_attrs, _, _, _ = visited_children
+        # ws* "[" header_content? "]" inline_comment? ws*
+        _, _, header_content, _, _, _ = visited_children
 
         # Reset context for new header
         self.ctx.reset()
 
-        if not _is_empty(header_attrs):
-            attrs = _flatten(header_attrs)
+        if not _is_empty(header_content):
+            attrs = _flatten(header_content)
 
             # Check if the entire attrs list is a method list (e.g., [GET|HEAD] header)
             # This happens because _flatten unwraps ['GET', 'HEAD'] into individual strings
@@ -178,10 +181,84 @@ class PolicyVisitor(NodeVisitor):
                             self.ctx.port = attr["port"]
                         if "protocol" in attr:
                             self.ctx.protocol = attr["protocol"]
+                        # Handle kv_attrs in headers (exe=, cgroup=, etc.)
+                        for key in list(attr.keys()):
+                            if key not in ("url_base", "methods", "port", "protocol"):
+                                self.ctx.attrs[key] = attr[key]
         return None
 
-    def visit_header_attrs(self, node, visited_children):
+    def visit_header_content(self, node, visited_children):
         return visited_children[0]
+
+    def visit_method_header(self, node, visited_children):
+        # method_attr kv_attrs?
+        method_attr, kv_attrs = visited_children
+        result = {}
+
+        # Process method attr
+        flat_methods = _flatten([method_attr])
+        valid_methods = (
+            "GET",
+            "HEAD",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH",
+            "OPTIONS",
+            "*",
+        )
+        method_strs = [
+            x for x in flat_methods if isinstance(x, str) and x in valid_methods
+        ]
+        if method_strs:
+            result["methods"] = method_strs
+
+        # Process kv attrs
+        if not _is_empty(kv_attrs):
+            flat_kv = _flatten([kv_attrs])
+            for item in flat_kv:
+                if isinstance(item, dict):
+                    result.update(item)
+
+        return result
+
+    def visit_port_proto_header(self, node, visited_children):
+        # port_proto_attr kv_attrs?
+        port_proto, kv_attrs = visited_children
+        result = {}
+
+        # Process port/proto
+        if not _is_empty(port_proto):
+            flat_pp = _flatten([port_proto])
+            for item in flat_pp:
+                if isinstance(item, dict):
+                    result.update(item)
+                elif isinstance(item, list):
+                    result["port"] = item
+                elif item == "*":
+                    result["port"] = "*"
+                elif isinstance(item, int):
+                    result["port"] = [item]
+                elif item in ("udp", "tcp"):
+                    result["protocol"] = item
+
+        # Process kv attrs
+        if not _is_empty(kv_attrs):
+            flat_kv = _flatten([kv_attrs])
+            for item in flat_kv:
+                if isinstance(item, dict):
+                    result.update(item)
+
+        return result
+
+    def visit_kv_only_header(self, node, visited_children):
+        # kv_attr (ws+ kv_attr)*
+        result = {}
+        flat = _flatten(visited_children)
+        for item in flat:
+            if isinstance(item, dict):
+                result.update(item)
+        return result
 
     def visit_url_base(self, node, visited_children):
         return {"url_base": node.text}
@@ -240,13 +317,13 @@ class PolicyVisitor(NodeVisitor):
                     if "protocol" in item:
                         protocol = item["protocol"]
 
-        # Extract attributes
-        attrs = {}
+        # Extract attributes - start with context attrs, then override with rule attrs
+        attrs = dict(self.ctx.attrs)  # Copy context attrs
         if not _is_empty(kv_attrs):
             flat_attrs = _flatten([kv_attrs])
             for attr in flat_attrs:
                 if isinstance(attr, dict) and "type" not in attr:
-                    attrs.update(attr)
+                    attrs.update(attr)  # Rule attrs override context attrs
 
         # Build the Rule (rule_type and target already extracted above)
         methods = rule_info.get("methods")

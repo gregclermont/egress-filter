@@ -619,6 +619,162 @@ tests:
           step: deploy
 
   # =============================================================================
+  # Header attributes (exe, cgroup, etc.)
+  # =============================================================================
+
+  - name: Header with exe attribute
+    policy: |
+      [exe=`/usr/lib/git-core/git-remote-*`]
+      github.com
+      *.github.com
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe:
+            value: "/usr/lib/git-core/git-remote-*"
+            literal: false
+      - type: wildcard_host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe:
+            value: "/usr/lib/git-core/git-remote-*"
+            literal: false
+
+  - name: Header with cgroup attribute
+    policy: |
+      [cgroup=`/azure.slice/*`]
+      168.63.129.16
+    rules:
+      - type: ip
+        target: 168.63.129.16
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup:
+            value: "/azure.slice/*"
+            literal: false
+
+  - name: Header with port and exe attribute
+    policy: |
+      [:22 exe=/usr/bin/ssh]
+      github.com
+      gitlab.com
+    rules:
+      - type: host
+        target: github.com
+        port: [22]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /usr/bin/ssh
+      - type: host
+        target: gitlab.com
+        port: [22]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /usr/bin/ssh
+
+  - name: Header with multiple kv attributes
+    policy: |
+      [exe=/usr/bin/node cgroup=`/system.slice/*`]
+      api.example.com
+    rules:
+      - type: host
+        target: api.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /usr/bin/node
+          cgroup:
+            value: "/system.slice/*"
+            literal: false
+
+  - name: Rule attribute overrides header attribute
+    policy: |
+      [exe=/default/path]
+      host1.com
+      host2.com exe=/override/path
+    rules:
+      - type: host
+        target: host1.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /default/path
+      - type: host
+        target: host2.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /override/path
+
+  - name: Header attrs reset on new header
+    policy: |
+      [exe=/usr/bin/curl]
+      example.com
+      []
+      github.com
+    rules:
+      - type: host
+        target: example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /usr/bin/curl
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Header with port, protocol, and exe
+    policy: |
+      [:53/udp exe=/usr/bin/dig]
+      8.8.8.8
+      1.1.1.1
+    rules:
+      - type: ip
+        target: 8.8.8.8
+        port: [53]
+        protocol: udp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /usr/bin/dig
+      - type: ip
+        target: 1.1.1.1
+        port: [53]
+        protocol: udp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /usr/bin/dig
+
+  # =============================================================================
   # Comments and blank lines
   # =============================================================================
 

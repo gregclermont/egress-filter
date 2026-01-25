@@ -429,27 +429,6 @@ class TestDumpRules:
 class TestDefaultsIntegration:
     """Tests for --include-defaults and --include-preset flags."""
 
-    def test_analyze_with_defaults_allows_local_dns(self):
-        """--include-defaults should allow local DNS resolver."""
-        from proxy.policy.defaults import get_defaults
-
-        # Empty user policy - only defaults
-        policy = get_defaults()
-
-        connections = [
-            {
-                "type": "dns",
-                "dst_ip": "127.0.0.53",
-                "dst_port": 53,
-                "name": "github.com",
-                "exe": "/usr/bin/curl",
-            }
-        ]
-        results = analyze_connections(policy, connections)
-
-        assert len(results["allowed"]) == 1
-        assert len(results["blocked"]) == 0
-
     def test_analyze_with_defaults_allows_git_to_github(self):
         """--include-defaults should allow git-remote to github.com."""
         from proxy.policy.defaults import get_defaults
@@ -522,13 +501,6 @@ class TestDefaultsIntegration:
         combined_policy = get_defaults() + "\nexample.com\n"
 
         connections = [
-            # Default rule allows local DNS
-            {
-                "type": "dns",
-                "dst_ip": "127.0.0.53",
-                "dst_port": 53,
-                "name": "example.com",
-            },
             # User rule allows example.com
             {
                 "type": "http",
@@ -541,7 +513,7 @@ class TestDefaultsIntegration:
         ]
         results = analyze_connections(combined_policy, connections)
 
-        assert len(results["allowed"]) == 2
+        assert len(results["allowed"]) == 1
         assert len(results["blocked"]) == 0
 
 

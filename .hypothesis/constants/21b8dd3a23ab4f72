@@ -1,0 +1,4 @@
+# file: /Users/user/src/egress-filter/src/proxy/policy/types.py
+# hypothesis_version: 6.150.3
+
+[443, '*', 'cidr', 'host', 'ip', 'path', 'tcp', 'udp', 'url', 'wildcard_host']
