@@ -1,0 +1,290 @@
+name: Test policy CLI
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate-connections:
+    name: Generate connections log
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter (monitor mode)
+        uses: gregclermont/egress-filter@test
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests
+          fetch-depth: 1
+
+      - name: Generate test connections
+        run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl --skip-docker
+
+      - name: Show connections log
+        if: always()
+        run: |
+          echo "=== Connections log ==="
+          cat /tmp/connections.jsonl || echo "No log"
+          echo ""
+          echo "=== Connection count by type ==="
+          cat /tmp/connections.jsonl | jq -r '.type' | sort | uniq -c || true
+
+      - name: Upload connections log
+        uses: actions/upload-artifact@v4
+        with:
+          name: connections-log
+          path: /tmp/connections.jsonl
+          retention-days: 1
+
+  test-cli:
+    name: Test CLI
+    runs-on: ubuntu-latest
+    needs: generate-connections
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml parsimonious
+
+      - name: Download connections log
+        uses: actions/download-artifact@v4
+        with:
+          name: connections-log
+          path: .
+
+      - name: Show downloaded log
+        run: |
+          echo "=== Downloaded connections.jsonl ==="
+          head -20 connections.jsonl
+          echo "..."
+          echo "Total lines: $(wc -l < connections.jsonl)"
+
+      # Test 1: Basic validation
+      - name: "Test: Validate policy syntax"
+        run: |
+          cat > test-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      github.com
+                      *.github.com
+                      example.com
+                      [:53/udp]
+                      8.8.8.8
+          EOF
+
+          PYTHONPATH=src python -m proxy.policy test-workflow.yml
+          echo "Exit code: $?"
+
+      # Test 2: Dump rules
+      - name: "Test: Dump parsed rules"
+        run: |
+          cat > test-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      github.com
+                      *.github.com
+                      [:22]
+                      github.com
+                      [https://api.github.com]
+                      GET /repos/*/releases
+          EOF
+
+          PYTHONPATH=src python -m proxy.policy test-workflow.yml --dump-rules | tee rules.json
+
+          # Verify we got expected rules
+          echo "Rule count: $(jq length rules.json)"
+          jq '.[0]' rules.json  # First rule
+          jq '.[-1]' rules.json  # Last rule
+
+      # Test 3: Analyze with permissive policy (should pass)
+      - name: "Test: Analyze with permissive policy (expect exit 0)"
+        run: |
+          cat > permissive-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      # Allow everything the tests connect to
+                      example.com
+                      github.com
+                      *.github.com
+
+                      # DNS servers
+                      [:53/udp]
+                      8.8.8.8
+                      1.1.1.1
+                      127.0.0.53
+
+                      # UDP test targets
+                      [:*/udp]
+                      8.8.8.8
+
+                      # TCP (SSH port for tests)
+                      [:22]
+                      github.com
+
+                      # HTTP on port 80
+                      [:80]
+                      example.com
+          EOF
+
+          PYTHONPATH=src python -m proxy.policy permissive-workflow.yml --analyze-log connections.jsonl -v
+          exit_code=$?
+
+          if [ $exit_code -ne 0 ]; then
+            echo "ERROR: Expected exit code 0, got $exit_code"
+            exit 1
+          fi
+          echo "PASS: All connections allowed"
+
+      # Test 4: Analyze with restrictive policy (should fail)
+      - name: "Test: Analyze with restrictive policy (expect exit 1)"
+        run: |
+          cat > restrictive-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      # Only allow GitHub HTTPS
+                      github.com
+          EOF
+
+          # This should fail (exit 1) because many connections won't match
+          set +e
+          PYTHONPATH=src python -m proxy.policy restrictive-workflow.yml --analyze-log connections.jsonl
+          exit_code=$?
+          set -e
+
+          if [ $exit_code -ne 1 ]; then
+            echo "ERROR: Expected exit code 1, got $exit_code"
+            exit 1
+          fi
+          echo "PASS: Correctly identified blocked connections"
+
+      # Test 5: Analyze with partial policy
+      - name: "Test: Analyze with partial policy (verbose output)"
+        run: |
+          cat > partial-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      # Allow HTTPS to example.com and github.com
+                      example.com
+                      github.com
+                      *.github.com
+
+                      # But NOT DNS, UDP, or TCP
+          EOF
+
+          echo "=== Analysis with partial policy ==="
+          set +e
+          PYTHONPATH=src python -m proxy.policy partial-workflow.yml --analyze-log connections.jsonl -v
+          set -e
+          echo ""
+          echo "=== Blocked connections should include DNS, UDP, TCP ==="
+
+      # Test 6: Invalid policy syntax
+      - name: "Test: Invalid policy syntax detection"
+        run: |
+          cat > invalid-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      github.com
+                      !!!invalid line
+                      also.valid.com
+                      not valid either @@@
+          EOF
+
+          set +e
+          PYTHONPATH=src python -m proxy.policy invalid-workflow.yml
+          exit_code=$?
+          set -e
+
+          if [ $exit_code -ne 1 ]; then
+            echo "ERROR: Expected exit code 1 for invalid policy, got $exit_code"
+            exit 1
+          fi
+          echo "PASS: Correctly detected invalid syntax"
+
+      # Test 7: URL and path rules
+      - name: "Test: URL and path rule parsing"
+        run: |
+          cat > url-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      # Full URL rules
+                      GET https://api.github.com/repos/*/releases
+                      POST https://api.github.com/repos/*/issues
+
+                      # Path rules with header context
+                      [https://registry.npmjs.org]
+                      GET /package/*
+
+                      # HTTP (not HTTPS)
+                      GET|HEAD http://example.com/*
+          EOF
+
+          PYTHONPATH=src python -m proxy.policy url-workflow.yml --dump-rules | tee url-rules.json
+
+          # Verify URL rules parsed correctly
+          echo ""
+          echo "=== URL rule types ==="
+          jq -r '.[].type' url-rules.json | sort | uniq -c
+
+      - name: "Summary"
+        run: echo "All CLI tests passed!"
