@@ -52,7 +52,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: pip install pyyaml parsimonious
@@ -138,6 +138,11 @@ jobs:
                       example.com
                       github.com
                       *.github.com
+                      *.githubusercontent.com
+
+                      # GitHub IPs (for TCP without DNS correlation)
+                      [:*]
+                      140.82.0.0/16
 
                       # DNS servers
                       [:53/udp]
@@ -162,6 +167,8 @@ jobs:
           exit_code=$?
 
           if [ $exit_code -ne 0 ]; then
+            echo "=== Some connections were blocked. Showing what we need to allow: ==="
+            # This is a learning test - show what extra connections GHA makes
             echo "ERROR: Expected exit code 0, got $exit_code"
             exit 1
           fi
