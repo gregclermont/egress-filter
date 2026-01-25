@@ -3,8 +3,7 @@
 import re
 from typing import Iterator
 
-from .types import Rule, HeaderContext, AttrValue, Protocol
-
+from .types import AttrValue, HeaderContext, Protocol, Rule
 
 # =============================================================================
 # Regex patterns
@@ -22,7 +21,11 @@ URL_PATTERN = re.compile(r"^(https?://[^\s]+)$")
 PATH_PATTERN = re.compile(r"^(/[^\s]*)$")
 
 # Hostname validation (simplified - allows valid DNS names)
-HOSTNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$")
+# TLD must start with a letter to distinguish from invalid IPs like 256.0.0.0
+HOSTNAME_PATTERN = re.compile(
+    r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$"
+)
+TLD_STARTS_WITH_LETTER = re.compile(r"\.[a-zA-Z][a-zA-Z0-9]*$")
 
 # Port pattern: :PORT or :PORT|PORT or :*
 PORT_PATTERN = re.compile(r"^:(\*|\d+(?:\|\d+)*)$")
@@ -44,6 +47,55 @@ HEADER_PATTERN = re.compile(r"^\s*\[(.*)\]\s*(?:#.*)?$")
 
 # Comment pattern
 COMMENT_PATTERN = re.compile(r"#.*$")
+
+
+def is_valid_hostname(hostname: str) -> bool:
+    """Check if a string is a valid hostname.
+
+    Requirements:
+    - Matches DNS name pattern
+    - TLD must start with a letter (to reject things like 256.0.0.0)
+    """
+    if not HOSTNAME_PATTERN.match(hostname):
+        return False
+    # TLD must start with a letter
+    if not TLD_STARTS_WITH_LETTER.search(hostname):
+        return False
+    return True
+
+
+def validate_url(url: str) -> str | None:
+    """Validate a URL for policy rules.
+
+    Returns None if invalid, otherwise returns the validated URL.
+
+    Rejects:
+    - Query strings (?...)
+    - Fragments (#...)
+    - Wildcards in hostname (*.example.com)
+    """
+    # Check for query string or fragment
+    if "?" in url or "#" in url.split("://", 1)[-1]:
+        return None
+
+    # Extract hostname from URL
+    try:
+        url_no_scheme = url.split("://", 1)[1]
+        host_part = url_no_scheme.split("/")[0]
+        # Remove port if present
+        if ":" in host_part:
+            hostname = host_part.rsplit(":", 1)[0]
+        else:
+            hostname = host_part
+
+        # Reject wildcards in URL hostname
+        if "*" in hostname:
+            return None
+
+    except (IndexError, ValueError):
+        return None
+
+    return url
 
 
 def parse_port_proto(text: str) -> tuple[list[int] | str | None, Protocol | None]:
@@ -239,15 +291,23 @@ def parse_rule_line(line: str, ctx: HeaderContext) -> Rule | None:
 
     # Strip inline comments (but not inside quotes)
     # Simple approach: find # that's not inside quotes
+    # Note: For URLs, # could be a fragment - reject those in validate_url
     in_quote = None
     comment_idx = -1
     for i, char in enumerate(line):
         if in_quote:
             if char == in_quote:
                 in_quote = None
-        elif char in ('"', '`'):
+        elif char in ('"', "`"):
             in_quote = char
-        elif char == '#':
+        elif char == "#":
+            # Check if this looks like a URL fragment (# immediately after path chars)
+            # If line starts with http:// or https://, and # is before any space,
+            # it's likely a fragment, not a comment - reject the whole line
+            if (
+                line.startswith("http://") or line.startswith("https://")
+            ) and " " not in line[:i]:
+                return None  # URL with fragment - invalid
             comment_idx = i
             break
     if comment_idx >= 0:
@@ -284,11 +344,17 @@ def parse_rule_line(line: str, ctx: HeaderContext) -> Rule | None:
         # Extract the base target and port/protocol
         base_target = target_part
 
-        # Handle protocol suffix
+        # Handle protocol suffix - /udp and /tcp require explicit port
         if "/udp" in base_target:
+            # Check that there's a port before /udp
+            if ":" not in base_target.split("/udp")[0]:
+                return None  # /udp without port is invalid
             protocol = "udp"
             base_target = base_target.replace("/udp", "")
         elif "/tcp" in base_target:
+            # /tcp is optional but if present, must have port
+            if ":" not in base_target.split("/tcp")[0]:
+                return None  # /tcp without port is invalid
             protocol = "tcp"
             base_target = base_target.replace("/tcp", "")
 
@@ -355,6 +421,10 @@ def parse_rule_line(line: str, ctx: HeaderContext) -> Rule | None:
 
     # Check for URL rule
     if target.startswith("http://") or target.startswith("https://"):
+        # Validate URL (rejects query strings, wildcards in hostname)
+        if validate_url(target) is None:
+            return None
+
         rule_type = "url"
         # Parse port from URL if not already set from suffix
         if port == ctx.port:  # Not overridden
@@ -410,11 +480,14 @@ def parse_rule_line(line: str, ctx: HeaderContext) -> Rule | None:
     # Check for wildcard hostname
     wildcard_match = WILDCARD_HOST_PATTERN.match(target)
     if wildcard_match:
+        wildcard_domain = wildcard_match.group(1)
+        # Validate the domain part (TLD must start with letter)
+        if not is_valid_hostname(wildcard_domain):
+            return None
         rule_type = "wildcard_host"
-        target = wildcard_match.group(1)  # Store without *. prefix
         return Rule(
             type=rule_type,
-            target=target,
+            target=wildcard_domain,  # Store without *. prefix
             port=port,
             protocol=protocol,
             methods=None,
@@ -422,7 +495,10 @@ def parse_rule_line(line: str, ctx: HeaderContext) -> Rule | None:
             attrs=attrs,
         )
 
-    # Assume hostname
+    # Validate hostname (TLD must start with letter)
+    if not is_valid_hostname(target):
+        return None
+
     rule_type = "host"
     return Rule(
         type=rule_type,

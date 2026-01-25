@@ -93,6 +93,13 @@ Design document for the egress filter allowlist/blocklist syntax.
     - `/udp` requires explicit port (no `dns.google/udp` - must be `dns.google:53/udp` or `dns.google:*/udp`)
     - `/tcp` allowed but unnecessary (it's the default)
 
+    **DNS matching semantics**: DNS events have two dimensions - the DNS server and the query name.
+    - **IP rules** (e.g., `8.8.8.8:53/udp`) match the **DNS server IP** - allows any query to that server
+    - **Hostname rules** (e.g., `*.github.com:53/udp`) match the **query name** - allows queries for those domains to any server
+    - Both can be combined: IP rules restrict which DNS servers, hostname rules restrict which domains
+    - Example: `8.8.8.8:53/udp` allows `dig evil.com @8.8.8.8` (any query to Google DNS)
+    - Example: `github.com:53/udp` allows `dig github.com @1.1.1.1` (github.com query to any server)
+
 15. **URL rules require scheme prefix** - Clear visual distinction:
     - `https://github.com/owner/repo/*` - URL rule with path
     - `http://example.com/api/*` - explicit HTTP
@@ -143,6 +150,18 @@ Design document for the egress filter allowlist/blocklist syntax.
     - The implicit default header has no URL base; `[]` resets to this state
 
 ## Future Considerations
+
+### VS Code extension for syntax highlighting
+
+A VS Code extension could provide syntax highlighting for policies embedded in workflow YAML:
+- Use TextMate grammar injection to highlight inside `policy: |` blocks
+- Scope injection to files matching `.github/workflows/*.yml` with `uses: */egress-filter@*`
+- The grammar itself is simple: comments (`#`), headers (`[...]`), hostnames, URLs, attributes
+
+Limitations:
+- Requires users to install the extension
+- GitHub's web editor and PR diffs won't benefit (always shows plain string)
+- JetBrains IDEs would need a separate plugin (IntelliLang injection)
 
 ### Standalone validation CLI/library
 
