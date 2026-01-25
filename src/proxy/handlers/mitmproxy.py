@@ -10,16 +10,6 @@ from ..policy import PolicyEnforcer, ProcessInfo
 from ..proc import get_proc_info, is_container_process
 
 
-def _make_proc_info(proc_dict: dict) -> ProcessInfo:
-    """Convert proc info dict to ProcessInfo object."""
-    return ProcessInfo(
-        exe=proc_dict.get("exe"),
-        cmdline=proc_dict.get("cmdline"),
-        cgroup=proc_dict.get("cgroup"),
-        step=proc_dict.get("step"),
-    )
-
-
 class MitmproxyAddon:
     """Mitmproxy addon for PID tracking, connection logging, and policy enforcement."""
 
@@ -59,7 +49,7 @@ class MitmproxyAddon:
                 dst_ip=dst_ip,
                 dst_port=dst_port,
                 sni=sni,
-                proc=_make_proc_info(proc_dict),
+                proc=ProcessInfo.from_dict(proc_dict),
             )
             verdict = decision.verdict.value
 
@@ -117,7 +107,7 @@ class MitmproxyAddon:
                 dst_port=dst_port,
                 url=url,
                 method=method,
-                proc=_make_proc_info(proc_dict),
+                proc=ProcessInfo.from_dict(proc_dict),
             )
             verdict = decision.verdict.value
 
@@ -170,7 +160,7 @@ class MitmproxyAddon:
             decision = self.enforcer.check_tcp(
                 dst_ip=dst_ip,
                 dst_port=dst_port,
-                proc=_make_proc_info(proc_dict),
+                proc=ProcessInfo.from_dict(proc_dict),
             )
             verdict = decision.verdict.value
 
@@ -220,7 +210,7 @@ class MitmproxyAddon:
                     dst_ip=dst_ip,
                     dst_port=dst_port,
                     query_name=query_name,
-                    proc=_make_proc_info(proc_dict),
+                    proc=ProcessInfo.from_dict(proc_dict),
                 )
                 verdict = decision.verdict.value
 

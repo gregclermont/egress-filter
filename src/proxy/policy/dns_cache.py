@@ -31,6 +31,9 @@ class DNSIPCache:
     was resolved to get that IP address. This allows hostname-based
     policy rules to work even for raw TCP connections.
 
+    The cache has a configurable maximum size. When full, entries closest
+    to expiry are evicted first (expired entries are always evicted first).
+
     Example:
         cache = DNSIPCache()
 
@@ -47,11 +50,49 @@ class DNSIPCache:
     # Minimum TTL to ensure some caching even for low-TTL records
     MIN_TTL = 60
 
-    def __init__(self, max_ttl: int = MAX_TTL, min_ttl: int = MIN_TTL):
+    # Default maximum cache size (number of IP entries)
+    DEFAULT_MAX_SIZE = 10000
+
+    def __init__(
+        self,
+        max_ttl: int = MAX_TTL,
+        min_ttl: int = MIN_TTL,
+        max_size: int = DEFAULT_MAX_SIZE,
+    ):
         self._cache: dict[str, CacheEntry] = {}
         self._lock = threading.Lock()
         self._max_ttl = max_ttl
         self._min_ttl = min_ttl
+        self._max_size = max_size
+        self._eviction_count = 0
+
+    def _evict_if_needed(self, space_needed: int = 1) -> None:
+        """Evict entries if cache is at or over capacity. Must hold lock."""
+        if len(self._cache) + space_needed <= self._max_size:
+            return
+
+        now = time.time()
+
+        # First pass: remove expired entries
+        expired_ips = [ip for ip, entry in self._cache.items() if entry.is_expired(now)]
+        for ip in expired_ips:
+            del self._cache[ip]
+            self._eviction_count += 1
+
+        # Check if we have enough space now
+        if len(self._cache) + space_needed <= self._max_size:
+            return
+
+        # Second pass: evict entries closest to expiry
+        entries_to_evict = len(self._cache) + space_needed - self._max_size
+        if entries_to_evict > 0:
+            # Sort by expiry time (soonest first)
+            sorted_ips = sorted(
+                self._cache.keys(), key=lambda ip: self._cache[ip].expiry
+            )
+            for ip in sorted_ips[:entries_to_evict]:
+                del self._cache[ip]
+                self._eviction_count += 1
 
     def add(self, ip: str, hostname: str, ttl: int) -> None:
         """Add an IP -> hostname mapping with TTL.
@@ -66,6 +107,9 @@ class DNSIPCache:
         expiry = time.time() + effective_ttl
 
         with self._lock:
+            # If IP already exists, no new space needed
+            space_needed = 0 if ip in self._cache else 1
+            self._evict_if_needed(space_needed)
             self._cache[ip] = CacheEntry(hostname=hostname.lower(), expiry=expiry)
 
     def add_many(self, ips: list[str], hostname: str, ttl: int) -> None:
@@ -81,6 +125,9 @@ class DNSIPCache:
         entry = CacheEntry(hostname=hostname.lower(), expiry=expiry)
 
         with self._lock:
+            # Count how many IPs are new (not already in cache)
+            new_ips = [ip for ip in ips if ip not in self._cache]
+            self._evict_if_needed(len(new_ips))
             for ip in ips:
                 self._cache[ip] = entry
 
@@ -136,7 +183,7 @@ class DNSIPCache:
         """Return cache statistics.
 
         Returns:
-            Dict with 'total', 'valid', 'expired' counts
+            Dict with 'total', 'valid', 'expired', 'max_size', 'evictions' counts
         """
         now = time.time()
         with self._lock:
@@ -146,4 +193,6 @@ class DNSIPCache:
                 "total": total,
                 "valid": total - expired,
                 "expired": expired,
+                "max_size": self._max_size,
+                "evictions": self._eviction_count,
             }

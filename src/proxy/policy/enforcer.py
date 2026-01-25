@@ -8,9 +8,10 @@ mitmproxy or BPF types, making them easy to unit test.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
+from urllib.parse import urlparse
 
-from .matcher import PolicyMatcher, ConnectionEvent
 from .dns_cache import DNSIPCache
+from .matcher import ConnectionEvent, PolicyMatcher
 
 
 class Verdict(Enum):
@@ -59,6 +60,16 @@ class ProcessInfo:
     cmdline: list[str] | None = None
     cgroup: str | None = None
     step: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ProcessInfo":
+        """Create ProcessInfo from a dict (e.g., from get_proc_info)."""
+        return cls(
+            exe=d.get("exe"),
+            cmdline=d.get("cmdline"),
+            cgroup=d.get("cgroup"),
+            step=d.get("step"),
+        )
 
     def to_dict(self) -> dict:
         """Convert to dict for ConnectionEvent."""
@@ -176,7 +187,10 @@ class PolicyEnforcer:
                 )
             else:
                 return self._make_decision(
-                    False, None, f"No rule matches https://{sni}:{dst_port}", hostname=sni
+                    False,
+                    None,
+                    f"No rule matches https://{sni}:{dst_port}",
+                    hostname=sni,
                 )
 
         # No SNI - try DNS cache lookup
@@ -237,6 +251,10 @@ class PolicyEnforcer:
         """
         proc_dict = proc.to_dict() if proc else {}
 
+        # Extract hostname from URL for decision metadata
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname
+
         event = ConnectionEvent(
             type="http",
             dst_ip=dst_ip,
@@ -249,11 +267,11 @@ class PolicyEnforcer:
 
         if allowed:
             return self._make_decision(
-                True, rule_idx, f"Matched rule {rule_idx}", hostname=None
+                True, rule_idx, f"Matched rule {rule_idx}", hostname=hostname
             )
         else:
             return self._make_decision(
-                False, None, f"No rule matches {method} {url}"
+                False, None, f"No rule matches {method} {url}", hostname=hostname
             )
 
     def check_tcp(
@@ -401,9 +419,7 @@ class PolicyEnforcer:
                 False, None, f"No rule matches udp://{dst_ip}:{dst_port}"
             )
 
-    def record_dns_response(
-        self, query_name: str, ips: list[str], ttl: int
-    ) -> None:
+    def record_dns_response(self, query_name: str, ips: list[str], ttl: int) -> None:
         """Record DNS response for IP correlation.
 
         Called when a DNS response is received to cache the IP->hostname

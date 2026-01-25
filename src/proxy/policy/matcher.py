@@ -298,8 +298,7 @@ def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
     elif rule.type == "host":
         hostname = get_event_hostname(event)
         if hostname is None:
-            # No hostname in event - try IP match
-            # For host rules, we can't match by IP
+            # No hostname in event - host rules require hostname to match
             return False
         if not match_hostname(rule.target, hostname, is_wildcard=False):
             return False

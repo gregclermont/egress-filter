@@ -5,32 +5,24 @@ from __future__ import annotations
 # Optional imports - graceful degradation if not available
 try:
     from netfilterqueue import NetfilterQueue
+
     HAS_NFQUEUE = True
 except ImportError:
     HAS_NFQUEUE = False
 
 try:
-    from scapy.layers.inet import IP, UDP
     from scapy.layers.dns import DNS
+    from scapy.layers.inet import IP, UDP
+
     HAS_SCAPY = True
 except ImportError:
     HAS_SCAPY = False
 
-from ..bpf import BPFState
 from .. import logging as proxy_logging
+from ..bpf import BPFState
+from ..policy import PolicyEnforcer, ProcessInfo
 from ..proc import get_proc_info
 from ..utils import IPPROTO_UDP
-from ..policy import PolicyEnforcer, ProcessInfo
-
-
-def _make_proc_info(proc_dict: dict) -> ProcessInfo:
-    """Convert proc info dict to ProcessInfo object."""
-    return ProcessInfo(
-        exe=proc_dict.get("exe"),
-        cmdline=proc_dict.get("cmdline"),
-        cgroup=proc_dict.get("cgroup"),
-        step=proc_dict.get("step"),
-    )
 
 
 class NfqueueHandler:
@@ -66,9 +58,9 @@ class NfqueueHandler:
     """
 
     # Mark bits (can be combined)
-    MARK_DNS_REDIRECT = 2   # Redirect to mitmproxy DNS port
-    MARK_FASTPATH = 4       # Save to conntrack for fast-path
-    MARK_DROP = 0           # Drop the packet (no marks)
+    MARK_DNS_REDIRECT = 2  # Redirect to mitmproxy DNS port
+    MARK_FASTPATH = 4  # Save to conntrack for fast-path
+    MARK_DROP = 0  # Drop the packet (no marks)
 
     def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer | None = None):
         """Initialize the handler.
@@ -102,7 +94,9 @@ class NfqueueHandler:
                     dst_port = udp.dport
 
                     # Look up PID
-                    pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
+                    pid = self.bpf.lookup_pid(
+                        dst_ip, src_port, dst_port, protocol=IPPROTO_UDP
+                    )
                     proc_dict = get_proc_info(pid)
 
                     # DNS detection by packet structure (catches DNS on any port)
@@ -124,7 +118,7 @@ class NfqueueHandler:
                             decision = self.enforcer.check_udp(
                                 dst_ip=dst_ip,
                                 dst_port=dst_port,
-                                proc=_make_proc_info(proc_dict),
+                                proc=ProcessInfo.from_dict(proc_dict),
                             )
                             verdict = decision.verdict.value
 
@@ -177,7 +171,9 @@ class NfqueueHandler:
     def setup(self) -> bool:
         """Setup nfqueue binding. Returns True if successful."""
         if not HAS_NFQUEUE:
-            proxy_logging.logger.warning("netfilterqueue not available, skipping UDP handler")
+            proxy_logging.logger.warning(
+                "netfilterqueue not available, skipping UDP handler"
+            )
             return False
 
         self.nfqueue = NetfilterQueue()

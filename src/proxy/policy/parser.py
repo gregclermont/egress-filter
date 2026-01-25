@@ -4,11 +4,15 @@ Uses parsimonious for PEG parsing. The grammar is the source of truth for
 what syntax is valid - validation happens at parse time, not after.
 """
 
+import logging
+
 from parsimonious.exceptions import ParseError
 from parsimonious.grammar import Grammar
 from parsimonious.nodes import Node, NodeVisitor
 
 from .types import AttrValue, HeaderContext, Protocol, Rule
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # PEG Grammar (source of truth for syntax)
@@ -507,11 +511,13 @@ def parse_policy(policy_text: str) -> list[Rule]:
     after parsing (context is inlined into the rule).
 
     Invalid lines are silently skipped (lenient parsing per design doc).
+    Skipped lines are logged at DEBUG level.
     """
-    rules = []
-    ctx = HeaderContext()
+    # Single visitor instance reused across all lines (preserves header context)
+    visitor = PolicyVisitor()
+    all_rules: list[Rule] = []
 
-    for line in policy_text.splitlines():
+    for line_num, line in enumerate(policy_text.splitlines(), start=1):
         line_stripped = line.strip()
 
         # Skip empty lines and comments
@@ -520,20 +526,18 @@ def parse_policy(policy_text: str) -> list[Rule]:
 
         try:
             tree = GRAMMAR.parse(line)
-            visitor = PolicyVisitor()
-            visitor.ctx = ctx  # Share context across lines
+            # Reset rules list for this line (context is preserved across lines)
+            visitor.rules = []
             visitor.visit(tree)
+            # Collect rules from this line
+            all_rules.extend(visitor.rules)
+        except ParseError as e:
+            # Invalid line - skip (lenient parsing) but log for debugging
+            logger.debug(
+                "Skipping invalid policy line %d: %r (%s)", line_num, line_stripped, e
+            )
 
-            # Update shared context from visitor
-            ctx = visitor.ctx
-
-            # Collect any rules parsed from this line
-            rules.extend(visitor.rules)
-        except ParseError:
-            # Invalid line - skip (lenient parsing)
-            pass
-
-    return rules
+    return all_rules
 
 
 def flatten_policy(policy_text: str):

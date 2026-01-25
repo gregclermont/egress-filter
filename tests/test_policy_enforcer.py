@@ -130,6 +130,85 @@ class TestDNSIPCache:
 
         assert cache.lookup("140.82.121.4") == "api.github.com"
 
+    def test_max_size_eviction(self):
+        """Cache evicts entries when max_size is exceeded."""
+        cache = DNSIPCache(max_size=3)
+
+        # Add 3 entries with different TTLs (60 is min_ttl default)
+        cache.add("1.1.1.1", "one.com", ttl=100)
+        cache.add("2.2.2.2", "two.com", ttl=200)
+        cache.add("3.3.3.3", "three.com", ttl=300)
+
+        assert len(cache) == 3
+
+        # Add a 4th - should evict the one closest to expiry (one.com)
+        cache.add("4.4.4.4", "four.com", ttl=400)
+
+        assert len(cache) == 3
+        assert cache.lookup("1.1.1.1") is None  # Evicted (shortest TTL)
+        assert cache.lookup("2.2.2.2") == "two.com"
+        assert cache.lookup("3.3.3.3") == "three.com"
+        assert cache.lookup("4.4.4.4") == "four.com"
+
+        stats = cache.stats()
+        assert stats["evictions"] == 1
+        assert stats["max_size"] == 3
+
+    def test_max_size_eviction_prefers_expired(self):
+        """Cache evicts expired entries first before TTL-based eviction."""
+        cache = DNSIPCache(max_size=3, min_ttl=1, max_ttl=1)
+
+        # Add entries that will expire quickly
+        cache.add("1.1.1.1", "one.com", ttl=1)
+
+        # Wait for expiry
+        time.sleep(1.1)
+
+        # Add two more with longer TTL
+        cache = DNSIPCache(max_size=3, min_ttl=60)
+        cache.add("1.1.1.1", "one.com", ttl=60)  # Will expire first
+        time.sleep(0.01)  # Small delay to ensure different expiry times
+        cache.add("2.2.2.2", "two.com", ttl=200)
+        cache.add("3.3.3.3", "three.com", ttl=300)
+
+        # Add 4th - should evict 1.1.1.1 (closest to expiry)
+        cache.add("4.4.4.4", "four.com", ttl=400)
+
+        assert len(cache) == 3
+        assert cache.lookup("1.1.1.1") is None
+
+    def test_max_size_add_many(self):
+        """add_many respects max_size."""
+        cache = DNSIPCache(max_size=5)
+
+        # Add 3 entries
+        cache.add("1.1.1.1", "one.com", ttl=100)
+        cache.add("2.2.2.2", "two.com", ttl=200)
+        cache.add("3.3.3.3", "three.com", ttl=300)
+
+        # Add 3 more via add_many - should evict 1 to stay at max_size=5
+        cache.add_many(["4.4.4.4", "5.5.5.5", "6.6.6.6"], "multi.com", ttl=400)
+
+        assert len(cache) == 5
+        assert cache.lookup("1.1.1.1") is None  # Evicted
+
+    def test_max_size_no_eviction_for_existing_ip(self):
+        """Updating an existing IP doesn't trigger eviction."""
+        cache = DNSIPCache(max_size=2)
+
+        cache.add("1.1.1.1", "one.com", ttl=100)
+        cache.add("2.2.2.2", "two.com", ttl=200)
+
+        # Update existing IP - should not evict
+        cache.add("1.1.1.1", "updated.com", ttl=300)
+
+        assert len(cache) == 2
+        assert cache.lookup("1.1.1.1") == "updated.com"
+        assert cache.lookup("2.2.2.2") == "two.com"
+
+        stats = cache.stats()
+        assert stats["evictions"] == 0
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
