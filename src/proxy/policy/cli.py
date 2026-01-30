@@ -32,7 +32,8 @@ from .dns_cache import DNSIPCache
 from .enforcer import PolicyEnforcer, ProcessInfo
 from .matcher import ConnectionEvent, PolicyMatcher
 from .parser import GRAMMAR, PolicyVisitor, parse_policy, rule_to_dict
-from .types import RUNNER_DEFAULTS, DefaultContext
+from .defaults import RUNNER_DEFAULTS
+from .types import DefaultContext
 
 
 def find_policies_in_workflow(workflow: dict) -> list[tuple[str, str]]:

@@ -1,12 +1,11 @@
 """Policy parsing and matching engine."""
 
+from .defaults import RUNNER_CGROUP, RUNNER_DEFAULTS
 from .dns_cache import DNSIPCache
 from .enforcer import Decision, PolicyEnforcer, ProcessInfo, Verdict
 from .matcher import ConnectionEvent, PolicyMatcher, match_rule
 from .parser import flatten_policy, parse_policy, rule_to_dict
 from .types import (
-    RUNNER_CGROUP,
-    RUNNER_DEFAULTS,
     SECURE_DEFAULTS,
     AttrValue,
     DefaultContext,

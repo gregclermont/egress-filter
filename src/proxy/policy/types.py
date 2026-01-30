@@ -52,12 +52,6 @@ class DefaultContext:
 # The built-in security-conscious defaults
 SECURE_DEFAULTS = DefaultContext()
 
-# GitHub Actions runner cgroup - used to scope rules to the runner process tree
-RUNNER_CGROUP = "/system.slice/hosted-compute-agent.service"
-
-# Defaults for GitHub Actions runner (includes cgroup constraint)
-RUNNER_DEFAULTS = DefaultContext(attrs={"cgroup": RUNNER_CGROUP})
-
 
 @dataclass
 class HeaderContext:

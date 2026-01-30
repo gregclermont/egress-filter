@@ -10,10 +10,10 @@ from enum import Enum
 from typing import Protocol
 from urllib.parse import urlparse
 
-from .defaults import get_defaults
+from .defaults import RUNNER_DEFAULTS, get_defaults
 from .dns_cache import DNSIPCache
 from .matcher import ConnectionEvent, PolicyMatcher
-from .types import RUNNER_DEFAULTS, DefaultContext
+from .types import DefaultContext
 
 
 class Verdict(Enum):
