@@ -1,4 +1,0 @@
-# file: /Users/user/src/egress-filter/src/proxy/policy/matcher.py
-# hypothesis_version: 6.150.3
-
-[4294967295, '!I', '*', '.', '/', '//+', '@docker', '@host', 'ConnectionEvent', 'GET', 'allow', 'arg', 'arg[', 'arg\\[(\\d+)\\]', 'block', 'cgroup', 'cidr', 'cmdline', 'dns', 'docker', 'dst_ip', 'dst_port', 'exe', 'host', 'http', 'https', 'ip', 'method', 'name', 'path', 'step', 'tcp', 'type', 'udp', 'url', 'wildcard_host']

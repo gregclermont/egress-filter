@@ -1,4 +1,0 @@
-# file: /Users/user/src/egress-filter/src/proxy/policy/defaults.py
-# hypothesis_version: 6.150.3
-
-['defaults', 'docker']

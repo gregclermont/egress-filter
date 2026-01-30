@@ -1,4 +1,0 @@
-# file: /Users/user/src/egress-filter/src/proxy/policy/parser.py
-# hypothesis_version: 6.150.3
-
-[443, '#', '*', '/', 'DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'POST', 'PUT', 'attrs', 'cidr', 'host', 'http://', 'https://', 'ip', 'literal', 'methods', 'path', 'port', 'protocol', 'target', 'tcp', 'type', 'udp', 'url', 'url_base', 'value', 'wildcard_host']

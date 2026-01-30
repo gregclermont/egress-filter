@@ -1,4 +1,0 @@
-# file: /Users/user/src/egress-filter/src/proxy/policy/dns_cache.py
-# hypothesis_version: 6.150.3
-
-[3600, 'expired', 'total', 'valid']
