@@ -2,6 +2,16 @@ name: 'Egress Filter'
 description: 'Transparent proxy with eBPF-based PID tracking for monitoring network egress'
 author: 'gregclermont'
 
+inputs:
+  policy:
+    description: 'Egress policy rules (one rule per line)'
+    required: false
+    default: ''
+  audit:
+    description: 'Run in audit mode (log only, do not block)'
+    required: false
+    default: 'false'
+
 runs:
   using: 'node24'
   pre: 'dist/pre/index.js'

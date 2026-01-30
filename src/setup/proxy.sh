@@ -70,6 +70,7 @@ start_proxy() {
     # enabling us to capture traffic from root processes (like docker --network=host)
     systemd-run --scope --unit="$SCOPE_NAME" \
         env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
+            EGRESS_POLICY_FILE="${EGRESS_POLICY_FILE:-}" EGRESS_AUDIT_MODE="${EGRESS_AUDIT_MODE:-0}" \
         "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 

@@ -23,6 +23,7 @@ from mitmproxy.tools.dump import DumpMaster
 from .bpf import BPFState
 from .control import ControlServer
 from .handlers import MitmproxyAddon, NfqueueHandler
+from .policy import PolicyEnforcer
 from . import logging as proxy_logging
 
 # Paths for sudo disable/restore
@@ -44,7 +45,7 @@ def restore_sudo():
         proxy_logging.logger.warning(f"Failed to restore sudo: {e}")
 
 
-async def run_mitmproxy(bpf: BPFState):
+async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer):
     """Run mitmproxy with our addon."""
     proxy_logging.logger.info("Initializing mitmproxy...")
     master = None
@@ -54,7 +55,7 @@ async def run_mitmproxy(bpf: BPFState):
             showhost=True,
         )
         master = DumpMaster(opts)
-        master.addons.add(MitmproxyAddon(bpf))
+        master.addons.add(MitmproxyAddon(bpf, enforcer))
         proxy_logging.logger.info("Starting mitmproxy on port 8080 (TCP) and 8053 (DNS)...")
         await master.run()
     except asyncio.CancelledError:
@@ -169,9 +170,24 @@ async def async_main():
     control_server = ControlServer(trigger_shutdown)
     await control_server.start()
 
+    # Load policy and create enforcer
+    policy_file = os.environ.get("EGRESS_POLICY_FILE", "")
+    audit_mode = os.environ.get("EGRESS_AUDIT_MODE", "0") == "1"
+
+    policy_text = ""
+    if policy_file and os.path.exists(policy_file):
+        with open(policy_file) as f:
+            policy_text = f.read()
+        proxy_logging.logger.info(f"Loaded policy from {policy_file} ({len(policy_text)} bytes)")
+    else:
+        proxy_logging.logger.info("No policy file, using empty policy")
+
+    enforcer = PolicyEnforcer.for_runner(policy_text, audit_mode=audit_mode)
+    proxy_logging.logger.info(f"Policy enforcer created (audit_mode={audit_mode})")
+
     # Create tasks
-    nfqueue_handler = NfqueueHandler(bpf)
-    mitmproxy_task = asyncio.create_task(run_mitmproxy(bpf), name="mitmproxy")
+    nfqueue_handler = NfqueueHandler(bpf, enforcer)
+    mitmproxy_task = asyncio.create_task(run_mitmproxy(bpf, enforcer), name="mitmproxy")
     nfqueue_task = asyncio.create_task(run_nfqueue(nfqueue_handler), name="nfqueue")
     tasks = [mitmproxy_task, nfqueue_task]
 

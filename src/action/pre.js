@@ -80,6 +80,14 @@ async function run() {
     // Try to restore .venv from cache
     await restoreVenvCache(actionPath);
 
+    // Read action inputs
+    const policy = core.getInput('policy') || '';
+    const audit = core.getInput('audit') === 'true';
+
+    // Write policy to temp file (multiline string)
+    const policyFile = '/tmp/egress-policy.txt';
+    fs.writeFileSync(policyFile, policy);
+
     // Build environment variables to pass through sudo.
     // We exclude HOME so that root uses its own home directory (/root),
     // preventing cache/config directories from being created as root-owned
@@ -89,6 +97,8 @@ async function run() {
       `PATH=${process.env.PATH}`,
       `GITHUB_ENV=${process.env.GITHUB_ENV}`,
       `EGRESS_FILTER_ROOT=${actionPath}`,
+      `EGRESS_POLICY_FILE=${policyFile}`,
+      `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,
     ];
 
     core.info('Installing dependencies...');
