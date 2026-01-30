@@ -15,27 +15,22 @@ GITHUB_ACTIONS_DEFAULTS = """
 # They are restrictive by design - each rule is scoped to specific executables
 # or cgroups where possible to prevent abuse.
 
-# TODO: Determine minimal required rules from baseline testing
-"""
+# Local DNS resolver (systemd-resolved)
+# Allows DNS queries to the local resolver. Domain checks still apply -
+# only domains allowed by other rules can be resolved.
+127.0.0.53:53/udp
 
-# Optional presets that users can include
-DOCKER_PRESET = """
-# =============================================================================
-# Docker Registry Access
-# =============================================================================
-# Allows the Docker daemon to pull images from Docker Hub.
+# Azure wireserver (metadata/heartbeat for GitHub-hosted runners)
+# The WALinuxAgent runs in the background and must access the wireserver.
+168.63.129.16:80|32526 cgroup=/azure.slice/walinuxagent.service
 
-[exe=/usr/bin/dockerd]
-registry-1.docker.io
-auth.docker.io
-*.docker.io
-production.cloudflare.docker.com
+# Reset to defaults for user rules that follow
+[]
 """
 
 # Registry of available presets
 PRESETS = {
     "defaults": GITHUB_ACTIONS_DEFAULTS,
-    "docker": DOCKER_PRESET,
 }
 
 
