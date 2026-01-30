@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Protocol
 from urllib.parse import urlparse
 
+from .defaults import get_defaults
 from .dns_cache import DNSIPCache
 from .matcher import ConnectionEvent, PolicyMatcher
 from .types import RUNNER_DEFAULTS, DefaultContext
@@ -448,6 +449,7 @@ class PolicyEnforcer:
         policy_text: str,
         dns_cache: DNSIPCache | None = None,
         audit_mode: bool = False,
+        include_defaults: bool = True,
     ) -> "PolicyEnforcer":
         """Create an enforcer configured for GitHub Actions runner.
 
@@ -459,9 +461,12 @@ class PolicyEnforcer:
             policy_text: The policy text to parse.
             dns_cache: DNS IP cache for hostname correlation (optional).
             audit_mode: If True, log but don't block (always allow).
+            include_defaults: If True, prepend GitHub Actions infrastructure defaults.
 
         Returns:
             PolicyEnforcer configured with runner defaults.
         """
+        if include_defaults:
+            policy_text = get_defaults() + "\n" + policy_text
         matcher = PolicyMatcher(policy_text, defaults=RUNNER_DEFAULTS)
         return cls(matcher, dns_cache, audit_mode)

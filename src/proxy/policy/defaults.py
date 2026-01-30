@@ -23,6 +23,11 @@ GITHUB_ACTIONS_DEFAULTS = """
 # Azure wireserver (metadata/heartbeat for GitHub-hosted runners)
 # The WALinuxAgent runs in the background and must access the wireserver.
 168.63.129.16:80|32526 cgroup=/azure.slice/walinuxagent.service
+
+# GitHub Actions results receiver (job status reporting)
+# The runner worker process reports job results to GitHub.
+[exe=/home/runner/actions-runner/cached/bin/Runner.Worker]
+results-receiver.actions.githubusercontent.com
 """
 
 # Registry of available presets
