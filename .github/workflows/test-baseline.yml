@@ -19,13 +19,6 @@ jobs:
         with:
           audit: true
           policy: |
-            # default local DNS resolver
-            127.0.0.53:53/udp
-
-            # Azure Linux Agent
-            [cgroup=/azure.slice/walinuxagent.service]
-            168.63.129.16:80|32526
-
             # git fetch from https://github.com/
             [exe=/usr/lib/git-core/git-remote-http]
             GET  https://github.com/*/*/info/refs
