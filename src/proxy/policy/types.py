@@ -29,19 +29,59 @@ class Rule:
 
 
 @dataclass
-class HeaderContext:
-    """Current header context for rule parsing."""
+class DefaultContext:
+    """Default values for header context.
+
+    These security-conscious defaults are applied when:
+    - Parsing begins (initial context)
+    - A [] header resets the context
+
+    All defaults bias toward security:
+    - port: 443 (HTTPS, not 80 or *)
+    - protocol: tcp (not UDP or *)
+    - methods: ["GET", "HEAD"] for URL/path rules (read-only, not *)
+    - attrs: {} (no constraints, but caller can add cgroup etc.)
+    """
 
     port: list[int] | Literal["*"] = field(default_factory=lambda: [443])
     protocol: Protocol = "tcp"
-    methods: list[str] | None = None  # None means use defaults per rule type
+    methods: list[str] = field(default_factory=lambda: ["GET", "HEAD"])
+    attrs: dict[str, str | AttrValue] = field(default_factory=dict)
+
+
+# The built-in security-conscious defaults
+SECURE_DEFAULTS = DefaultContext()
+
+# GitHub Actions runner cgroup - used to scope rules to the runner process tree
+RUNNER_CGROUP = "/system.slice/hosted-compute-agent.service"
+
+# Defaults for GitHub Actions runner (includes cgroup constraint)
+RUNNER_DEFAULTS = DefaultContext(attrs={"cgroup": RUNNER_CGROUP})
+
+
+@dataclass
+class HeaderContext:
+    """Current header context for rule parsing.
+
+    Tracks the current header settings that apply to subsequent rules.
+    Can be reset to defaults via [] header.
+    """
+
+    port: list[int] | Literal["*"] = field(default_factory=lambda: [443])
+    protocol: Protocol = "tcp"
+    methods: list[str] | None = None  # None means use defaults from DefaultContext
     url_base: str | None = None
     attrs: dict[str, str | AttrValue] = field(default_factory=dict)
+    _defaults: DefaultContext = field(default_factory=lambda: SECURE_DEFAULTS)
 
     def reset(self) -> None:
         """Reset to default values."""
-        self.port = [443]
-        self.protocol = "tcp"
-        self.methods = None
+        self.port = (
+            list(self._defaults.port)
+            if isinstance(self._defaults.port, list)
+            else self._defaults.port
+        )
+        self.protocol = self._defaults.protocol
+        self.methods = None  # Will use _defaults.methods when needed
         self.url_base = None
-        self.attrs = {}
+        self.attrs = dict(self._defaults.attrs)

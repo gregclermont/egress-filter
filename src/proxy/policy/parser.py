@@ -10,7 +10,14 @@ from parsimonious.exceptions import ParseError
 from parsimonious.grammar import Grammar
 from parsimonious.nodes import Node, NodeVisitor
 
-from .types import AttrValue, HeaderContext, Protocol, Rule
+from .types import (
+    SECURE_DEFAULTS,
+    AttrValue,
+    DefaultContext,
+    HeaderContext,
+    Protocol,
+    Rule,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +36,25 @@ newline         = "\n" / "\r\n"
 ws              = " " / "\t"
 
 header          = ws* "[" header_content? "]" inline_comment? ws*
-header_content  = url_base / method_header / port_proto_header / kv_only_header
+header_content  = url_base_header / method_header / port_proto_header / kv_only_header
+url_base_header = url_base kv_attrs?
 method_header   = method_attr kv_attrs?
 port_proto_header = port_proto_attr kv_attrs?
 kv_only_header  = kv_attr (ws+ kv_attr)*
 url_base        = scheme "://" hostname url_port? url_path?
 port_proto_attr = port_attr proto_attr?
 
-rule            = ws* (url_rule / path_rule / cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs? inline_comment? ws*
+rule            = ws* (url_rule / path_rule / network_rule) inline_comment? ws*
 
-url_rule        = (method_attr ws+)? scheme "://" hostname url_port? url_path
+url_rule        = (method_attr ws+)? scheme "://" hostname url_port? url_path kv_attrs?
 scheme          = "https" / "http"
-url_port        = ":" port_value
+url_port        = ":" ~"[0-9]+"
 url_path        = "/" path_rest
 path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
-path_rule       = (method_attr ws+)? "/" path_rest
+path_rule       = (method_attr ws+)? "/" path_rest kv_attrs?
+
+network_rule    = (cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs?
 
 host_rule       = wildcard_host / exact_host
 wildcard_host   = "*." hostname_or_tld
@@ -131,9 +141,17 @@ def _flatten(lst):
 class PolicyVisitor(NodeVisitor):
     """Visits parse tree and extracts structured data."""
 
-    def __init__(self):
+    def __init__(self, defaults: DefaultContext | None = None):
         self.rules = []
-        self.ctx = HeaderContext()
+        self._defaults = defaults or SECURE_DEFAULTS
+        self.ctx = HeaderContext(
+            port=list(self._defaults.port)
+            if isinstance(self._defaults.port, list)
+            else self._defaults.port,
+            protocol=self._defaults.protocol,
+            attrs=dict(self._defaults.attrs),
+            _defaults=self._defaults,
+        )
 
     def visit_policy(self, node, visited_children):
         return self.rules
@@ -260,6 +278,27 @@ class PolicyVisitor(NodeVisitor):
                 result.update(item)
         return result
 
+    def visit_url_base_header(self, node, visited_children):
+        # url_base_header = url_base kv_attrs?
+        url_base, kv_attrs = visited_children
+        result = {}
+
+        # Get URL base from nested structure
+        flat_base = _flatten([url_base])
+        for item in flat_base:
+            if isinstance(item, dict) and "url_base" in item:
+                result["url_base"] = item["url_base"]
+                break
+
+        # Process kv attrs
+        if not _is_empty(kv_attrs):
+            flat_kv = _flatten([kv_attrs])
+            for item in flat_kv:
+                if isinstance(item, dict):
+                    result.update(item)
+
+        return result
+
     def visit_url_base(self, node, visited_children):
         return {"url_base": node.text}
 
@@ -281,8 +320,8 @@ class PolicyVisitor(NodeVisitor):
         return result if result else None
 
     def visit_rule(self, node, visited_children):
-        # ws* (url_rule / path_rule / cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs? inline_comment? ws*
-        _, rule_data, port_proto, kv_attrs, _, _ = visited_children
+        # rule = ws* (url_rule / path_rule / network_rule) inline_comment? ws*
+        _, rule_data, _, _ = visited_children
 
         # Extract rule info from nested structure
         rule_info = None
@@ -295,43 +334,43 @@ class PolicyVisitor(NodeVisitor):
         if not rule_info:
             return None
 
-        # Apply port/proto from rule or context
-        port = self.ctx.port
-        protocol = self.ctx.protocol
-
-        # For URL rules, derive port from scheme if not in context
         rule_type = rule_info.get("type")
         target = rule_info.get("target")
-        if rule_type == "url" and target:
-            if target.startswith("http://"):
-                port = [80]
-            elif target.startswith("https://"):
-                port = [443]
 
-        if not _is_empty(port_proto):
-            flat_pp = _flatten([port_proto])
-            for item in flat_pp:
-                if isinstance(item, dict):
-                    if "port" in item:
-                        port = item["port"]
-                    if "protocol" in item:
-                        protocol = item["protocol"]
+        # Get port/protocol - URL rules derive from scheme, others from rule or context
+        if rule_type == "url":
+            # Check for explicit port in URL first
+            if rule_info.get("port"):
+                port = rule_info["port"]
+            elif target.startswith("http://"):
+                port = [80]
+            else:  # https://
+                port = [443]
+            protocol = "tcp"  # URLs are always TCP
+        elif rule_type == "path":
+            # Path rules inherit from URL base context
+            port = self.ctx.port
+            protocol = "tcp"  # URLs are always TCP
+        else:
+            # Network rules (ip, cidr, host) - use rule's port/proto or context
+            port = rule_info.get("port", self.ctx.port)
+            protocol = rule_info.get("protocol", self.ctx.protocol)
 
         # Extract attributes - start with context attrs, then override with rule attrs
         attrs = dict(self.ctx.attrs)  # Copy context attrs
-        if not _is_empty(kv_attrs):
-            flat_attrs = _flatten([kv_attrs])
-            for attr in flat_attrs:
-                if isinstance(attr, dict) and "type" not in attr:
-                    attrs.update(attr)  # Rule attrs override context attrs
+        rule_attrs = rule_info.get("attrs", {})
+        if rule_attrs:
+            attrs.update(rule_attrs)
 
-        # Build the Rule (rule_type and target already extracted above)
+        # Build the Rule
         methods = rule_info.get("methods")
         url_base = rule_info.get("url_base")
 
         # Apply context defaults for methods on URL/path rules
         if rule_type in ("url", "path") and methods is None:
-            methods = self.ctx.methods if self.ctx.methods else ["GET", "HEAD"]
+            methods = (
+                self.ctx.methods if self.ctx.methods else list(self._defaults.methods)
+            )
 
         # Path rules need URL base from context
         if rule_type == "path":
@@ -353,8 +392,10 @@ class PolicyVisitor(NodeVisitor):
         return rule
 
     def visit_url_rule(self, node, visited_children):
-        # (method_attr ws+)? scheme "://" hostname url_port? url_path
-        method_part, scheme, _, hostname, url_port, url_path = visited_children
+        # url_rule = (method_attr ws+)? scheme "://" hostname url_port? url_path kv_attrs?
+        method_part, scheme, _, hostname, url_port, url_path, kv_attrs = (
+            visited_children
+        )
 
         methods = None
         if not _is_empty(method_part):
@@ -378,15 +419,30 @@ class PolicyVisitor(NodeVisitor):
 
         target = f"{scheme_text}://{hostname_text}{port_text}{path_text}"
 
+        # Extract explicit port if present
+        port = None
+        if port_text:
+            port = [int(port_text[1:])]  # Strip leading ":"
+
+        # Extract kv attrs
+        attrs = {}
+        if not _is_empty(kv_attrs):
+            flat_attrs = _flatten([kv_attrs])
+            for attr in flat_attrs:
+                if isinstance(attr, dict):
+                    attrs.update(attr)
+
         return {
             "type": "url",
             "target": target,
             "methods": methods,
+            "port": port,
+            "attrs": attrs,
         }
 
     def visit_path_rule(self, node, visited_children):
-        # (method_attr ws+)? "/" path_rest
-        method_part, slash, path_rest = visited_children
+        # path_rule = (method_attr ws+)? "/" path_rest kv_attrs?
+        method_part, slash, path_rest, kv_attrs = visited_children
 
         methods = None
         if not _is_empty(method_part):
@@ -404,12 +460,58 @@ class PolicyVisitor(NodeVisitor):
 
         target = "/" + _get_text(path_rest)
 
+        # Extract kv attrs
+        attrs = {}
+        if not _is_empty(kv_attrs):
+            flat_attrs = _flatten([kv_attrs])
+            for attr in flat_attrs:
+                if isinstance(attr, dict):
+                    attrs.update(attr)
+
         return {
             "type": "path",
             "target": target,
             "methods": methods,
             "url_base": None,
+            "attrs": attrs,
         }
+
+    def visit_network_rule(self, node, visited_children):
+        # network_rule = (cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs?
+        rule_data, port_proto, kv_attrs = visited_children
+
+        # Extract base rule info
+        rule_info = None
+        flat_rule = _flatten([rule_data])
+        for item in flat_rule:
+            if isinstance(item, dict) and "type" in item:
+                rule_info = dict(item)  # Copy so we can modify
+                break
+
+        if not rule_info:
+            return None
+
+        # Apply port/proto if present
+        if not _is_empty(port_proto):
+            flat_pp = _flatten([port_proto])
+            for item in flat_pp:
+                if isinstance(item, dict):
+                    if "port" in item:
+                        rule_info["port"] = item["port"]
+                    if "protocol" in item:
+                        rule_info["protocol"] = item["protocol"]
+
+        # Apply kv attrs
+        attrs = {}
+        if not _is_empty(kv_attrs):
+            flat_attrs = _flatten([kv_attrs])
+            for attr in flat_attrs:
+                if isinstance(attr, dict):
+                    attrs.update(attr)
+        if attrs:
+            rule_info["attrs"] = attrs
+
+        return rule_info
 
     def visit_host_rule(self, node, visited_children):
         flat = _flatten(visited_children)
@@ -580,7 +682,10 @@ class PolicyVisitor(NodeVisitor):
 # =============================================================================
 
 
-def parse_policy(policy_text: str) -> list[Rule]:
+def parse_policy(
+    policy_text: str,
+    defaults: DefaultContext | None = None,
+) -> list[Rule]:
     """Parse a policy text into a list of flattened rules.
 
     Uses PEG grammar for parsing - invalid syntax is rejected at parse time.
@@ -589,9 +694,15 @@ def parse_policy(policy_text: str) -> list[Rule]:
 
     Invalid lines are silently skipped (lenient parsing per design doc).
     Skipped lines are logged at DEBUG level.
+
+    Args:
+        policy_text: The policy text to parse.
+        defaults: Optional DefaultContext to override the security-conscious
+            defaults (port=443, protocol=tcp, methods=[GET,HEAD], attrs={}).
+            Use this to inject runtime constraints like cgroup matching.
     """
     # Single visitor instance reused across all lines (preserves header context)
-    visitor = PolicyVisitor()
+    visitor = PolicyVisitor(defaults=defaults)
     all_rules: list[Rule] = []
 
     for line_num, line in enumerate(policy_text.splitlines(), start=1):

@@ -254,12 +254,13 @@ tests:
           dst_ip: 8.8.8.8
           dst_port: 53
         verdict: allow
+      # DNS requires both resolver AND domain - domain not allowed here
       - event:
           type: dns
           dst_ip: 8.8.8.8
           dst_port: 53
           name: example.com
-        verdict: allow
+        verdict: block
       - event:
           type: tcp
           dst_ip: 8.8.8.8
@@ -818,77 +819,106 @@ tests:
   # =============================================================================
   # DNS matching
   # =============================================================================
+  # DNS requires BOTH resolver AND domain to be allowed:
+  # 1. Resolver: IP/CIDR rule with :53/udp matching the DNS server
+  # 2. Domain: hostname/URL rule matching the queried domain
 
-  - name: DNS query matches hostname rule
+  - name: DNS requires both resolver and domain allowed
     policy: |
-      *.example.com:53/udp
+      # Resolver
+      8.8.8.8:53/udp
+      # Domain
+      *.example.com
     connections:
+      # Both resolver and domain allowed - passes
       - event:
           type: dns
           dst_ip: 8.8.8.8
           dst_port: 53
           name: api.example.com
         verdict: allow
+      # Resolver allowed but domain not - blocked
       - event:
           type: dns
           dst_ip: 8.8.8.8
           dst_port: 53
           name: other.com
         verdict: block
-
-  - name: DNS IP rule matches server not query name
-    policy: |
-      8.8.8.8:53/udp
-    connections:
-      # IP rule allows any query to that DNS server
-      - event:
-          type: dns
-          dst_ip: 8.8.8.8
-          dst_port: 53
-          name: anything.com
-        verdict: allow
-      - event:
-          type: dns
-          dst_ip: 8.8.8.8
-          dst_port: 53
-          name: evil.com
-        verdict: allow
-      # Different server is blocked
+      # Domain allowed but resolver not - blocked
       - event:
           type: dns
           dst_ip: 1.1.1.1
+          dst_port: 53
+          name: api.example.com
+        verdict: block
+
+  - name: DNS resolver only does not allow arbitrary domains
+    policy: |
+      8.8.8.8:53/udp
+    connections:
+      # No domain rules - all DNS blocked even to allowed resolver
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
           dst_port: 53
           name: anything.com
         verdict: block
-
-  - name: DNS combined IP and hostname rules
-    policy: |
-      # Allow any query to Google DNS
-      8.8.8.8:53/udp
-      # Allow github queries to any server
-      *.github.com:53/udp
-      github.com:53/udp
-    connections:
-      # Any query to Google DNS - allowed by IP rule
       - event:
           type: dns
           dst_ip: 8.8.8.8
           dst_port: 53
           name: evil.com
-        verdict: allow
-      # Github query to other server - allowed by hostname rule
+        verdict: block
+
+  - name: DNS domain only does not allow arbitrary resolvers
+    policy: |
+      github.com
+    connections:
+      # No resolver rules - DNS blocked even for allowed domain
       - event:
           type: dns
-          dst_ip: 1.1.1.1
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: github.com
+        verdict: block
+
+  - name: DNS with multiple resolvers and domains
+    policy: |
+      # Resolvers
+      8.8.8.8:53/udp
+      1.1.1.1:53/udp
+      # Domains
+      *.github.com
+      github.com
+      example.com
+    connections:
+      # Github on Google DNS - allowed
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
           dst_port: 53
           name: api.github.com
         verdict: allow
-      # Non-github query to non-Google server - blocked
+      # Github on Cloudflare DNS - allowed
       - event:
           type: dns
           dst_ip: 1.1.1.1
           dst_port: 53
+          name: github.com
+        verdict: allow
+      # Evil domain on allowed resolver - blocked (domain not allowed)
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
           name: evil.com
+        verdict: block
+      # Allowed domain on disallowed resolver - blocked
+      - event:
+          type: dns
+          dst_ip: 9.9.9.9
+          dst_port: 53
+          name: github.com
         verdict: block
 
   # =============================================================================
@@ -952,7 +982,7 @@ tests:
       GET /repos/*/releases
       POST /repos/*/issues exe=*/node
 
-      # DNS
+      # DNS resolvers
       [:53/udp]
       8.8.8.8
       1.1.1.1
@@ -996,11 +1026,12 @@ tests:
           method: POST
           exe: /usr/bin/curl
         verdict: block
+      # DNS requires both resolver AND domain - npmjs.org is allowed
       - event:
           type: dns
           dst_ip: 8.8.8.8
           dst_port: 53
-          name: example.com
+          name: registry.npmjs.org
         verdict: allow
       - event:
           type: udp

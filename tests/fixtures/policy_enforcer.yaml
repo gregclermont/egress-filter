@@ -288,12 +288,16 @@ tests:
 
   # =============================================================================
   # DNS queries
+  # DNS requires BOTH resolver AND domain to be allowed
   # =============================================================================
 
   - name: DNS query matching host rules
     policy: |
-      github.com:53/udp
-      *.github.com:53/udp
+      # Resolver
+      8.8.8.8:53/udp
+      # Domains
+      github.com
+      *.github.com
     checks:
       - type: dns
         query_name: github.com
@@ -315,10 +319,11 @@ tests:
 
   - name: DNS to specific servers only
     policy: |
-      # Allow any query to these DNS servers
+      # Resolvers - UDP type checks (not DNS with query name)
       8.8.8.8:53/udp
       1.1.1.1:53/udp
     checks:
+      # UDP checks (not DNS) - just test resolver IP matching
       - type: udp
         dst_ip: 8.8.8.8
         dst_port: 53

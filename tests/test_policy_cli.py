@@ -254,18 +254,24 @@ class TestAnalyzeConnections:
         assert count == 3
 
     def test_analyze_dns_connections(self):
-        """DNS connections are analyzed correctly."""
+        """DNS connections are analyzed correctly (requires both resolver AND domain)."""
         policy = """
+        # Resolver
         [:53/udp]
         8.8.8.8
+
+        # Domain
+        []
+        github.com
         """
         connections = [
+            # Resolver AND domain allowed - passes
             {"type": "dns", "dst_ip": "8.8.8.8", "dst_port": 53, "name": "github.com"},
-            {"type": "dns", "dst_ip": "1.1.1.1", "dst_port": 53, "name": "example.com"},
+            # Wrong domain - blocked
+            {"type": "dns", "dst_ip": "8.8.8.8", "dst_port": 53, "name": "example.com"},
         ]
         results = analyze_connections(policy, connections)
 
-        # 8.8.8.8 is allowed (IP rule), 1.1.1.1 is blocked (different DNS server)
         assert len(results["allowed"]) == 1
         assert len(results["blocked"]) == 1
 
@@ -429,8 +435,8 @@ class TestDumpRules:
 class TestDefaultsIntegration:
     """Tests for --include-defaults and --include-preset flags."""
 
-    def test_analyze_with_defaults_allows_git_to_github(self):
-        """--include-defaults should allow git-remote to github.com."""
+    def test_analyze_with_defaults_allows_azure_wireserver(self):
+        """--include-defaults should allow Azure agent to wireserver."""
         from proxy.policy.defaults import get_defaults
 
         policy = get_defaults()
@@ -438,11 +444,12 @@ class TestDefaultsIntegration:
         connections = [
             {
                 "type": "http",
-                "dst_ip": "140.82.113.4",
-                "dst_port": 443,
-                "url": "https://github.com/owner/repo/info/refs",
+                "dst_ip": "168.63.129.16",
+                "dst_port": 80,
+                "url": "http://168.63.129.16/machine/?comp=goalstate",
                 "method": "GET",
-                "exe": "/usr/lib/git-core/git-remote-https",
+                "exe": "/usr/bin/python3.12",
+                "cgroup": "/azure.slice/walinuxagent.service",
             }
         ]
         results = analyze_connections(policy, connections)
@@ -450,8 +457,8 @@ class TestDefaultsIntegration:
         assert len(results["allowed"]) == 1
         assert len(results["blocked"]) == 0
 
-    def test_analyze_with_defaults_blocks_curl_to_github(self):
-        """--include-defaults should block curl to github.com (no exe match)."""
+    def test_analyze_with_defaults_blocks_non_azure_to_wireserver(self):
+        """--include-defaults should block non-azure cgroup from wireserver."""
         from proxy.policy.defaults import get_defaults
 
         policy = get_defaults()
@@ -459,16 +466,16 @@ class TestDefaultsIntegration:
         connections = [
             {
                 "type": "http",
-                "dst_ip": "140.82.113.4",
-                "dst_port": 443,
-                "url": "https://github.com/owner/repo",
+                "dst_ip": "168.63.129.16",
+                "dst_port": 80,
+                "url": "http://168.63.129.16/machine/?comp=goalstate",
                 "method": "GET",
                 "exe": "/usr/bin/curl",
+                "cgroup": "/system.slice/some.service",
             }
         ]
         results = analyze_connections(policy, connections)
 
-        # Blocked because curl doesn't match exe pattern for git rules
         assert len(results["allowed"]) == 0
         assert len(results["blocked"]) == 1
 
@@ -494,14 +501,14 @@ class TestDefaultsIntegration:
         assert len(results["blocked"]) == 0
 
     def test_combined_defaults_and_user_policy(self):
-        """User policy should extend defaults."""
+        """User policy should extend defaults (inheriting cgroup constraint)."""
         from proxy.policy.defaults import get_defaults
 
         # User policy allows example.com
         combined_policy = get_defaults() + "\nexample.com\n"
 
         connections = [
-            # User rule allows example.com
+            # User rule allows example.com when cgroup matches
             {
                 "type": "http",
                 "dst_ip": "93.184.216.34",
@@ -509,6 +516,7 @@ class TestDefaultsIntegration:
                 "url": "https://example.com/",
                 "method": "GET",
                 "exe": "/usr/bin/curl",
+                "cgroup": "/system.slice/hosted-compute-agent.service",
             },
         ]
         results = analyze_connections(combined_policy, connections)

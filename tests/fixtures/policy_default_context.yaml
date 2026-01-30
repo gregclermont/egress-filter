@@ -1,0 +1,396 @@
+# Test suite for configurable DefaultContext
+#
+# Tests that parse_policy() correctly applies custom defaults for:
+#   - port: Default port(s) for rules without explicit port
+#   - protocol: Default protocol (tcp/udp)
+#   - methods: Default HTTP methods for URL/path rules
+#   - attrs: Default attributes inherited by all rules
+#
+# Each test case has:
+#   - name: Test description
+#   - defaults: Custom DefaultContext values (optional fields)
+#   - policy: Input policy text
+#   - rules: Expected list of flattened rules
+
+tests:
+  # =============================================================================
+  # Default attrs inheritance
+  # =============================================================================
+
+  - name: Default attrs applied to simple rule
+    defaults:
+      attrs:
+        cgroup: /system.slice/runner.service
+    policy: |
+      github.com
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: /system.slice/runner.service
+
+  - name: Rule-level attrs override default attrs
+    defaults:
+      attrs:
+        cgroup: /system.slice/runner.service
+    policy: |
+      github.com cgroup=/other.slice/*
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: /other.slice/*
+
+  - name: Header attrs override default attrs
+    defaults:
+      attrs:
+        cgroup: /system.slice/runner.service
+    policy: |
+      [cgroup=/custom/*]
+      github.com
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: /custom/*
+
+  - name: Empty header resets to default attrs
+    defaults:
+      attrs:
+        cgroup: /system.slice/runner.service
+    policy: |
+      [cgroup=/custom/*]
+      example.com
+      []
+      github.com
+    rules:
+      - type: host
+        target: example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: /custom/*
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: /system.slice/runner.service
+
+  - name: Multiple default attrs
+    defaults:
+      attrs:
+        cgroup: /runner/*
+        step: build
+    policy: |
+      github.com
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: /runner/*
+          step: build
+
+  # =============================================================================
+  # Default port
+  # =============================================================================
+
+  - name: Custom default port
+    defaults:
+      port: [80]
+    policy: |
+      example.com
+    rules:
+      - type: host
+        target: example.com
+        port: [80]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Custom default port list
+    defaults:
+      port: [80, 8080]
+    policy: |
+      example.com
+    rules:
+      - type: host
+        target: example.com
+        port: [80, 8080]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Custom default port star
+    defaults:
+      port: "*"
+    policy: |
+      example.com
+    rules:
+      - type: host
+        target: example.com
+        port: "*"
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Rule port overrides default port
+    defaults:
+      port: [80]
+    policy: |
+      example.com:8443
+    rules:
+      - type: host
+        target: example.com
+        port: [8443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Empty header resets to default port
+    defaults:
+      port: [8080]
+    policy: |
+      [:443]
+      example.com
+      []
+      github.com
+    rules:
+      - type: host
+        target: example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+      - type: host
+        target: github.com
+        port: [8080]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  # =============================================================================
+  # Default protocol
+  # =============================================================================
+
+  - name: Custom default protocol udp
+    defaults:
+      protocol: udp
+    policy: |
+      8.8.8.8:53
+    rules:
+      - type: ip
+        target: 8.8.8.8
+        port: [53]
+        protocol: udp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Rule protocol overrides default
+    defaults:
+      protocol: udp
+    policy: |
+      8.8.8.8:53/tcp
+    rules:
+      - type: ip
+        target: 8.8.8.8
+        port: [53]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Empty header resets to default protocol
+    defaults:
+      protocol: udp
+    policy: |
+      [:53/tcp]
+      8.8.8.8
+      []
+      8.8.4.4:53
+    rules:
+      - type: ip
+        target: 8.8.8.8
+        port: [53]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+      - type: ip
+        target: 8.8.4.4
+        port: [53]
+        protocol: udp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  # =============================================================================
+  # Default methods for URL/path rules
+  # =============================================================================
+
+  - name: Custom default methods for URL rules
+    defaults:
+      methods: [POST, PUT]
+    policy: |
+      https://api.github.com/repos/*
+    rules:
+      - type: url
+        target: https://api.github.com/repos/*
+        port: [443]
+        protocol: tcp
+        methods: [POST, PUT]
+        url_base: null
+        attrs: {}
+
+  - name: Custom default methods star
+    defaults:
+      methods: ["*"]
+    policy: |
+      https://api.github.com/repos/*
+    rules:
+      - type: url
+        target: https://api.github.com/repos/*
+        port: [443]
+        protocol: tcp
+        methods: ["*"]
+        url_base: null
+        attrs: {}
+
+  - name: Rule methods override default methods
+    defaults:
+      methods: [POST]
+    policy: |
+      GET https://api.github.com/repos/*
+    rules:
+      - type: url
+        target: https://api.github.com/repos/*
+        port: [443]
+        protocol: tcp
+        methods: [GET]
+        url_base: null
+        attrs: {}
+
+  - name: Header methods override default methods
+    defaults:
+      methods: [POST]
+    policy: |
+      [GET|HEAD]
+      https://api.github.com/repos/*
+    rules:
+      - type: url
+        target: https://api.github.com/repos/*
+        port: [443]
+        protocol: tcp
+        methods: [GET, HEAD]
+        url_base: null
+        attrs: {}
+
+  - name: Path rules use default methods
+    defaults:
+      methods: [DELETE]
+    policy: |
+      [https://api.github.com]
+      /repos/*
+    rules:
+      - type: path
+        target: /repos/*
+        port: [443]
+        protocol: tcp
+        methods: [DELETE]
+        url_base: https://api.github.com
+        attrs: {}
+
+  # =============================================================================
+  # Combined defaults
+  # =============================================================================
+
+  - name: All defaults combined
+    defaults:
+      port: [8443]
+      protocol: tcp
+      methods: [POST]
+      attrs:
+        cgroup: /runner/*
+    policy: |
+      https://api.example.com/webhook
+    rules:
+      - type: url
+        target: https://api.example.com/webhook
+        port: [443]  # URL scheme overrides default port
+        protocol: tcp
+        methods: [POST]
+        url_base: null
+        attrs:
+          cgroup: /runner/*
+
+  - name: Non-URL rule with all defaults
+    defaults:
+      port: [8443]
+      protocol: tcp
+      methods: [POST]
+      attrs:
+        cgroup: /runner/*
+    policy: |
+      api.example.com
+    rules:
+      - type: host
+        target: api.example.com
+        port: [8443]
+        protocol: tcp
+        methods: null  # methods only apply to URL/path rules
+        url_base: null
+        attrs:
+          cgroup: /runner/*
+
+  - name: Empty defaults same as secure defaults
+    defaults: {}
+    policy: |
+      github.com
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: URL rule without defaults inherits secure defaults
+    defaults: {}
+    policy: |
+      https://github.com/foo
+    rules:
+      - type: url
+        target: https://github.com/foo
+        port: [443]
+        protocol: tcp
+        methods: [GET, HEAD]
+        url_base: null
+        attrs: {}

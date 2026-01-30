@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .parser import parse_policy
-from .types import AttrValue, Rule
+from .types import AttrValue, DefaultContext, Rule
 
 
 @dataclass
@@ -273,6 +273,47 @@ def get_event_hostname(event: ConnectionEvent) -> str | None:
     return None
 
 
+def match_dns_name_against_rule(rule: Rule, name: str, event: ConnectionEvent) -> bool:
+    """Check if a DNS query name matches a rule's hostname target.
+
+    This allows hostname/URL rules to implicitly allow DNS resolution.
+    For example, allowing "github.com" also allows DNS queries for "github.com".
+
+    Only checks hostname matching and attributes - ignores port/protocol
+    since DNS resolution is independent of the eventual connection port.
+    """
+    # Extract hostname from rule based on rule type
+    if rule.type == "host":
+        if not match_hostname(rule.target, name, is_wildcard=False):
+            return False
+    elif rule.type == "wildcard_host":
+        if not match_hostname(rule.target, name, is_wildcard=True):
+            return False
+    elif rule.type == "url" or rule.type == "path":
+        # Extract hostname from URL rule
+        if rule.type == "url":
+            parsed = urlparse(rule.target)
+        else:
+            # Path rule - use url_base
+            if not rule.url_base:
+                return False
+            parsed = urlparse(rule.url_base)
+        rule_hostname = parsed.hostname
+        if not rule_hostname:
+            return False
+        if rule_hostname.lower() != name.lower():
+            return False
+    else:
+        # IP/CIDR rules don't implicitly allow DNS
+        return False
+
+    # Check attributes (exe, cgroup, etc.) still apply
+    if not match_attrs(rule, event):
+        return False
+
+    return True
+
+
 def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
     """Check if an event matches a rule.
 
@@ -383,9 +424,14 @@ def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
 class PolicyMatcher:
     """Matches connection events against a policy."""
 
-    def __init__(self, policy_text: str):
-        """Initialize with a policy text."""
-        self.rules = parse_policy(policy_text)
+    def __init__(self, policy_text: str, defaults: DefaultContext | None = None):
+        """Initialize with a policy text.
+
+        Args:
+            policy_text: The policy text to parse.
+            defaults: Optional DefaultContext to override security defaults.
+        """
+        self.rules = parse_policy(policy_text, defaults=defaults)
 
     def match(self, event: ConnectionEvent | dict) -> tuple[bool, int | None]:
         """Check if an event is allowed by the policy.
@@ -396,8 +442,49 @@ class PolicyMatcher:
         if isinstance(event, dict):
             event = ConnectionEvent.from_dict(event)
 
+        # DNS queries require BOTH resolver and domain to be allowed
+        if event.type == "dns" and event.name:
+            return self._match_dns(event)
+
         for i, rule in enumerate(self.rules):
             if match_rule(rule, event):
+                return (True, i)
+
+        return (False, None)
+
+    def _match_dns(self, event: ConnectionEvent) -> tuple[bool, int | None]:
+        """Match DNS queries with dual check: resolver + domain.
+
+        DNS is allowed only if:
+        1. The DNS server (IP/port) is allowed by an IP/CIDR rule
+        2. The queried domain is allowed by a hostname/URL rule
+
+        This prevents:
+        - Resolving arbitrary domains on allowed resolvers
+        - Using arbitrary resolvers for allowed domains
+        """
+        # Check 1: Is the resolver allowed? (IP/CIDR rules with UDP protocol)
+        resolver_allowed = False
+        for rule in self.rules:
+            if rule.type in ("ip", "cidr") and rule.protocol == "udp":
+                if match_port(rule.port, event.dst_port):
+                    if rule.type == "ip" and event.dst_ip == rule.target:
+                        if match_attrs(rule, event):
+                            resolver_allowed = True
+                            break
+                    elif rule.type == "cidr" and cidr_contains(
+                        rule.target, event.dst_ip
+                    ):
+                        if match_attrs(rule, event):
+                            resolver_allowed = True
+                            break
+
+        if not resolver_allowed:
+            return (False, None)
+
+        # Check 2: Is the domain allowed? (hostname/URL rules)
+        for i, rule in enumerate(self.rules):
+            if match_dns_name_against_rule(rule, event.name, event):
                 return (True, i)
 
         return (False, None)

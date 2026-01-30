@@ -32,6 +32,7 @@ from .dns_cache import DNSIPCache
 from .enforcer import PolicyEnforcer, ProcessInfo
 from .matcher import ConnectionEvent, PolicyMatcher
 from .parser import GRAMMAR, PolicyVisitor, parse_policy, rule_to_dict
+from .types import RUNNER_DEFAULTS, DefaultContext
 
 
 def find_policies_in_workflow(workflow: dict) -> list[tuple[str, str]]:
@@ -132,13 +133,22 @@ def format_connection(conn: dict) -> str:
         return f"{conn_type}://{conn.get('dst_ip', '?')}:{conn.get('dst_port', '?')}"
 
 
-def analyze_connections(policy_text: str, connections: list[dict]) -> dict:
+def analyze_connections(
+    policy_text: str,
+    connections: list[dict],
+    defaults: DefaultContext | None = None,
+) -> dict:
     """Analyze connections against a policy.
+
+    Args:
+        policy_text: The policy text to parse.
+        connections: List of connection dicts from the log.
+        defaults: Optional DefaultContext for parsing (e.g., RUNNER_DEFAULTS).
 
     Returns dict with 'allowed' and 'blocked' lists, each containing
     (connection, count, rule_info) tuples.
     """
-    matcher = PolicyMatcher(policy_text)
+    matcher = PolicyMatcher(policy_text, defaults=defaults)
     dns_cache = DNSIPCache()
     enforcer = PolicyEnforcer(matcher, dns_cache)
 
@@ -287,6 +297,11 @@ def main():
         choices=list(PRESETS.keys()),
         help=f"Include a preset policy. Available: {', '.join(PRESETS.keys())}",
     )
+    parser.add_argument(
+        "--no-runner-cgroup",
+        action="store_true",
+        help="Disable the default runner cgroup constraint (for generic/non-runner use)",
+    )
 
     args = parser.parse_args()
 
@@ -337,11 +352,21 @@ def main():
 
         combined_policy = "\n".join(policy_parts)
 
+        # Report syntax errors to stderr
+        errors = validate_policy(combined_policy)
+        if errors:
+            for line_num, line, error in errors:
+                print(f"Syntax error on line {line_num}: {line}", file=sys.stderr)
+            print(file=sys.stderr)
+
+        # Apply runner cgroup constraint by default (disable with --no-runner-cgroup)
+        defaults = None if args.no_runner_cgroup else RUNNER_DEFAULTS
+
         all_rules = []
-        for rule in parse_policy(combined_policy):
+        for rule in parse_policy(combined_policy, defaults=defaults):
             all_rules.append(rule_to_dict(rule))
         print(json.dumps(all_rules, indent=2))
-        sys.exit(0)
+        sys.exit(1 if errors else 0)
 
     # Handle --analyze-log mode
     if args.analyze_log:
@@ -369,16 +394,27 @@ def main():
 
         combined_policy = "\n".join(policy_parts)
 
+        # Report syntax errors to stderr
+        errors = validate_policy(combined_policy)
+        if errors:
+            for line_num, line, error in errors:
+                print(f"Syntax error on line {line_num}: {line}", file=sys.stderr)
+            print(file=sys.stderr)
+
         # Load connections
         connections = load_connections_log(args.analyze_log)
         if not connections:
             print("No connections found in log file.", file=sys.stderr)
             sys.exit(0)
 
+        # Apply runner cgroup constraint by default (disable with --no-runner-cgroup)
+        defaults = None if args.no_runner_cgroup else RUNNER_DEFAULTS
+
         # Analyze
-        results = analyze_connections(combined_policy, connections)
+        results = analyze_connections(combined_policy, connections, defaults=defaults)
         exit_code = print_analysis_results(results, verbose=args.verbose)
-        sys.exit(exit_code)
+        # Exit with error if there were syntax errors
+        sys.exit(1 if errors else exit_code)
 
     # Validate each policy
     total_errors = 0

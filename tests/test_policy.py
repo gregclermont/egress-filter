@@ -12,6 +12,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from proxy.policy import (
+    DefaultContext,
     DNSIPCache,
     PolicyEnforcer,
     PolicyMatcher,
@@ -71,6 +72,81 @@ def test_policy_flatten(test_case):
 
     for i, (actual, expected) in enumerate(zip(actual_rules, expected_rules)):
         # Compare each field
+        assert actual["type"] == expected["type"], (
+            f"Rule {i}: type mismatch: got {actual['type']}, expected {expected['type']}"
+        )
+        assert actual["target"] == expected["target"], (
+            f"Rule {i}: target mismatch: got {actual['target']}, expected {expected['target']}"
+        )
+        assert actual["port"] == expected["port"], (
+            f"Rule {i}: port mismatch: got {actual['port']}, expected {expected['port']}"
+        )
+        assert actual["protocol"] == expected["protocol"], (
+            f"Rule {i}: protocol mismatch: got {actual['protocol']}, expected {expected['protocol']}"
+        )
+        assert actual["methods"] == expected["methods"], (
+            f"Rule {i}: methods mismatch: got {actual['methods']}, expected {expected['methods']}"
+        )
+        assert actual["url_base"] == expected["url_base"], (
+            f"Rule {i}: url_base mismatch: got {actual['url_base']}, expected {expected['url_base']}"
+        )
+        assert actual["attrs"] == expected["attrs"], (
+            f"Rule {i}: attrs mismatch: got {actual['attrs']}, expected {expected['attrs']}"
+        )
+
+
+# =============================================================================
+# DefaultContext Tests
+# =============================================================================
+
+DEFAULT_CONTEXT_FIXTURE = load_fixture("policy_default_context")
+
+
+def default_context_test_ids():
+    """Generate test IDs for default context tests."""
+    return [test["name"] for test in DEFAULT_CONTEXT_FIXTURE["tests"]]
+
+
+def build_default_context(defaults_dict: dict) -> DefaultContext:
+    """Build a DefaultContext from a fixture dict."""
+    kwargs = {}
+    if "port" in defaults_dict:
+        kwargs["port"] = defaults_dict["port"]
+    if "protocol" in defaults_dict:
+        kwargs["protocol"] = defaults_dict["protocol"]
+    if "methods" in defaults_dict:
+        kwargs["methods"] = defaults_dict["methods"]
+    if "attrs" in defaults_dict:
+        kwargs["attrs"] = defaults_dict["attrs"]
+    return DefaultContext(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "test_case",
+    DEFAULT_CONTEXT_FIXTURE["tests"],
+    ids=default_context_test_ids(),
+)
+def test_default_context(test_case):
+    """Test policy parsing with custom DefaultContext."""
+    defaults_dict = test_case.get("defaults", {})
+    defaults = build_default_context(defaults_dict) if defaults_dict else None
+    policy = test_case["policy"]
+    expected_rules = test_case["rules"]
+
+    # Parse the policy with custom defaults
+    rules = parse_policy(policy, defaults=defaults)
+
+    # Convert to dict format for comparison
+    actual_rules = [rule_to_dict(rule) for rule in rules]
+
+    # Compare
+    assert len(actual_rules) == len(expected_rules), (
+        f"Rule count mismatch: got {len(actual_rules)}, expected {len(expected_rules)}\n"
+        f"Actual: {actual_rules}\n"
+        f"Expected: {expected_rules}"
+    )
+
+    for i, (actual, expected) in enumerate(zip(actual_rules, expected_rules)):
         assert actual["type"] == expected["type"], (
             f"Rule {i}: type mismatch: got {actual['type']}, expected {expected['type']}"
         )

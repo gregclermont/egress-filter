@@ -256,6 +256,62 @@ tests:
         attrs: {}
 
   # =============================================================================
+  # URL base headers with attributes
+  # =============================================================================
+
+  - name: URL base header with exe attribute
+    policy: |
+      [https://github.com/ exe=/usr/lib/git-core/git-remote-http]
+      GET /*/*/info/refs
+      POST /*/*/git-upload-pack
+    rules:
+      - type: path
+        target: "/*/*/info/refs"
+        port: [443]
+        protocol: tcp
+        methods: ["GET"]
+        url_base: "https://github.com/"
+        attrs:
+          exe: /usr/lib/git-core/git-remote-http
+      - type: path
+        target: "/*/*/git-upload-pack"
+        port: [443]
+        protocol: tcp
+        methods: ["POST"]
+        url_base: "https://github.com/"
+        attrs:
+          exe: /usr/lib/git-core/git-remote-http
+
+  - name: URL base header with multiple attributes
+    policy: |
+      [https://api.github.com/ exe=/usr/bin/curl cgroup=/system.slice/*]
+      GET /repos/*
+    rules:
+      - type: path
+        target: "/repos/*"
+        port: [443]
+        protocol: tcp
+        methods: ["GET"]
+        url_base: "https://api.github.com/"
+        attrs:
+          exe: /usr/bin/curl
+          cgroup: /system.slice/*
+
+  - name: URL base header attrs can be overridden by rule attrs
+    policy: |
+      [https://api.github.com/ exe=/usr/bin/curl]
+      GET /repos/* exe=/usr/bin/wget
+    rules:
+      - type: path
+        target: "/repos/*"
+        port: [443]
+        protocol: tcp
+        methods: ["GET"]
+        url_base: "https://api.github.com/"
+        attrs:
+          exe: /usr/bin/wget
+
+  # =============================================================================
   # Invalid rules (should be rejected/skipped)
   # =============================================================================
 

@@ -37,8 +37,8 @@ class TestDefaultsParsing:
     def test_github_actions_defaults_parses(self):
         """GitHub Actions defaults should parse without errors."""
         matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        # Should have rules for: local DNS, git-remote, node actions, azure
-        assert len(matcher.rules) >= 4
+        # Should have rules for: local DNS resolver, azure wireserver
+        assert len(matcher.rules) >= 2
 
     def test_docker_preset_parses(self):
         """Docker preset should parse without errors."""
@@ -47,133 +47,11 @@ class TestDefaultsParsing:
         assert len(matcher.rules) >= 4
 
 
-class TestGitRemoteRules:
-    """Test GitHub repository access rules for git."""
-
-    def test_allows_git_remote_https_to_github(self):
-        """Should allow git-remote-https to access github.com."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="140.82.113.4",
-            dst_port=443,
-            url="https://github.com/owner/repo/info/refs?service=git-upload-pack",
-            method="GET",
-            exe="/usr/lib/git-core/git-remote-https",
-        )
-        allowed, _ = matcher.match(event)
-        assert allowed
-
-    def test_allows_git_remote_http_to_github(self):
-        """Should allow git-remote-http to access github.com."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="140.82.113.4",
-            dst_port=443,
-            url="https://github.com/owner/repo/git-upload-pack",
-            method="POST",
-            exe="/usr/lib/git-core/git-remote-http",
-        )
-        allowed, _ = matcher.match(event)
-        assert allowed
-
-    def test_allows_git_to_subdomain(self):
-        """Should allow git to access *.github.com."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="140.82.113.4",
-            dst_port=443,
-            url="https://api.github.com/repos/owner/repo",
-            method="GET",
-            exe="/usr/lib/git-core/git-remote-https",
-        )
-        allowed, _ = matcher.match(event)
-        assert allowed
-
-    def test_blocks_non_git_exe_to_github(self):
-        """Should block non-git executables from github.com via this rule."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="140.82.113.4",
-            dst_port=443,
-            url="https://github.com/owner/repo",
-            method="GET",
-            exe="/usr/bin/curl",
-        )
-        allowed, _ = matcher.match(event)
-        # Note: This is blocked because the git-remote rule requires exe match
-        # A user would need to add their own rule for curl -> github.com
-        assert not allowed
-
-    def test_blocks_git_to_other_hosts(self):
-        """Should block git executables from non-github hosts."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="10.0.0.1",
-            dst_port=443,
-            url="https://gitlab.com/owner/repo",
-            method="GET",
-            exe="/usr/lib/git-core/git-remote-https",
-        )
-        allowed, _ = matcher.match(event)
-        assert not allowed
-
-
-class TestActionsRunnerRules:
-    """Test GitHub Actions runner (node) rules."""
-
-    def test_allows_node_to_actions_githubusercontent(self):
-        """Should allow actions-runner node to access *.actions.githubusercontent.com."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="185.199.108.154",
-            dst_port=443,
-            url="https://results-receiver.actions.githubusercontent.com/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact",
-            method="POST",
-            exe="/home/runner/actions-runner/cached/externals/node20/bin/node",
-        )
-        allowed, _ = matcher.match(event)
-        assert allowed
-
-    def test_allows_node_to_githubusercontent(self):
-        """Should allow actions-runner node to access *.githubusercontent.com."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="185.199.108.133",
-            dst_port=443,
-            url="https://raw.githubusercontent.com/owner/repo/main/file.txt",
-            method="GET",
-            exe="/home/runner/actions-runner/cached/externals/node22/bin/node",
-        )
-        allowed, _ = matcher.match(event)
-        assert allowed
-
-    def test_blocks_other_node_to_githubusercontent(self):
-        """Should block other node processes from githubusercontent."""
-        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
-        event = ConnectionEvent(
-            type="http",
-            dst_ip="185.199.108.133",
-            dst_port=443,
-            url="https://raw.githubusercontent.com/owner/repo/main/file.txt",
-            method="GET",
-            exe="/usr/bin/node",  # Not actions-runner node
-        )
-        allowed, _ = matcher.match(event)
-        assert not allowed
-
-
 class TestAzureWireserverRules:
     """Test Azure wireserver rules for WALinuxAgent."""
 
-    def test_allows_azure_agent_to_wireserver(self):
-        """Should allow Azure Linux Agent to access wireserver."""
+    def test_allows_azure_agent_to_wireserver_port_80(self):
+        """Should allow Azure Linux Agent to access wireserver on port 80."""
         matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
         event = ConnectionEvent(
             type="http",
@@ -187,8 +65,38 @@ class TestAzureWireserverRules:
         allowed, _ = matcher.match(event)
         assert allowed
 
-    def test_blocks_non_azure_agent_to_wireserver(self):
-        """Should block non-Azure processes from wireserver."""
+    def test_allows_azure_agent_to_wireserver_port_32526(self):
+        """Should allow Azure Linux Agent to access wireserver on port 32526."""
+        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
+        event = ConnectionEvent(
+            type="http",
+            dst_ip="168.63.129.16",
+            dst_port=32526,
+            url="http://168.63.129.16:32526/vmSettings",
+            method="GET",
+            exe="/usr/bin/python3.12",
+            cgroup="/azure.slice/walinuxagent.service",
+        )
+        allowed, _ = matcher.match(event)
+        assert allowed
+
+    def test_allows_azure_agent_put_status(self):
+        """Should allow Azure Linux Agent to PUT status."""
+        matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
+        event = ConnectionEvent(
+            type="http",
+            dst_ip="168.63.129.16",
+            dst_port=32526,
+            url="http://168.63.129.16:32526/status",
+            method="PUT",
+            exe="/usr/bin/python3.12",
+            cgroup="/azure.slice/walinuxagent.service",
+        )
+        allowed, _ = matcher.match(event)
+        assert allowed
+
+    def test_blocks_non_azure_cgroup_to_wireserver(self):
+        """Should block non-Azure cgroup processes from wireserver."""
         matcher = PolicyMatcher(GITHUB_ACTIONS_DEFAULTS)
         event = ConnectionEvent(
             type="http",
@@ -267,11 +175,11 @@ class TestCombinedDefaults:
     """Test combining defaults with user rules."""
 
     def test_user_rules_extend_defaults(self):
-        """User rules should work alongside defaults."""
+        """User rules should work alongside defaults (inheriting cgroup constraint)."""
         combined = GITHUB_ACTIONS_DEFAULTS + "\n# User rules\nexample.com\n"
         matcher = PolicyMatcher(combined)
 
-        # User rule should work
+        # User rule works when cgroup matches (inherited from defaults header)
         http_event = ConnectionEvent(
             type="http",
             dst_ip="93.184.216.34",
@@ -279,25 +187,40 @@ class TestCombinedDefaults:
             url="https://example.com/",
             method="GET",
             exe="/usr/bin/curl",
+            cgroup="/system.slice/hosted-compute-agent.service",
         )
         allowed, _ = matcher.match(http_event)
         assert allowed
+
+        # Blocked when cgroup doesn't match
+        http_event_other_cgroup = ConnectionEvent(
+            type="http",
+            dst_ip="93.184.216.34",
+            dst_port=443,
+            url="https://example.com/",
+            method="GET",
+            exe="/usr/bin/curl",
+            cgroup="/user.slice/user-1000.slice",
+        )
+        allowed, _ = matcher.match(http_event_other_cgroup)
+        assert not allowed
 
     def test_defaults_plus_docker(self):
         """Defaults + Docker preset should allow both."""
         combined = GITHUB_ACTIONS_DEFAULTS + "\n" + DOCKER_PRESET
         matcher = PolicyMatcher(combined)
 
-        # GitHub should work
-        git_event = ConnectionEvent(
+        # Azure wireserver should work
+        azure_event = ConnectionEvent(
             type="http",
-            dst_ip="140.82.113.4",
-            dst_port=443,
-            url="https://github.com/owner/repo",
+            dst_ip="168.63.129.16",
+            dst_port=80,
+            url="http://168.63.129.16/machine/?comp=goalstate",
             method="GET",
-            exe="/usr/lib/git-core/git-remote-https",
+            exe="/usr/bin/python3.12",
+            cgroup="/azure.slice/walinuxagent.service",
         )
-        allowed, _ = matcher.match(git_event)
+        allowed, _ = matcher.match(azure_event)
         assert allowed
 
         # Docker should work

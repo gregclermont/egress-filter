@@ -17,9 +17,19 @@ jobs:
       - name: Setup egress filter
         uses: gregclermont/egress-filter@test
         with:
-          # Empty policy - block everything, log what's needed
-          policy: ""
           audit: true
+          policy: |
+            # default local DNS resolver
+            127.0.0.53:53/udp
+
+            # Azure Linux Agent
+            [cgroup=/azure.slice/walinuxagent.service]
+            168.63.129.16:80|32526
+
+            # git fetch from https://github.com/
+            [exe=/usr/lib/git-core/git-remote-http]
+            GET  https://github.com/*/*/info/refs
+            POST https://github.com/*/*/git-upload-pack
 
       - name: Checkout (audit mode)
         uses: actions/checkout@v4
