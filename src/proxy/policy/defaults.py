@@ -23,9 +23,6 @@ GITHUB_ACTIONS_DEFAULTS = """
 # Azure wireserver (metadata/heartbeat for GitHub-hosted runners)
 # The WALinuxAgent runs in the background and must access the wireserver.
 168.63.129.16:80|32526 cgroup=/azure.slice/walinuxagent.service
-
-# Reset to defaults for user rules that follow
-[]
 """
 
 # Registry of available presets
