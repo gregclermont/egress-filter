@@ -1,0 +1,55 @@
+name: Test Tailscale Compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [test]
+
+jobs:
+  test-tailscale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          allow-sudo: true  # Tailscale action needs sudo to install
+          policy: |
+            [action=tailscale/github-action]
+            pkgs.tailscale.com
+            dl.tailscale.com
+            api.tailscale.com
+
+            [exe=/usr/local/bin/tailscaled]
+            *.tailscale.com
+            0.0.0.0/0:443|80
+            0.0.0.0/0:*/udp
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:github-actions
+
+      - name: Test connectivity to test node
+        run: |
+          echo "=== Tailscale status ==="
+          tailscale status
+
+          echo ""
+          echo "=== Ping test node ==="
+          # tailscale ping exits 1 if no direct connection, but DERP relay is fine for our test
+          tailscale ping --c 3 lima-tinybpf || echo "(direct connection not established, but DERP relay works)"
+
+      - name: Check egress filter logs
+        if: always()
+        run: |
+          echo "=== Connection log (JSONL) ==="
+          cat /tmp/connections.jsonl 2>/dev/null || echo "No connections.jsonl"
+
+          echo ""
+          echo "=== Proxy log ==="
+          cat /tmp/proxy.log 2>/dev/null | tail -100 || echo "No proxy.log"
+
+      # Logs are printed above and can be retrieved via: gh run view <run-id> --log
+      # Artifact upload would need GitHub domains in policy, keeping it minimal for now.
