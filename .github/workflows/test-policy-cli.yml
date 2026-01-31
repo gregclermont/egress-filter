@@ -164,9 +164,8 @@ jobs:
                       [:80]
                       example.com
 
-                      # Azure wireserver (WALinuxAgent) - HTTP requests need URL rules
-                      * http://168.63.129.16/*
-                      * http://168.63.129.16:32526/*
+                      # Azure wireserver (WALinuxAgent)
+                      168.63.129.16:80|32526
           EOF
 
           PYTHONPATH=src python -m proxy.policy permissive-workflow.yml --analyze-log connections.jsonl -v
