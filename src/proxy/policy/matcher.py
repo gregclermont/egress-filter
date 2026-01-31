@@ -71,18 +71,90 @@ def match_hostname(pattern: str, hostname: str, is_wildcard: bool = False) -> bo
     """Match a hostname against a pattern.
 
     Hostnames are case-insensitive per DNS spec.
-    For wildcard patterns (*.example.com), matches any subdomain.
+
+    For wildcard patterns (is_wildcard=True), supports:
+    - `*.example.com` - matches any subdomain(s), e.g., `a.example.com`, `a.b.example.com`
+    - `derp*.example.com` - matches fnmatch pattern on first label, e.g., `derp1.example.com`
+    - `*.derp*.example.com` - matches any subdomain(s) + fnmatch pattern, e.g., `foo.derp1.example.com`
     """
     pattern = pattern.lower()
     hostname = hostname.lower()
 
-    if is_wildcard:
-        # Wildcard matches any subdomain(s) but not the root domain
-        if hostname == pattern:
-            return False  # *.example.com does not match example.com
-        return hostname.endswith("." + pattern)
-    else:
+    if not is_wildcard:
         return hostname == pattern
+
+    # Parse the wildcard pattern
+    has_subdomain_prefix = pattern.startswith("*.")
+
+    if has_subdomain_prefix:
+        # Remove the "*." prefix for further processing
+        pattern_rest = pattern[2:]
+    else:
+        pattern_rest = pattern
+
+    # Split into labels
+    pattern_labels = pattern_rest.split(".")
+    hostname_labels = hostname.split(".")
+
+    # The first label of pattern_rest may contain wildcards (fnmatch pattern)
+    first_label_pattern = pattern_labels[0]
+    base_labels = pattern_labels[1:]  # Must match exactly
+
+    # Check if first label has wildcards
+    has_fnmatch = "*" in first_label_pattern
+
+    if has_subdomain_prefix:
+        # Pattern: *.first_label.base...
+        # Hostname must have: extra_labels.matched_label.base...
+        # where extra_labels is one or more labels, matched_label matches first_label_pattern
+
+        # We need at least: len(base_labels) + 1 (for matched_label) + 1 (for at least one extra)
+        min_labels = len(base_labels) + 2
+        if len(hostname_labels) < min_labels:
+            return False
+
+        # Match base labels from the right
+        for i, base_label in enumerate(reversed(base_labels)):
+            hostname_label = hostname_labels[-(i + 1)]
+            if hostname_label != base_label:
+                return False
+
+        # The label that should match the first_label_pattern
+        # It's at position: len(hostname_labels) - len(base_labels) - 1
+        match_index = len(hostname_labels) - len(base_labels) - 1
+        matched_label = hostname_labels[match_index]
+
+        if has_fnmatch:
+            if not fnmatch.fnmatch(matched_label, first_label_pattern):
+                return False
+        else:
+            if matched_label != first_label_pattern:
+                return False
+
+        # Extra labels exist (we already checked min_labels)
+        return True
+
+    else:
+        # Pattern: first_label.base...
+        # Hostname must be exactly: matched_label.base...
+        # No extra labels allowed
+
+        expected_labels = len(base_labels) + 1
+        if len(hostname_labels) != expected_labels:
+            return False
+
+        # Match base labels from the right
+        for i, base_label in enumerate(reversed(base_labels)):
+            hostname_label = hostname_labels[-(i + 1)]
+            if hostname_label != base_label:
+                return False
+
+        # Match first label
+        matched_label = hostname_labels[0]
+        if has_fnmatch:
+            return fnmatch.fnmatch(matched_label, first_label_pattern)
+        else:
+            return matched_label == first_label_pattern
 
 
 def match_url_path(pattern_path: str, actual_path: str) -> bool:

@@ -373,7 +373,7 @@ class TestDumpRules:
 
         # Second rule: wildcard host
         assert dumped[1]["type"] == "wildcard_host"
-        assert dumped[1]["target"] == "github.com"
+        assert dumped[1]["target"] == "*.github.com"
 
         # Third rule: IP with UDP
         assert dumped[2]["type"] == "ip"

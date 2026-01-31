@@ -59,7 +59,10 @@ path_rule       = (method_attr ws+)? "/" path_rest kv_attrs?
 network_rule    = (cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs?
 
 host_rule       = wildcard_host / exact_host
-wildcard_host   = "*." hostname_or_tld
+wildcard_host   = subdomain_wildcard / label_wildcard
+subdomain_wildcard = "*." wildcard_label "." hostname_or_tld
+label_wildcard  = wildcard_label "." hostname_or_tld
+wildcard_label  = ~"[a-zA-Z0-9-]*\\*[a-zA-Z0-9*-]*"
 exact_host      = !ipv4_lookahead hostname !(":/")
 hostname        = (hostname_part ".")+ tld
 hostname_or_tld = hostname / tld
@@ -529,11 +532,28 @@ class PolicyVisitor(NodeVisitor):
         return None
 
     def visit_wildcard_host(self, node, visited_children):
-        # "*." hostname_or_tld
-        _, hostname = visited_children
+        # subdomain_wildcard / label_wildcard
+        # The child visitor returns the result directly
+        flat = _flatten(visited_children)
+        for item in flat:
+            if isinstance(item, dict):
+                return item
+        return None
+
+    def visit_subdomain_wildcard(self, node, visited_children):
+        # "*." wildcard_label "." hostname_or_tld
+        # Store the full pattern including the "*." prefix
         return {
             "type": "wildcard_host",
-            "target": _get_text(hostname),
+            "target": node.text,
+        }
+
+    def visit_label_wildcard(self, node, visited_children):
+        # wildcard_label "." hostname_or_tld
+        # wildcard_label regex already ensures at least one "*" is present
+        return {
+            "type": "wildcard_host",
+            "target": node.text,
         }
 
     def visit_exact_host(self, node, visited_children):
