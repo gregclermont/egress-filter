@@ -97,6 +97,7 @@ async function run() {
       `PATH=${process.env.PATH}`,
       `GITHUB_ENV=${process.env.GITHUB_ENV}`,
       `GITHUB_REPOSITORY=${process.env.GITHUB_REPOSITORY || ''}`,
+      `GITHUB_ACTION=${process.env.GITHUB_ACTION || ''}`,
       `EGRESS_FILTER_ROOT=${actionPath}`,
       `EGRESS_POLICY_FILE=${policyFile}`,
       `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,

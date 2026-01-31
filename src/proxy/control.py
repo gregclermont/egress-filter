@@ -10,7 +10,7 @@ it can't use normal mechanisms. This Unix socket provides authenticated shutdown
    - parent exe: /home/runner/actions-runner/cached/bin/Runner.Worker
    - cgroup: 0::/system.slice/hosted-compute-agent.service
    - exe: /home/runner/actions-runner/cached/externals/node24/bin/node
-   - GITHUB_ACTION: __gregclermont_egress-filter
+   - GITHUB_ACTION: matches value passed from pre-hook (supports custom step ids)
    - cmdline: contains "egress-filter" (path varies)
 4. If verified, proxy initiates graceful shutdown
 
@@ -44,8 +44,10 @@ EXPECTED_CGROUP = "0::/system.slice/hosted-compute-agent.service"
 # Node exe - exact path, must match 'using' in action.yml (currently node24)
 EXPECTED_EXE = "/home/runner/actions-runner/cached/externals/node24/bin/node"
 
-# GITHUB_ACTION format: __<owner>_<repo>
-EXPECTED_GITHUB_ACTION = "__gregclermont_egress-filter"
+# GITHUB_ACTION is passed from pre-hook via environment.
+# Format varies: __<owner>_<repo> for default step id, or custom id if user specifies one.
+# Captured at startup so post-hook verification uses the same value.
+EXPECTED_GITHUB_ACTION = os.environ.get("GITHUB_ACTION", "")
 
 # Cmdline can vary based on action path, but must contain our action
 EXPECTED_CMDLINE_PATTERNS = [
