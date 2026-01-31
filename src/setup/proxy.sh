@@ -42,7 +42,6 @@ install_deps() {
 
 PIDFILE="/tmp/proxy.pid"
 SCOPE_NAME="egress-filter-proxy"
-SUDOERS_BACKUP="/tmp/sudoers-runner-backup"
 
 start_proxy() {
     cd "$REPO_ROOT"
@@ -71,6 +70,7 @@ start_proxy() {
     systemd-run --scope --unit="$SCOPE_NAME" \
         env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
             EGRESS_POLICY_FILE="${EGRESS_POLICY_FILE:-}" EGRESS_AUDIT_MODE="${EGRESS_AUDIT_MODE:-0}" \
+            GITHUB_ACTION_REPOSITORY="${GITHUB_ACTION_REPOSITORY:-}" \
         "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 
@@ -126,28 +126,8 @@ start_proxy() {
         echo "HEX_CACERTS_PATH=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
     fi
 
-    # Disable sudo for the runner user to prevent iptables bypass.
-    #
-    # Without this, an attacker could run:
-    #   sudo iptables -F  # Flush all rules, bypass proxy completely
-    #
-    # We backup and empty the sudoers.d/runner file. The proxy (running as root)
-    # restores it on shutdown via the authenticated control socket.
-    #
-    # This is done LAST so all setup is complete before we lose sudo.
-    #
-    # Can be skipped with EGRESS_ALLOW_SUDO=1 for workflows that need sudo
-    # (e.g., Tailscale action). This is less secure but sometimes necessary.
-    if [ "${EGRESS_ALLOW_SUDO:-0}" = "1" ]; then
-        echo "Sudo left enabled (allow-sudo: true)"
-    else
-        local sudoers_file="/etc/sudoers.d/runner"
-        if [ -f "$sudoers_file" ]; then
-            cp "$sudoers_file" "$SUDOERS_BACKUP"
-            truncate -s 0 "$sudoers_file"
-            echo "Sudo disabled for runner user"
-        fi
-    fi
+    # Sudo disable/restore is now handled by the Python proxy (control.py)
+    # based on EGRESS_ALLOW_SUDO environment variable.
 }
 
 stop_proxy() {
@@ -158,13 +138,7 @@ stop_proxy() {
     # which breaks runner communication with GitHub (jobs appear stuck).
     "$SCRIPT_DIR"/iptables.sh cleanup 2>/dev/null || true
 
-    # Restore sudo for runner user (backup created in start_proxy)
-    local sudoers_file="/etc/sudoers.d/runner"
-    if [ -f "$SUDOERS_BACKUP" ]; then
-        cp "$SUDOERS_BACKUP" "$sudoers_file"
-        rm -f "$SUDOERS_BACKUP"
-        echo "Sudo restored for runner user" | tee -a /tmp/proxy.log
-    fi
+    # Sudo restore is handled by the Python proxy on shutdown.
 
     # Restore unprivileged user namespace creation (cleanup)
     sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true

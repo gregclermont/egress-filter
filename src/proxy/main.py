@@ -13,7 +13,6 @@ All traffic is attributed to PIDs via BPF maps.
 import asyncio
 import atexit
 import os
-import shutil
 import signal
 import sys
 
@@ -22,27 +21,13 @@ from mitmproxy.tools.dump import DumpMaster
 
 from .bpf import BPFState
 from .control import ControlServer
+from .sudo import disable_sudo, enable_sudo
 from .handlers import MitmproxyAddon, NfqueueHandler
 from .policy import PolicyEnforcer
 from . import logging as proxy_logging
 
-# Paths for sudo disable/restore
-SUDOERS_FILE = "/etc/sudoers.d/runner"
-SUDOERS_BACKUP = "/tmp/sudoers-runner-backup"
-
 # Graceful shutdown timeout (seconds)
 SHUTDOWN_TIMEOUT = 3.0
-
-
-def restore_sudo():
-    """Restore sudo access for runner user so post-hook can call proxy.sh stop."""
-    try:
-        if os.path.exists(SUDOERS_BACKUP):
-            shutil.copy(SUDOERS_BACKUP, SUDOERS_FILE)
-            os.remove(SUDOERS_BACKUP)
-            proxy_logging.logger.info("Sudo restored for runner user")
-    except Exception as e:
-        proxy_logging.logger.warning(f"Failed to restore sudo: {e}")
 
 
 async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer):
@@ -170,6 +155,17 @@ async def async_main():
     control_server = ControlServer(trigger_shutdown)
     await control_server.start()
 
+    # Disable sudo unless allow-sudo is set
+    allow_sudo = os.environ.get("EGRESS_ALLOW_SUDO", "0") == "1"
+    if not allow_sudo:
+        success, message = disable_sudo()
+        if success:
+            proxy_logging.logger.info(f"Sudo disabled: {message}")
+        else:
+            proxy_logging.logger.warning(f"Failed to disable sudo: {message}")
+    else:
+        proxy_logging.logger.info("Sudo left enabled (allow-sudo: true)")
+
     # Load policy and create enforcer
     policy_file = os.environ.get("EGRESS_POLICY_FILE", "")
     audit_mode = os.environ.get("EGRESS_AUDIT_MODE", "0") == "1"
@@ -220,7 +216,7 @@ async def async_main():
         await control_server.stop()
 
         # Restore sudo so post-hook can call proxy.sh stop
-        restore_sudo()
+        enable_sudo()
 
         # Cleanup BPF (also handled by atexit as fallback)
         atexit.unregister(cleanup)

@@ -1,0 +1,6 @@
+name: 'Enable Sudo'
+description: 'Re-enable sudo access for the runner user (after it was disabled)'
+
+runs:
+  using: 'node24'
+  main: 'index.js'

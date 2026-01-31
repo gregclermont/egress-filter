@@ -266,8 +266,8 @@ jobs:
           fi
           echo "PASS: Correctly detected invalid syntax"
 
-      # Test 7: Analyze with --include-defaults
-      - name: "Test: Analyze with --include-defaults (minimal user policy)"
+      # Test 7: Analyze with defaults (included by default)
+      - name: "Test: Analyze with defaults (minimal user policy)"
         run: |
           cat > defaults-workflow.yml << 'EOF'
           name: Test
@@ -280,7 +280,7 @@ jobs:
                   with:
                     policy: |
                       # User policy for what this workflow needs
-                      # --include-defaults adds runner infrastructure (DNS, Azure, results-receiver)
+                      # Defaults add runner infrastructure (DNS, Azure, results-receiver)
 
                       # GitHub access for checkout
                       github.com
@@ -294,13 +294,13 @@ jobs:
                       8.8.8.8
           EOF
 
-          echo "=== Analysis with --include-defaults ==="
-          PYTHONPATH=src python -m proxy.policy defaults-workflow.yml --analyze-log connections.jsonl --include-defaults -v
+          echo "=== Analysis with defaults ==="
+          PYTHONPATH=src python -m proxy.policy defaults-workflow.yml --analyze-log connections.jsonl -v
           exit_code=$?
 
           if [ $exit_code -ne 0 ]; then
             echo ""
-            echo "ERROR: Expected exit code 0 with --include-defaults, got $exit_code"
+            echo "ERROR: Expected exit code 0 with defaults, got $exit_code"
             echo "Defaults cover runner infrastructure; user policy must cover action needs"
             exit 1
           fi

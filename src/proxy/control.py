@@ -1,20 +1,22 @@
 """
-Control socket for authenticated shutdown.
+Control socket for authenticated commands.
 
 The post-hook needs to signal the proxy to shutdown, but after disabling sudo,
-it can't use normal mechanisms. This Unix socket provides authenticated shutdown:
+it can't use normal mechanisms. This Unix socket provides authenticated commands:
 
-1. Post-hook connects to /tmp/egress-filter-control.sock
+1. Client connects to /tmp/egress-filter-control.sock
 2. Proxy gets peer PID via SO_PEERCRED
-3. Proxy verifies the caller using exact matches on stable fields:
-   - parent exe: /home/runner/actions-runner/cached/bin/Runner.Worker
-   - cgroup: 0::/system.slice/hosted-compute-agent.service
-   - exe: /home/runner/actions-runner/cached/externals/node24/bin/node
-   - GITHUB_ACTION: matches value passed from pre-hook (supports custom step ids)
-   - cmdline: contains "egress-filter" (path varies)
-4. If verified, proxy initiates graceful shutdown
+3. Proxy verifies the caller:
+   - Runner.Worker must be in process ancestry
+   - cgroup must match hosted runner cgroup
+   - GITHUB_ACTION_REPOSITORY must match (captured at startup)
+4. If verified, proxy executes the command
 
-This prevents malicious user code from triggering early shutdown to restore sudo.
+Commands:
+- shutdown: graceful proxy shutdown (used by post-hook)
+- disable-sudo: disable sudo for runner user (used by disable-sudo sub-action)
+
+This prevents malicious user code from triggering these sensitive operations.
 """
 
 import asyncio
@@ -23,7 +25,6 @@ import socket
 import struct
 
 from . import logging as proxy_logging
-from .policy.gha import NODE24_EXE, RUNNER_CGROUP, RUNNER_WORKER_EXE
 from .proc import (
     read_exe,
     read_cmdline,
@@ -32,28 +33,9 @@ from .proc import (
     get_process_ancestry,
     get_trusted_github_env,
 )
+from .sudo import disable_sudo, enable_sudo
 
 CONTROL_SOCKET_PATH = "/tmp/egress-filter-control.sock"
-
-# Exact expected values for stable fields (from actual GHA runner observation)
-# Parent exe is completely stable - exact path to Runner.Worker
-EXPECTED_PARENT_EXE = RUNNER_WORKER_EXE
-
-# Cgroup is stable for GHA hosted runners (v2 format: "0::" + path)
-EXPECTED_CGROUP = f"0::{RUNNER_CGROUP}"
-
-# Node exe - must match 'using' in action.yml
-EXPECTED_EXE = NODE24_EXE
-
-# GITHUB_ACTION is passed from pre-hook via environment.
-# Format varies: __<owner>_<repo> for default step id, or custom id if user specifies one.
-# Captured at startup so post-hook verification uses the same value.
-EXPECTED_GITHUB_ACTION = os.environ.get("GITHUB_ACTION", "")
-
-# Cmdline can vary based on action path, but must contain our action
-EXPECTED_CMDLINE_PATTERNS = [
-    "egress-filter",  # Action name must appear in path
-]
 
 
 def get_peer_pid(sock: socket.socket) -> int | None:
@@ -71,18 +53,20 @@ def get_peer_pid(sock: socket.socket) -> int | None:
 def collect_caller_info(pid: int) -> dict:
     """Collect all identity info for a caller process."""
     ppid = read_ppid(pid)
-    info = {
+    trusted_env = get_trusted_github_env(pid)
+    ancestry = get_process_ancestry(pid)
+
+    return {
         "pid": pid,
         "ppid": ppid,
         "exe": read_exe(pid),
         "parent_exe": read_exe(ppid) if ppid else "",
         "cgroup": read_cgroup(pid),
-        "github_action": get_trusted_github_env(pid, "GITHUB_ACTION") or "",
+        "github_action": trusted_env.get("GITHUB_ACTION", ""),
+        "github_action_repo": trusted_env.get("GITHUB_ACTION_REPOSITORY", ""),
         "cmdline": read_cmdline(pid),
+        "ancestry": " -> ".join(f"{p}({exe})" for p, exe in ancestry),
     }
-    ancestry = get_process_ancestry(pid)
-    info["ancestry"] = " -> ".join(f"{p}({c})" for p, c in ancestry)
-    return info
 
 
 def log_caller_info(info: dict, prefix: str = ""):
@@ -91,53 +75,46 @@ def log_caller_info(info: dict, prefix: str = ""):
         f"{prefix}pid={info['pid']}, ppid={info['ppid']}, "
         f"exe={info['exe']}, parent_exe={info['parent_exe']}, "
         f"cgroup={info['cgroup']}, action={info['github_action']}, "
+        f"action_repo={info['github_action_repo']}, "
         f"cmdline={info['cmdline'][:200]}, ancestry={info['ancestry']}"
     )
 
 
+# Expected repo for verification. Captured at startup so forks work.
+EXPECTED_ACTION_REPO = os.environ.get("GITHUB_ACTION_REPOSITORY", "")
+
+
 def verify_caller(pid: int) -> tuple[bool, str]:
     """
-    Verify that the calling process is our legitimate post-hook.
+    Verify the caller is from our action (or a fork).
 
-    Uses exact matches for stable fields:
-    - parent exe: exact path to Runner.Worker
-    - cgroup: exact GHA hosted runner cgroup
-    - exe: exact node path
-    - GITHUB_ACTION: exact env var value
+    GITHUB_ACTION_REPOSITORY check implicitly validates:
+    - Process is in runner cgroup
+    - Runner.Worker is in ancestry
+    - Env var matches our repo (captured at startup)
 
     Returns (is_valid, reason).
     """
-    # Collect all info upfront for logging
     info = collect_caller_info(pid)
 
-    # 1. Check parent exe (exact match - most stable)
-    if info["parent_exe"] != EXPECTED_PARENT_EXE:
+    if not info["github_action_repo"]:
         log_caller_info(info, "REJECTED: ")
-        return False, "parent_exe mismatch"
+        return False, "GITHUB_ACTION_REPOSITORY not found"
 
-    # 2. Check cgroup (exact match)
-    if info["cgroup"] != EXPECTED_CGROUP:
+    if info["github_action_repo"] != EXPECTED_ACTION_REPO:
         log_caller_info(info, "REJECTED: ")
-        return False, "cgroup mismatch"
-
-    # 3. Check exe path (exact match)
-    if info["exe"] != EXPECTED_EXE:
-        log_caller_info(info, "REJECTED: ")
-        return False, "exe mismatch"
-
-    # 4. Check GITHUB_ACTION env var (exact match)
-    if info["github_action"] != EXPECTED_GITHUB_ACTION:
-        log_caller_info(info, "REJECTED: ")
-        return False, "GITHUB_ACTION mismatch"
-
-    # 5. Check cmdline contains our action (path can vary)
-    cmdline_match = any(pattern in info["cmdline"] for pattern in EXPECTED_CMDLINE_PATTERNS)
-    if not cmdline_match:
-        log_caller_info(info, "REJECTED: ")
-        return False, "cmdline mismatch"
+        return False, f"GITHUB_ACTION_REPOSITORY mismatch (got {info['github_action_repo']}, expected {EXPECTED_ACTION_REPO})"
 
     log_caller_info(info, "VERIFIED: ")
     return True, "verified"
+
+
+async def _send_response(writer: asyncio.StreamWriter, success: bool, message: str):
+    """Send response and close connection."""
+    prefix = "ok" if success else "error"
+    writer.write(f"{prefix}: {message}\n".encode())
+    await writer.drain()
+    writer.close()
 
 
 class ControlServer:
@@ -185,9 +162,7 @@ class ControlServer:
             pid = get_peer_pid(sock)
             if pid is None:
                 proxy_logging.logger.warning("Control socket: couldn't get peer PID")
-                writer.write(b"error: couldn't identify caller\n")
-                await writer.drain()
-                writer.close()
+                await _send_response(writer, False, "couldn't identify caller")
                 return
 
             # Read command (simple protocol: one line)
@@ -201,27 +176,29 @@ class ControlServer:
 
             proxy_logging.logger.info(f"Control socket: received '{command}' from pid={pid}")
 
+            # Verify the caller is legitimate for any command (strict: requires exact repo match)
+            is_valid, reason = verify_caller(pid)
+
+            if not is_valid:
+                proxy_logging.logger.warning(f"Control socket: rejected '{command}' from pid={pid}: {reason}")
+                await _send_response(writer, False, f"unauthorized ({reason})")
+                return
+
             if command == "shutdown":
-                # Verify the caller is legitimate
-                is_valid, reason = verify_caller(pid)
+                await _send_response(writer, True, "shutdown initiated")
+                proxy_logging.logger.info("Control socket: initiating authenticated shutdown")
+                await self.shutdown_callback()
 
-                if is_valid:
-                    writer.write(b"ok: shutdown initiated\n")
-                    await writer.drain()
-                    writer.close()
+            elif command == "disable-sudo":
+                success, message = disable_sudo()
+                await _send_response(writer, success, message)
 
-                    # Trigger shutdown
-                    proxy_logging.logger.info("Control socket: initiating authenticated shutdown")
-                    await self.shutdown_callback()
-                else:
-                    proxy_logging.logger.warning(f"Control socket: rejected shutdown from pid={pid}: {reason}")
-                    writer.write(f"error: unauthorized ({reason})\n".encode())
-                    await writer.drain()
-                    writer.close()
+            elif command == "enable-sudo":
+                success, message = enable_sudo()
+                await _send_response(writer, success, message)
+
             else:
-                writer.write(b"error: unknown command\n")
-                await writer.drain()
-                writer.close()
+                await _send_response(writer, False, "unknown command")
 
         except Exception as e:
             proxy_logging.logger.error(f"Control socket error: {e}")

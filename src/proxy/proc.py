@@ -168,43 +168,17 @@ def find_trusted_github_pids(pid: int) -> list[int]:
     return []  # Process is Runner.Worker itself, no env vars to trust
 
 
-def get_trusted_github_env(pid: int, key: str) -> str | None:
-    """Get a GitHub env var only from trusted ancestry.
+def get_trusted_github_env(pid: int) -> dict[str, str]:
+    """Get environment variables from trusted ancestry.
 
-    Only trusts env vars from Runner.Worker or its direct child,
+    Only trusts env vars from Runner.Worker's direct child,
     preventing spoofing by malicious descendant processes.
+
+    Returns empty dict if no trusted process found.
     """
     for trusted_pid in find_trusted_github_pids(pid):
-        env = read_environ(trusted_pid)
-        value = env.get(key, "")
-        if value:
-            return value
-    return None
-
-
-def get_github_step(pid: int) -> str | None:
-    """Get GitHub Actions step identifier from trusted ancestry.
-
-    Only trusts env vars from Runner.Worker or its direct child,
-    preventing spoofing by malicious descendant processes.
-    """
-    job = get_trusted_github_env(pid, "GITHUB_JOB")
-    action = get_trusted_github_env(pid, "GITHUB_ACTION")
-    if job and action:
-        return f"{job}.{action}"
-    return None
-
-
-def get_github_action_repo(pid: int) -> str | None:
-    """Get GitHub Actions action repository from trusted ancestry.
-
-    Returns the value of GITHUB_ACTION_REPOSITORY (e.g., "actions/checkout")
-    which identifies the action being run, regardless of custom step ids.
-
-    Only trusts env vars from Runner.Worker or its direct child,
-    preventing spoofing by malicious descendant processes.
-    """
-    return get_trusted_github_env(pid, "GITHUB_ACTION_REPOSITORY")
+        return read_environ(trusted_pid)
+    return {}
 
 
 def get_proc_info(pid: int | None) -> dict:
@@ -221,10 +195,15 @@ def get_proc_info(pid: int | None) -> dict:
     cgroup = get_cgroup_path(pid)
     if cgroup:
         result["cgroup"] = cgroup
-    step = get_github_step(pid)
-    if step:
-        result["step"] = step
-    action = get_github_action_repo(pid)
-    if action:
-        result["action"] = action
+
+    # Get GitHub env vars from trusted ancestry (single read)
+    trusted_env = get_trusted_github_env(pid)
+    job = trusted_env.get("GITHUB_JOB", "")
+    action_id = trusted_env.get("GITHUB_ACTION", "")
+    if job and action_id:
+        result["step"] = f"{job}.{action_id}"
+    action_repo = trusted_env.get("GITHUB_ACTION_REPOSITORY", "")
+    if action_repo:
+        result["action"] = action_repo
+
     return result

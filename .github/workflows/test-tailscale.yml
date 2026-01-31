@@ -31,6 +31,28 @@ jobs:
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
           tags: tag:github-actions
 
+      - name: Disable sudo after setup
+        uses: gregclermont/egress-filter/disable-sudo@test
+
+      - name: Verify sudo is disabled
+        run: |
+          if sudo -n true 2>/dev/null; then
+            echo "::error::Sudo should be disabled but it's not!"
+            exit 1
+          fi
+          echo "✓ Sudo is disabled as expected"
+
+      - name: Re-enable sudo
+        uses: gregclermont/egress-filter/enable-sudo@test
+
+      - name: Verify sudo is re-enabled
+        run: |
+          if ! sudo -n true 2>/dev/null; then
+            echo "::error::Sudo should be enabled but it's not!"
+            exit 1
+          fi
+          echo "✓ Sudo is re-enabled as expected"
+
       - name: Test connectivity to test node
         run: |
           echo "=== Tailscale status ==="
@@ -53,3 +75,27 @@ jobs:
 
       # Logs are printed above and can be retrieved via: gh run view <run-id> --log
       # Artifact upload would need GitHub domains in policy, keeping it minimal for now.
+
+  # Test that sudo is disabled by default (no allow-sudo)
+  test-default-sudo-disabled:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Start egress filter (default: sudo disabled)"
+        uses: gregclermont/egress-filter@test
+        with:
+          policy: |
+            # Empty policy, just testing sudo behavior
+
+      - name: Verify sudo is disabled by default
+        run: |
+          if sudo -n true 2>/dev/null; then
+            echo "::error::Sudo should be disabled by default but it's not!"
+            exit 1
+          fi
+          echo "✓ Sudo is disabled by default as expected"
+
+      - name: Check egress filter logs
+        if: always()
+        run: |
+          echo "=== Proxy log ==="
+          cat /tmp/proxy.log 2>/dev/null | tail -50 || echo "No proxy.log"
