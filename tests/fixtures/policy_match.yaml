@@ -95,6 +95,105 @@ tests:
           host: GITHUB.COM
         verdict: allow
 
+  - name: Label wildcard match (fnmatch in first label)
+    policy: |
+      derp*.tailscale.com
+    connections:
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: derp1.tailscale.com
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: derp2f.tailscale.com
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: derp.tailscale.com
+        verdict: allow
+      # Does not match with extra subdomains
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: foo.derp1.tailscale.com
+        verdict: block
+      # Does not match base domain
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: tailscale.com
+        verdict: block
+      # Does not match wrong prefix
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: api.tailscale.com
+        verdict: block
+
+  - name: Subdomain + label wildcard match
+    policy: |
+      *.derp*.tailscale.com
+    connections:
+      # Matches with extra subdomain
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: foo.derp1.tailscale.com
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: a.b.derp2.tailscale.com
+        verdict: allow
+      # Does not match without extra subdomain
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: derp1.tailscale.com
+        verdict: block
+      # Does not match wrong label
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: foo.api.tailscale.com
+        verdict: block
+
+  - name: Suffix wildcard pattern
+    policy: |
+      *-prod.example.com
+    connections:
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: api-prod.example.com
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: web-prod.example.com
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: api-dev.example.com
+        verdict: block
+
   # =============================================================================
   # IP and CIDR matching
   # =============================================================================

@@ -231,7 +231,9 @@ class TestHostnameProperties:
         assume(len(base_host) > 3)
         assume(len(subdomain) > 0)
         full_host = f"{subdomain}.{base_host}"
-        assert match_hostname(base_host, full_host, is_wildcard=True)
+        # Pattern must include *. prefix for subdomain wildcard
+        pattern = f"*.{base_host}"
+        assert match_hostname(pattern, full_host, is_wildcard=True)
 
     @given(hostname())
     @settings(max_examples=200, suppress_health_check=[HealthCheck.filter_too_much])
@@ -239,7 +241,8 @@ class TestHostnameProperties:
         """Wildcard pattern does NOT match the root domain itself."""
         assume(len(host) > 3)
         # *.example.com should NOT match example.com
-        assert not match_hostname(host, host, is_wildcard=True)
+        pattern = f"*.{host}"
+        assert not match_hostname(pattern, host, is_wildcard=True)
 
 
 # =============================================================================

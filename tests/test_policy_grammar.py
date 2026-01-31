@@ -42,7 +42,10 @@ path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 path_rule       = (method_attr ws+)? "/" path_rest
 
 host_rule       = wildcard_host / exact_host
-wildcard_host   = "*." hostname_or_tld
+wildcard_host   = subdomain_wildcard / label_wildcard
+subdomain_wildcard = "*." wildcard_label "." hostname_or_tld
+label_wildcard  = wildcard_label "." hostname_or_tld
+wildcard_label  = ~"[a-zA-Z0-9-]*\\*[a-zA-Z0-9*-]*"
 exact_host      = !ipv4_lookahead hostname !(":/")
 hostname        = (hostname_part ".")+ tld
 hostname_or_tld = hostname / tld
@@ -105,6 +108,14 @@ VALID_RULES = [
     # Wildcard hostnames
     "*.github.com",
     "*.a.b.github.com",
+    # Label pattern wildcards (fnmatch in first label)
+    "derp*.tailscale.com",
+    "*-prod.example.com",
+    "api*.example.com",
+    "*api*.example.com",
+    # Subdomain + label pattern wildcards
+    "*.derp*.tailscale.com",
+    "*.*-prod.example.com",
     # Hostnames with ports
     "github.com:443",
     "github.com:22",
@@ -289,11 +300,9 @@ INVALID_RULES = [
     # Incomplete wildcard hostname
     "*.",
     "*..",
-    # Invalid wildcard positions
-    "*a.github.com",
-    "a*.github.com",
+    # Invalid wildcard positions (wildcards only allowed in first label)
     "github.*",
-    "git*hub.com",
+    "api.derp*.example.com",  # Wildcard in second label (not first)
     "github.com*",
     # Missing target
     ":443",

@@ -37,7 +37,7 @@ tests:
       *.github.com
     rules:
       - type: wildcard_host
-        target: github.com
+        target: "*.github.com"
         port: [443]
         protocol: tcp
         methods: null
@@ -793,7 +793,7 @@ tests:
             value: "/usr/lib/git-core/git-remote-*"
             literal: false
       - type: wildcard_host
-        target: github.com
+        target: "*.github.com"
         port: [443]
         protocol: tcp
         methods: null
@@ -1011,7 +1011,7 @@ tests:
         url_base: null
         attrs: {}
       - type: wildcard_host
-        target: npmjs.org
+        target: "*.npmjs.org"
         port: [443]
         protocol: tcp
         methods: null

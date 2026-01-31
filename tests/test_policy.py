@@ -278,12 +278,68 @@ class TestHostnameMatching:
         assert match_hostname("github.com", "GitHub.COM")
         assert not match_hostname("github.com", "api.github.com")
 
-    def test_wildcard_match(self):
+    def test_subdomain_wildcard(self):
+        """Test *.example.com pattern - matches any subdomain(s)."""
         from proxy.policy.matcher import match_hostname
 
-        assert match_hostname("github.com", "api.github.com", is_wildcard=True)
-        assert match_hostname("github.com", "deep.nested.github.com", is_wildcard=True)
-        assert not match_hostname("github.com", "github.com", is_wildcard=True)
+        # Basic subdomain wildcard: *.github.com
+        assert match_hostname("*.github.com", "api.github.com", is_wildcard=True)
+        assert match_hostname("*.github.com", "deep.nested.github.com", is_wildcard=True)
+        assert not match_hostname("*.github.com", "github.com", is_wildcard=True)
+
+    def test_label_wildcard(self):
+        """Test derp*.example.com pattern - fnmatch on first label only."""
+        from proxy.policy.matcher import match_hostname
+
+        # Label pattern wildcard: derp*.tailscale.com
+        assert match_hostname("derp*.tailscale.com", "derp1.tailscale.com", is_wildcard=True)
+        assert match_hostname("derp*.tailscale.com", "derp2f.tailscale.com", is_wildcard=True)
+        assert match_hostname("derp*.tailscale.com", "derp.tailscale.com", is_wildcard=True)
+        # Doesn't match extra subdomains
+        assert not match_hostname("derp*.tailscale.com", "foo.derp1.tailscale.com", is_wildcard=True)
+        # Doesn't match without prefix
+        assert not match_hostname("derp*.tailscale.com", "tailscale.com", is_wildcard=True)
+        # Doesn't match wrong prefix
+        assert not match_hostname("derp*.tailscale.com", "api.tailscale.com", is_wildcard=True)
+
+    def test_subdomain_plus_label_wildcard(self):
+        """Test *.derp*.example.com pattern - subdomain(s) + fnmatch."""
+        from proxy.policy.matcher import match_hostname
+
+        # Subdomain + label pattern: *.derp*.tailscale.com
+        assert match_hostname("*.derp*.tailscale.com", "foo.derp1.tailscale.com", is_wildcard=True)
+        assert match_hostname("*.derp*.tailscale.com", "a.b.derp1.tailscale.com", is_wildcard=True)
+        # Doesn't match without extra subdomain
+        assert not match_hostname("*.derp*.tailscale.com", "derp1.tailscale.com", is_wildcard=True)
+        # Doesn't match wrong label pattern
+        assert not match_hostname("*.derp*.tailscale.com", "foo.api.tailscale.com", is_wildcard=True)
+
+    def test_wildcard_edge_cases(self):
+        """Test edge cases for wildcard patterns."""
+        from proxy.policy.matcher import match_hostname
+
+        # Pattern with multiple wildcards in label
+        assert match_hostname("*-*.example.com", "a-b.example.com", is_wildcard=True)
+        assert match_hostname("*-*.example.com", "foo-bar.example.com", is_wildcard=True)
+        assert not match_hostname("*-*.example.com", "foobar.example.com", is_wildcard=True)
+
+        # Pattern with wildcards at start and middle
+        assert match_hostname("*api*.example.com", "myapi1.example.com", is_wildcard=True)
+        assert match_hostname("*api*.example.com", "api.example.com", is_wildcard=True)
+        assert not match_hostname("*api*.example.com", "myservice.example.com", is_wildcard=True)
+
+        # Suffix pattern
+        assert match_hostname("*-prod.example.com", "api-prod.example.com", is_wildcard=True)
+        assert match_hostname("*-prod.example.com", "web-prod.example.com", is_wildcard=True)
+        assert not match_hostname("*-prod.example.com", "api-dev.example.com", is_wildcard=True)
+
+    def test_case_insensitivity(self):
+        """Test that hostname matching is case-insensitive."""
+        from proxy.policy.matcher import match_hostname
+
+        assert match_hostname("DERP*.TAILSCALE.COM", "derp1.tailscale.com", is_wildcard=True)
+        assert match_hostname("derp*.tailscale.com", "DERP1.TAILSCALE.COM", is_wildcard=True)
+        assert match_hostname("*.GITHUB.COM", "api.github.com", is_wildcard=True)
 
 
 # =============================================================================
