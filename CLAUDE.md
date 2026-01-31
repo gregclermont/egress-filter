@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Session Start
 
-At the start of each session, read and display the contents of `TODO.md` to remind the user of pending tasks.
+At the start of each session, check GitHub Issues for pending tasks: `gh issue list`
 
 ## Project Overview
 
@@ -19,12 +19,21 @@ src/
 ├── proxy/           # Python proxy package
 │   ├── main.py      # Orchestration, async runners, signal handling
 │   ├── bpf.py       # BPF program loading, PID lookup
+│   ├── control.py   # Unix socket control server for runtime commands
 │   ├── logging.py   # Log configuration, JSONL connection logging
 │   ├── proc.py      # Process info from /proc (exe, cmdline, GitHub step)
 │   ├── utils.py     # Utilities (ip_to_int, get_cgroup, constants)
-│   └── handlers/    # Protocol handlers
-│       ├── mitmproxy.py  # HTTP/TCP/DNS via mitmproxy
-│       └── nfqueue.py    # UDP via netfilterqueue
+│   ├── handlers/    # Protocol handlers
+│   │   ├── mitmproxy.py  # HTTP/TCP/DNS via mitmproxy
+│   │   └── nfqueue.py    # UDP via netfilterqueue
+│   └── policy/      # Policy parsing, matching, enforcement
+│       ├── parser.py     # PEG grammar and policy text parsing
+│       ├── matcher.py    # Rule matching against connections
+│       ├── enforcer.py   # Policy enforcement decisions
+│       ├── dns_cache.py  # DNS IP correlation cache
+│       ├── types.py      # Rule, AttrValue, Protocol types
+│       ├── defaults.py   # Default policy for GHA infrastructure
+│       └── cli.py        # Policy validation CLI
 └── setup/           # Environment setup/teardown scripts
 dist/
 ├── pre/main/post/   # Compiled JS bundles
@@ -113,5 +122,6 @@ The `.deb` packages in `src/setup/proxy.sh` are hardcoded to Ubuntu 24.04 amd64.
 - mitmproxy - transparent proxy (HTTP/HTTPS/TCP/DNS)
 - netfilterqueue - UDP packet interception via nfqueue
 - scapy - packet parsing for DNS detection
+- parsimonious - PEG parser for policy syntax
 
 See `pyproject.toml` for full dependency list.
