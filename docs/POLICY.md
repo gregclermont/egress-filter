@@ -29,14 +29,18 @@ policy: |
 
 ### Wildcards
 
-Suffix wildcards are supported for hostnames:
+Wildcards are supported for hostnames:
 
 ```yaml
+# Suffix wildcards (match any subdomain)
 *.example.com      # Matches sub.example.com, a.b.example.com
-*.tailscale.com    # Matches derp1.tailscale.com, api.tailscale.com
+
+# Prefix wildcards (match hostname prefix)
+derp*.tailscale.com   # Matches derp1.tailscale.com, derp99.tailscale.com
+us-west-*.aws.com     # Matches us-west-1.aws.com, us-west-2.aws.com
 ```
 
-Note: Prefix wildcards like `derp*.tailscale.com` are NOT supported (see [#29](https://github.com/gregclermont/egress-filter/issues/29)).
+Note: Only one wildcard per hostname is allowed, and it must be at the start or end of a label.
 
 ## Scope Constraints
 
@@ -168,15 +172,35 @@ Note: v3 was a composite action and would require `exe=/usr/bin/curl` instead of
 
 ## Debugging Policies
 
-### View Connection Log
+### Iterating on a Policy
 
-The proxy writes all connections to `/tmp/connections.jsonl`:
+The recommended workflow for developing a policy:
 
-```bash
-cat /tmp/connections.jsonl | jq .
-```
+1. **Run your workflow in audit mode** (logs connections but doesn't block):
+   ```yaml
+   - uses: gregclermont/egress-filter@v1
+     with:
+       audit: true
+   ```
 
-Each entry includes:
+2. **Download the connection log** (uploaded automatically as an artifact):
+   ```bash
+   gh run download <run-id> -n egress-connections
+   ```
+
+3. **Analyze against your policy**:
+   ```bash
+   python -m proxy.policy workflow.yml --analyze-log connections.jsonl
+   ```
+
+4. **Iterate** - add rules for blocked connections, re-run analysis until all pass.
+
+5. **Remove `audit: true`** to enable enforcement.
+
+### Connection Log Format
+
+Each entry in `connections.jsonl` includes:
+- `type`: Connection type (`http`, `https`, `tcp`, `udp`, `dns`)
 - `exe`: Executable path
 - `cmdline`: Full command line
 - `cgroup`: Linux cgroup path
@@ -184,16 +208,17 @@ Each entry includes:
 - `action`: GitHub action repository (if available)
 - `policy`: Whether it was allowed or denied
 
-### Use the CLI
-
-Test policies locally against a connection log:
+### CLI Options
 
 ```bash
-# Download a connection log from a workflow run
-gh run view <run-id> --log | grep connections.jsonl > connlog.jsonl
+# Validate policy syntax
+python -m proxy.policy workflow.yml
 
-# Test a policy
-uv run python -m proxy.policy.cli --analyze-log connlog.jsonl --policy policy.txt
+# Analyze connections against policy (verbose shows allowed connections too)
+python -m proxy.policy workflow.yml --analyze-log connections.jsonl -v
+
+# Dump parsed rules as JSON
+python -m proxy.policy workflow.yml --dump-rules
 ```
 
 ### Enable Debug Logging
