@@ -10,24 +10,24 @@ const path = require('path');
 const getActionPath = () => [__dirname, '..', '..'].reduce((a, b) => path.resolve(a, b));
 
 function checkPlatform() {
-  // This action only supports GitHub-hosted Ubuntu runners
+  // This action only supports GitHub-hosted Ubuntu 24.04 runners
   if (os.platform() !== 'linux') {
     core.setFailed(`This action only supports Linux runners, got: ${os.platform()}`);
     process.exit(1);
   }
 
+  if (process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+    core.setFailed(`This action only supports GitHub-hosted runners, got: ${process.env.RUNNER_ENVIRONMENT || 'unknown'}`);
+    process.exit(1);
+  }
+
   const imageOS = process.env.ImageOS;
-  if (!imageOS) {
-    core.setFailed('This action only supports GitHub-hosted runners (ImageOS not set)');
+  if (imageOS !== 'ubuntu24') {
+    core.setFailed(`This action only supports Ubuntu 24.04 (ubuntu24), got: ${imageOS || 'unknown'}`);
     process.exit(1);
   }
 
-  if (!imageOS.startsWith('ubuntu')) {
-    core.setFailed(`This action only supports Ubuntu runners, got: ${imageOS}`);
-    process.exit(1);
-  }
-
-  core.info(`Runner image: ${imageOS}`);
+  core.info(`Runner: ${process.env.RUNNER_ENVIRONMENT}, image: ${imageOS}`);
 }
 
 function hashFile(filePath) {
