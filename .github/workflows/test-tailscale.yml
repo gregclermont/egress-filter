@@ -63,18 +63,9 @@ jobs:
           # tailscale ping exits 1 if no direct connection, but DERP relay is fine for our test
           tailscale ping --c 3 lima-tinybpf || echo "(direct connection not established, but DERP relay works)"
 
-      - name: Check egress filter logs
+      - name: Show proxy logs
         if: always()
-        run: |
-          echo "=== Connection log (JSONL) ==="
-          cat /tmp/connections.jsonl 2>/dev/null || echo "No connections.jsonl"
-
-          echo ""
-          echo "=== Proxy log ==="
-          cat /tmp/proxy.log 2>/dev/null | tail -100 || echo "No proxy.log"
-
-      # Logs are printed above and can be retrieved via: gh run view <run-id> --log
-      # Artifact upload would need GitHub domains in policy, keeping it minimal for now.
+        run: cat /tmp/proxy.log 2>/dev/null | tail -100 || echo "No proxy.log"
 
   # Test that sudo is disabled by default (no allow-sudo)
   test-default-sudo-disabled:

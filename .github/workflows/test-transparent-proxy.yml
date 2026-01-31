@@ -50,10 +50,6 @@ jobs:
       - name: Run connection tracking tests
         run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl --skip-docker
 
-      - name: Show connection events
-        if: always()
-        run: cat /tmp/connections.jsonl || echo "No connections log found"
-
       - name: Show proxy logs
         if: always()
         env:

@@ -28,15 +28,6 @@ jobs:
       - name: Generate test connections
         run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl --skip-docker
 
-      - name: Show connections log
-        if: always()
-        run: |
-          echo "=== Connections log ==="
-          cat /tmp/connections.jsonl || echo "No log"
-          echo ""
-          echo "=== Connection count by type ==="
-          cat /tmp/connections.jsonl | jq -r '.type' | sort | uniq -c || true
-
   test-cli:
     name: Test CLI
     runs-on: ubuntu-latest

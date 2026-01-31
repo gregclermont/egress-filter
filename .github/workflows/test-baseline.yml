@@ -33,10 +33,6 @@ jobs:
           sleep 2
           echo "Baseline test complete."
 
-      - name: Show connection events
-        if: always()
-        run: cat /tmp/connections.jsonl || echo "No connections log found"
-
       - name: Show proxy logs
         if: always()
         run: cat /tmp/proxy.log || echo "No proxy log found"

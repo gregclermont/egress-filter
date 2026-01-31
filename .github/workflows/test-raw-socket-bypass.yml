@@ -36,9 +36,6 @@ jobs:
       - name: Check proxy logs for raw packets
         if: always()
         run: |
-          echo "=== Connection events (should NOT show raw socket traffic if bypassed) ==="
-          cat /tmp/connections.jsonl || echo "No connections log"
-          echo ""
           echo "=== Looking for port 44444 (our test source port) ==="
           grep -i "44444" /tmp/connections.jsonl || echo "Not found - raw packet bypassed proxy!"
 
@@ -90,9 +87,6 @@ jobs:
       - name: Final connection log check
         if: always()
         run: |
-          echo "=== Final connection log ==="
-          cat /tmp/connections.jsonl || echo "No connections log"
-          echo ""
           echo "=== Checking for scapy test (port 55555) ==="
           grep -i "55555" /tmp/connections.jsonl || echo "Port 55555 not found (expected - raw socket blocked)"
 
