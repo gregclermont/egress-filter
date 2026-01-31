@@ -71,6 +71,7 @@ class ProcessInfo:
     cmdline: list[str] | None = None
     cgroup: str | None = None
     step: str | None = None
+    action: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "ProcessInfo":
@@ -80,6 +81,7 @@ class ProcessInfo:
             cmdline=d.get("cmdline"),
             cgroup=d.get("cgroup"),
             step=d.get("step"),
+            action=d.get("action"),
         )
 
     def to_dict(self) -> dict:
@@ -93,6 +95,8 @@ class ProcessInfo:
             result["cgroup"] = self.cgroup
         if self.step:
             result["step"] = self.step
+        if self.action:
+            result["action"] = self.action
         return result
 
 

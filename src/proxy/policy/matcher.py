@@ -27,6 +27,7 @@ class ConnectionEvent:
     cmdline: list[str] | None = None
     cgroup: str | None = None
     step: str | None = None
+    action: str | None = None  # GitHub Action repository (e.g., "actions/checkout")
 
     @classmethod
     def from_dict(cls, data: dict) -> "ConnectionEvent":
@@ -43,6 +44,7 @@ class ConnectionEvent:
             cmdline=data.get("cmdline"),
             cgroup=data.get("cgroup"),
             step=data.get("step"),
+            action=data.get("action"),
         )
 
 
@@ -246,6 +248,14 @@ def match_attrs(rule: Rule, event: ConnectionEvent) -> bool:
             if event.step is None:
                 return False
             if not match_attr_value(value, event.step):
+                return False
+            continue
+
+        # Handle action (GitHub Action repository, e.g., "actions/checkout")
+        if key == "action":
+            if event.action is None:
+                return False
+            if not match_attr_value(value, event.action):
                 return False
             continue
 

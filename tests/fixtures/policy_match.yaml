@@ -712,6 +712,57 @@ tests:
           host: github.com
         verdict: block
 
+  - name: Action attribute exact match
+    policy: |
+      github.com action=actions/checkout
+    connections:
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+          action: actions/checkout
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+          action: actions/setup-node
+        verdict: block
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+        verdict: block
+
+  - name: Action attribute wildcard match
+    policy: |
+      github.com action=actions/*
+    connections:
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+          action: actions/checkout
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+          action: actions/setup-node
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+          action: docker/build-push-action
+        verdict: block
+
   - name: Cgroup attribute with abstraction
     policy: |
       github.com cgroup=@docker

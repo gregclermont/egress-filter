@@ -159,8 +159,32 @@ def get_github_step(pid: int) -> str | None:
     return None
 
 
+def get_github_action_repo(pid: int) -> str | None:
+    """Get GitHub Actions action repository by walking up the process tree.
+
+    Returns the value of GITHUB_ACTION_REPOSITORY (e.g., "actions/checkout")
+    which identifies the action being run, regardless of custom step ids.
+    """
+    visited = set()
+    while pid and pid > 1 and pid not in visited:
+        visited.add(pid)
+        try:
+            env = read_environ(pid)
+            action_repo = env.get("GITHUB_ACTION_REPOSITORY", "")
+            if action_repo:
+                return action_repo
+            # Walk up to parent
+            ppid = read_ppid(pid)
+            if not ppid:
+                break
+            pid = ppid
+        except Exception:
+            break
+    return None
+
+
 def get_proc_info(pid: int | None) -> dict:
-    """Get process info from /proc: exe, cmdline, cgroup, GitHub Actions step."""
+    """Get process info from /proc: exe, cmdline, cgroup, GitHub Actions step/action."""
     if not pid:
         return {}
     result = {}
@@ -176,4 +200,7 @@ def get_proc_info(pid: int | None) -> dict:
     step = get_github_step(pid)
     if step:
         result["step"] = step
+    action = get_github_action_repo(pid)
+    if action:
+        result["action"] = action
     return result
