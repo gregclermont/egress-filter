@@ -20,7 +20,8 @@ from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 
 from .bpf import BPFState
-from .control import ControlServer, disable_sudo, enable_sudo
+from .control import ControlServer
+from .sudo import disable_sudo, enable_sudo
 from .handlers import MitmproxyAddon, NfqueueHandler
 from .policy import PolicyEnforcer
 from . import logging as proxy_logging
