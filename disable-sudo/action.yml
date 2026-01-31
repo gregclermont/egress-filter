@@ -1,0 +1,6 @@
+name: 'Disable Sudo'
+description: 'Disable sudo access for the runner user (use after setup steps that require sudo)'
+
+runs:
+  using: 'node24'
+  main: 'index.js'
