@@ -21,7 +21,7 @@ except ImportError:
 from .. import logging as proxy_logging
 from ..bpf import BPFState
 from ..policy import PolicyEnforcer, ProcessInfo
-from ..proc import get_proc_info
+from ..proc import get_proc_info, is_proxy_process
 from ..utils import IPPROTO_UDP
 
 
@@ -74,10 +74,23 @@ class NfqueueHandler:
         self.nfqueue = None
         self.queue_num = 1
         self.packet_count = 0  # For debugging fast-path
+        self.dns_packet_count = 0  # For debugging BPF map after restart
+        self.stale_packets_to_drain = 0  # Set on setup() from queue size
+        self.stale_packets_drained = 0  # Telemetry: how many actually drained
+        self.proxy_pid_detections = 0  # Telemetry: BPF returned proxy's own PID
 
     def handle_packet(self, pkt):
         """Process a packet from nfqueue. Enforces policy if enforcer is set."""
         self.packet_count += 1
+
+        # Drain stale packets that were queued before we started.
+        # After proxy restart, these are from clients that already timed out.
+        if self.stale_packets_to_drain > 0:
+            self.stale_packets_to_drain -= 1
+            self.stale_packets_drained += 1
+            pkt.drop()
+            return
+
         mark = self.MARK_FASTPATH  # Default: just fast-path
         drop = False
 
@@ -97,13 +110,22 @@ class NfqueueHandler:
                     pid = self.bpf.lookup_pid(
                         dst_ip, src_port, dst_port, protocol=IPPROTO_UDP
                     )
+
+                    # If BPF returns proxy's own PID, this is likely ephemeral port
+                    # reuse - treat as unknown PID rather than dropping the packet
+                    if pid and is_proxy_process(pid):
+                        self.proxy_pid_detections += 1
+                        pid = None
+
                     proc_dict = get_proc_info(pid)
 
                     # DNS detection by packet structure (catches DNS on any port)
                     # This runs in mangle (before NAT), so we see the original destination
                     if ip.haslayer(DNS):
+                        self.dns_packet_count += 1
                         dns_layer = ip[DNS]
                         txid = dns_layer.id
+
                         # Mark for redirect only (no fast-path for DNS - we want to see every query)
                         mark = self.MARK_DNS_REDIRECT
                         # Cache: (src_port, txid) -> (pid, dst_ip, dst_port)
@@ -144,6 +166,22 @@ class NfqueueHandler:
             pkt.set_mark(mark)
             pkt.repeat()
 
+    def _get_queue_size(self) -> int:
+        """Read current queue size from /proc/net/netfilter/nfnetlink_queue.
+
+        Format: queue_id port_id queue_total copy_mode copy_range ...
+        Column 3 (0-indexed: 2) is queue_total - packets waiting in queue.
+        """
+        try:
+            with open("/proc/net/netfilter/nfnetlink_queue") as f:
+                for line in f:
+                    fields = line.split()
+                    if len(fields) >= 3 and int(fields[0]) == self.queue_num:
+                        return int(fields[2])
+        except (OSError, ValueError, IndexError):
+            pass
+        return 0
+
     def setup(self) -> bool:
         """Setup nfqueue binding. Returns True if successful."""
         if not HAS_NFQUEUE:
@@ -151,6 +189,14 @@ class NfqueueHandler:
                 "netfilterqueue not available, skipping UDP handler"
             )
             return False
+
+        # Check for stale packets before binding. These were queued before
+        # we started (e.g., after proxy restart) - clients already timed out.
+        self.stale_packets_to_drain = self._get_queue_size()
+        if self.stale_packets_to_drain > 0:
+            proxy_logging.logger.info(
+                f"Will drain {self.stale_packets_to_drain} stale packets from queue"
+            )
 
         self.nfqueue = NetfilterQueue()
         self.nfqueue.bind(self.queue_num, self.handle_packet)
@@ -167,11 +213,20 @@ class NfqueueHandler:
         """Process pending packets (call from asyncio)."""
         if self.nfqueue:
             # run(block=False) processes available packets without blocking
+            before_count = self.packet_count
             self.nfqueue.run(block=False)
+            processed = self.packet_count - before_count
+            if processed > 0:
+                proxy_logging.logger.debug(
+                    f"[nfqueue] process_pending: processed {processed} packets"
+                )
 
     def cleanup(self):
         """Cleanup nfqueue."""
-        proxy_logging.logger.info(f"nfqueue processed {self.packet_count} packets")
+        proxy_logging.logger.info(
+            f"nfqueue stats: packets={self.packet_count} dns={self.dns_packet_count} "
+            f"stale_drained={self.stale_packets_drained} proxy_pid_detections={self.proxy_pid_detections}"
+        )
         if self.nfqueue:
             try:
                 self.nfqueue.unbind()

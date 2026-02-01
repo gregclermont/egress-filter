@@ -26,8 +26,14 @@ install_deps() {
     curl -fsSL --parallel --parallel-immediate \
         -o /tmp/libnfnetlink-dev.deb "$base/main/libn/libnfnetlink/libnfnetlink-dev_1.0.2-2build1_amd64.deb" \
         -o /tmp/libnetfilter-queue1.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-4build1_amd64.deb" \
-        -o /tmp/libnetfilter-queue-dev.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb"
-    dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb >/dev/null
+        -o /tmp/libnetfilter-queue-dev.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb" \
+        -o /tmp/conntrack.deb "$base/main/c/conntrack-tools/conntrack_1.4.8-3_amd64.deb" \
+        -o /tmp/libnetfilter-conntrack3.deb "$base/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.1.0-1build1_amd64.deb" \
+        -o /tmp/libnetfilter-cthelper0.deb "$base/universe/libn/libnetfilter-cthelper/libnetfilter-cthelper0_1.0.1-4build2_amd64.deb" \
+        -o /tmp/libnetfilter-cttimeout1.deb "$base/universe/libn/libnetfilter-cttimeout/libnetfilter-cttimeout1_1.0.1-3build2_amd64.deb"
+    dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb \
+        /tmp/libnetfilter-conntrack3.deb /tmp/libnetfilter-cthelper0.deb /tmp/libnetfilter-cttimeout1.deb \
+        /tmp/conntrack.deb >/dev/null
 
     # Install uv if not present (uv installs to ~/.local/bin which is /root/.local/bin when running as root)
     if ! command -v uv &>/dev/null; then
@@ -41,6 +47,7 @@ install_deps() {
 }
 
 PIDFILE="/tmp/proxy.pid"
+SUPERVISOR_PIDFILE="/tmp/supervisor.pid"
 SCOPE_NAME="egress-filter-proxy"
 
 start_proxy() {
@@ -64,26 +71,22 @@ start_proxy() {
     # - Privileged: requires sudo which will be disabled
     sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
 
-    # Start proxy in its own cgroup scope using systemd-run
-    # This allows iptables to exclude proxy traffic by cgroup instead of UID,
-    # enabling us to capture traffic from root processes (like docker --network=host)
-    systemd-run --scope --unit="$SCOPE_NAME" \
-        env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
-            EGRESS_POLICY_FILE="${EGRESS_POLICY_FILE:-}" EGRESS_AUDIT_MODE="${EGRESS_AUDIT_MODE:-0}" \
-            GITHUB_ACTION_REPOSITORY="${GITHUB_ACTION_REPOSITORY:-}" \
-        "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
-    local proxy_pid=$!
+    # Start supervisor inside a systemd scope
+    # The supervisor manages the proxy with restart capability.
+    # IMPORTANT: The supervisor runs IN the scope so it keeps the cgroup alive
+    # when the proxy is killed. This prevents the iptables cgroup match rules
+    # from becoming stale (they cache kernel cgroup object references).
+    systemd-run --scope --unit="$SCOPE_NAME" "$SCRIPT_DIR/supervisor.sh" &
+    local supervisor_pid=$!
+    echo "$supervisor_pid" > "$SUPERVISOR_PIDFILE"
 
-    # Write pidfile for reliable shutdown
-    echo "$proxy_pid" > "$PIDFILE"
-
-    # Wait for proxy to be listening
+    # Wait for proxy to be listening (supervisor writes proxy PID to PIDFILE)
     local counter=0
     while ! ss -tln | grep -q ':8080 '; do
         sleep 0.1
         counter=$((counter+1))
-        if ! kill -0 $proxy_pid 2>/dev/null; then
-            echo "Proxy process died! Output:"
+        if ! kill -0 $supervisor_pid 2>/dev/null; then
+            echo "Supervisor died! Output:"
             cat /tmp/proxy-stdout.log || true
             exit 1
         fi
@@ -143,7 +146,31 @@ stop_proxy() {
     # Restore unprivileged user namespace creation (cleanup)
     sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
 
-    # First try graceful shutdown via pidfile (allows cleanup before systemd kills the scope)
+    # Stop supervisor first (it will forward SIGTERM to proxy)
+    if [ -f "$SUPERVISOR_PIDFILE" ]; then
+        local sup_pid
+        sup_pid=$(cat "$SUPERVISOR_PIDFILE")
+        if kill -0 "$sup_pid" 2>/dev/null; then
+            echo "Sending SIGTERM to supervisor (PID $sup_pid)" | tee -a /tmp/proxy.log
+            kill -TERM "$sup_pid" 2>/dev/null || true
+
+            # Wait for graceful shutdown (supervisor forwards to proxy)
+            local i=0
+            while kill -0 "$sup_pid" 2>/dev/null && [ $i -lt 50 ]; do
+                sleep 0.1
+                i=$((i+1))
+            done
+
+            # Force kill if still running
+            if kill -0 "$sup_pid" 2>/dev/null; then
+                echo "Supervisor shutdown timed out, sending SIGKILL" | tee -a /tmp/proxy.log
+                kill -KILL "$sup_pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$SUPERVISOR_PIDFILE"
+    fi
+
+    # Fallback: also try direct proxy PID (in case supervisor died)
     if [ -f "$PIDFILE" ]; then
         local pid
         pid=$(cat "$PIDFILE")

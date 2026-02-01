@@ -1,0 +1,110 @@
+name: Test proxy restart
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-restart-simple:
+    name: Simple restart test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          allow-sudo: true
+          audit: true
+          policy: |
+            example.com
+            [:53/udp]
+            8.8.8.8
+            1.1.1.1
+
+      - name: Test proxy restart in single step
+        run: |
+          set -x
+
+          echo "=== Initial state ==="
+          INITIAL_PID=$(cat /tmp/proxy.pid)
+          echo "Initial proxy PID: $INITIAL_PID"
+          cat /proc/$INITIAL_PID/cgroup
+
+          echo ""
+          echo "=== Verify proxy works before kill ==="
+          curl -sf https://example.com -o /dev/null
+          echo "Initial connection OK"
+
+          echo ""
+          echo "=== Kill proxy with SIGKILL ==="
+          sudo kill -9 "$INITIAL_PID"
+
+          echo ""
+          echo "=== Wait for restart ==="
+          for i in {1..30}; do
+            NEW_PID=$(cat /tmp/proxy.pid 2>/dev/null || echo "$INITIAL_PID")
+            if [ "$NEW_PID" != "$INITIAL_PID" ]; then
+              echo "Proxy restarted with new PID $NEW_PID after ${i} iterations"
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [ "$NEW_PID" = "$INITIAL_PID" ]; then
+            echo "ERROR: Proxy did not restart"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== Wait for proxy to be ready ==="
+          # Wait for proxy to be fully ready (iptables rules refreshed)
+          sleep 5
+
+          echo ""
+          echo "=== Check proxy state after restart ==="
+          echo "New PID: $NEW_PID"
+          cat /proc/$NEW_PID/cgroup
+          ss -tlnp | grep 8080 || echo "(no 8080 listener?)"
+          ss -ulnp | grep 8053 || echo "(no 8053 listener?)"
+
+          echo ""
+          echo "=== Test DNS resolution ==="
+          dig +short +timeout=5 +tries=1 example.com @127.0.0.53 || {
+            echo "DNS test failed"
+            exit 1
+          }
+
+          echo ""
+          echo "=== Test HTTP connection ==="
+          curl -sf --max-time 10 http://example.com -o /dev/null && echo "HTTP OK" || {
+            echo "HTTP FAILED"
+            exit 1
+          }
+
+          echo ""
+          echo "=== Test HTTPS connection ==="
+          curl -sf --max-time 10 https://example.com -o /dev/null && echo "HTTPS OK" || {
+            echo "HTTPS FAILED"
+            echo ""
+            echo "=== Debug info ==="
+            echo "Proxy log (last 50 lines):"
+            tail -50 /tmp/proxy.log
+            exit 1
+          }
+
+          echo ""
+          echo "=== SUCCESS ==="
+
+      - name: Show logs
+        if: always()
+        run: |
+          echo "=== Supervisor log ==="
+          cat /tmp/proxy-stdout.log || true
+          echo ""
+          echo "=== Proxy log (last 100 lines) ==="
+          tail -100 /tmp/proxy.log || true

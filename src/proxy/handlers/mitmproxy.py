@@ -7,7 +7,7 @@ from mitmproxy import dns, http, tcp, tls
 from .. import logging as proxy_logging
 from ..bpf import BPFState
 from ..policy import PolicyEnforcer, ProcessInfo
-from ..proc import get_proc_info, is_container_process
+from ..proc import get_proc_info, is_container_process, is_proxy_process
 
 
 class MitmproxyAddon:
@@ -44,6 +44,9 @@ class MitmproxyAddon:
         sni = data.client_hello.sni
 
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+        # If BPF returns proxy's own PID, entry is stale - treat as unknown
+        if pid and is_proxy_process(pid):
+            pid = None
         proc_dict = get_proc_info(pid)
         is_container = pid and is_container_process(pid)
 
@@ -109,6 +112,9 @@ class MitmproxyAddon:
         conn_type = "https" if url.startswith("https://") else "http"
 
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+        # If BPF returns proxy's own PID, treat as unknown
+        if pid and is_proxy_process(pid):
+            pid = None
         proc_dict = get_proc_info(pid)
 
         decision = self.enforcer.check_http(
@@ -159,6 +165,9 @@ class MitmproxyAddon:
         )
 
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+        # If BPF returns proxy's own PID, entry is stale - treat as unknown
+        if pid and is_proxy_process(pid):
+            pid = None
         proc_dict = get_proc_info(pid)
 
         decision = self.enforcer.check_tcp(
@@ -192,27 +201,57 @@ class MitmproxyAddon:
 
     def dns_request(self, flow: dns.DNSFlow) -> None:
         """Handle DNS request - log and optionally enforce policy."""
-        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
-        query_name = flow.request.questions[0].name if flow.request.questions else None
-        txid = flow.request.id
+        try:
+            src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
+            query_name = flow.request.questions[0].name if flow.request.questions else None
+            txid = flow.request.id
 
-        # Get info from nfqueue cache (has original 4-tuple from before NAT)
-        cache_key = (src_port, txid)
-        cached = self.bpf.dns_cache.pop(cache_key, None)
+            # Get info from nfqueue cache (has original 4-tuple from before NAT)
+            cache_key = (src_port, txid)
+            cache_size = len(self.bpf.dns_cache)
+            cached = self.bpf.dns_cache.pop(cache_key, None)
 
-        if cached:
-            pid, dst_ip, dst_port = cached
-            proc_dict = get_proc_info(pid)
+            if cached:
+                pid, dst_ip, dst_port = cached
+                proc_dict = get_proc_info(pid)
 
-            if query_name:
-                decision = self.enforcer.check_dns(
-                    dst_ip=dst_ip,
-                    dst_port=dst_port,
-                    query_name=query_name,
-                    proc=ProcessInfo.from_dict(proc_dict),
-                )
+                if query_name:
+                    decision = self.enforcer.check_dns(
+                        dst_ip=dst_ip,
+                        dst_port=dst_port,
+                        query_name=query_name,
+                        proc=ProcessInfo.from_dict(proc_dict),
+                    )
 
-                if decision.blocked:
+                    if decision.blocked:
+                        proxy_logging.log_connection(
+                            type="dns",
+                            dst_ip=dst_ip,
+                            dst_port=dst_port,
+                            name=query_name,
+                            policy=decision.policy,
+                            **proc_dict,
+                            src_port=src_port,
+                            pid=pid,
+                        )
+                        # Return REFUSED response
+                        flow.response = dns.DNSMessage(
+                            id=flow.request.id,
+                            query=False,
+                            op_code=flow.request.op_code,
+                            authoritative_answer=False,
+                            truncation=False,
+                            recursion_desired=flow.request.recursion_desired,
+                            recursion_available=False,
+                            reserved=0,
+                            response_code=5,  # REFUSED
+                            questions=flow.request.questions,
+                            answers=[],
+                            authorities=[],
+                            additionals=[],
+                        )
+                        return
+
                     proxy_logging.log_connection(
                         type="dns",
                         dst_ip=dst_ip,
@@ -223,67 +262,50 @@ class MitmproxyAddon:
                         src_port=src_port,
                         pid=pid,
                     )
-                    # Return REFUSED response
-                    flow.response = dns.Message(
-                        id=flow.request.id,
-                        query=False,
-                        op_code=flow.request.op_code,
-                        authoritative_answer=False,
-                        truncation=False,
-                        recursion_desired=flow.request.recursion_desired,
-                        recursion_available=False,
-                        response_code=5,  # REFUSED
-                        questions=flow.request.questions,
-                        answers=[],
-                        authorities=[],
-                        additionals=[],
-                    )
-                    return
-
-                proxy_logging.log_connection(
-                    type="dns",
-                    dst_ip=dst_ip,
-                    dst_port=dst_port,
-                    name=query_name,
-                    policy=decision.policy,
-                    **proc_dict,
-                    src_port=src_port,
-                    pid=pid,
+            else:
+                # Cache miss - nfqueue should have seen the packet first
+                proxy_logging.logger.error(
+                    f"DNS cache miss: src_port={src_port} txid={txid} name={query_name} "
+                    f"cache_size={cache_size}"
                 )
-        else:
-            # Cache miss - nfqueue should have seen the packet first
-            proxy_logging.logger.error(
-                f"DNS cache miss: src_port={src_port} txid={txid} name={query_name}"
-            )
+        except Exception as e:
+            proxy_logging.logger.error(f"[mitmproxy] dns_request exception: {e}")
+            import traceback
+            proxy_logging.logger.error(traceback.format_exc())
 
     def dns_response(self, flow: dns.DNSFlow) -> None:
         """Handle DNS response - record IPs for correlation."""
-        if not flow.response:
-            return
+        try:
+            query_name = flow.request.questions[0].name if flow.request.questions else None
 
-        query_name = flow.request.questions[0].name if flow.request.questions else None
-        if not query_name:
-            return
+            if not flow.response:
+                return
+            if not query_name:
+                return
 
-        # Extract IPs from A and AAAA records
-        ips = []
-        min_ttl = 300  # Default TTL if none found
+            # Extract IPs from A and AAAA records
+            ips = []
+            min_ttl = 300  # Default TTL if none found
 
-        for answer in flow.response.answers:
-            # Check for A record (type 1) or AAAA record (type 28)
-            if hasattr(answer, "data"):
-                if answer.type == 1:  # A record
-                    ips.append(str(answer.data))
-                    if hasattr(answer, "ttl"):
-                        min_ttl = min(min_ttl, answer.ttl)
-                # Note: AAAA records are blocked at kernel level, but handle anyway
-                elif answer.type == 28:  # AAAA record
-                    ips.append(str(answer.data))
-                    if hasattr(answer, "ttl"):
-                        min_ttl = min(min_ttl, answer.ttl)
+            for answer in flow.response.answers:
+                # Check for A record (type 1) or AAAA record (type 28)
+                if hasattr(answer, "data"):
+                    if answer.type == 1:  # A record
+                        ips.append(str(answer.data))
+                        if hasattr(answer, "ttl"):
+                            min_ttl = min(min_ttl, answer.ttl)
+                    # Note: AAAA records are blocked at kernel level, but handle anyway
+                    elif answer.type == 28:  # AAAA record
+                        ips.append(str(answer.data))
+                        if hasattr(answer, "ttl"):
+                            min_ttl = min(min_ttl, answer.ttl)
 
-        if ips:
-            self.enforcer.record_dns_response(query_name, ips, min_ttl)
-            proxy_logging.logger.debug(
-                f"DNS cache: {query_name} -> {ips} (ttl={min_ttl})"
-            )
+            if ips:
+                self.enforcer.record_dns_response(query_name, ips, min_ttl)
+                proxy_logging.logger.debug(
+                    f"DNS cache: {query_name} -> {ips} (ttl={min_ttl})"
+                )
+        except Exception as e:
+            proxy_logging.logger.error(f"[mitmproxy] dns_response exception: {e}")
+            import traceback
+            proxy_logging.logger.error(traceback.format_exc())

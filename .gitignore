@@ -2,9 +2,14 @@
 __pycache__/
 *.py[cod]
 *.so
+*.egg-info/
 .venv/
 .hypothesis/
 .coverage
+
+# Temp files
+.tmp/
+connlog.jsonl
 
 # Node
 node_modules/

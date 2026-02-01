@@ -31,7 +31,9 @@ apply_rules() {
     }
 
     # Cgroup path for the proxy (set by proxy.sh using systemd-run)
-    local proxy_cgroup="system.slice/egress-filter-proxy.scope"
+    # Note: cgroup match needs the path as it appears in /proc/self/cgroup
+    # which includes a leading slash
+    local proxy_cgroup="/system.slice/egress-filter-proxy.scope"
 
     # Block direct proxy connections (mark in mangle, drop in filter)
     # Prevents apps from bypassing transparent redirect by connecting

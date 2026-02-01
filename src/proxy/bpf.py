@@ -50,10 +50,14 @@ class BPFState:
         # Note: cgroup/connect4 can't be used because at connect() time the kernel
         # hasn't assigned the ephemeral source port yet (src_port=0). The kprobe
         # fires later in the connection sequence with valid src_port.
-        self.bpf_links.append(self.bpf_obj.program("kprobe_tcp_connect").attach_kprobe("tcp_connect"))
+        tcp_link = self.bpf_obj.program("kprobe_tcp_connect").attach_kprobe("tcp_connect")
+        self.bpf_links.append(tcp_link)
+        proxy_logging.logger.info(f"Attached kprobe/tcp_connect (link={tcp_link})")
 
         # UDP tracking: kprobe (cgroup hooks don't work for connected UDP - see BPF comments)
-        self.bpf_links.append(self.bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg"))
+        udp_link = self.bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg")
+        self.bpf_links.append(udp_link)
+        proxy_logging.logger.info(f"Attached kprobe/udp_sendmsg (link={udp_link})")
 
         # IPv6 blocking: cgroup hooks
         self.bpf_links.append(self.bpf_obj.program("block_connect6").attach_cgroup(root_cgroup))
@@ -114,6 +118,9 @@ class BPFState:
                 dst_port=dst_port,
                 protocol=protocol,
             )
+            # Explicitly zero the padding
+            key.pad = (ctypes.c_uint8 * 3)(0, 0, 0)
             return self.map_v4.get(key)
-        except Exception:
+        except Exception as e:
+            proxy_logging.logger.warning(f"BPF lookup failed: {e}")
             return None

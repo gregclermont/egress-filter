@@ -103,6 +103,23 @@ def is_container_process(pid: int) -> bool:
     return "docker-" in cgroup or "/docker/" in cgroup
 
 
+# Cgroup name used by supervisor.sh for the proxy process
+PROXY_SCOPE_NAME = "egress-filter-proxy.scope"
+
+
+def is_proxy_process(pid: int) -> bool:
+    """Check if a process belongs to the proxy's cgroup.
+
+    The proxy runs in a systemd scope (egress-filter-proxy.scope).
+    Used to detect stale BPF entries where the lookup returns the proxy's
+    PID instead of the actual client due to ephemeral port collision.
+    """
+    cgroup = get_cgroup_path(pid)
+    if not cgroup:
+        return False
+    return PROXY_SCOPE_NAME in cgroup
+
+
 def get_process_ancestry(pid: int, max_depth: int = 10) -> list[tuple[int, str]]:
     """Get process ancestry as list of (pid, exe) tuples.
 

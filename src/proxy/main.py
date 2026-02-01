@@ -40,6 +40,8 @@ async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer):
             showhost=True,
         )
         master = DumpMaster(opts)
+        # Use Google DNS directly to avoid issues with systemd-resolved after restart
+        master.options.update(dns_name_servers=["8.8.8.8"])
         master.addons.add(MitmproxyAddon(bpf, enforcer))
         proxy_logging.logger.info("Starting mitmproxy on port 8080 (TCP) and 8053 (DNS)...")
         await master.run()
@@ -122,6 +124,13 @@ async def async_main():
     proxy_logging.logger.info("=" * 50)
     proxy_logging.logger.info("Unified Proxy Starting")
     proxy_logging.logger.info(f"PID: {os.getpid()}")
+    # Log cgroup path for debugging iptables bypass
+    try:
+        cgroup_info = open("/proc/self/cgroup").read().strip()
+        cgroup_rel = cgroup_info.split(":")[-1]
+        proxy_logging.logger.info(f"Cgroup: {cgroup_rel}")
+    except Exception as e:
+        proxy_logging.logger.warning(f"Failed to get cgroup: {e}")
     proxy_logging.logger.info("=" * 50)
 
     # Setup BPF
@@ -175,7 +184,8 @@ async def async_main():
     if policy_file and os.path.exists(policy_file):
         with open(policy_file) as f:
             policy_text = f.read()
-        os.remove(policy_file)
+        # Don't delete policy file - it's needed if proxy restarts
+        # File is in /tmp and gets cleaned up by the system
         proxy_logging.logger.info(f"Loaded policy from {policy_file} ({len(policy_text)} bytes)")
     else:
         proxy_logging.logger.info("No policy file, using empty policy")
