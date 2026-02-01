@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import traceback
+
 # Optional imports - graceful degradation if not available
 try:
     from netfilterqueue import NetfilterQueue
@@ -131,7 +133,8 @@ class NfqueueHandler:
                             pid=pid,
                         )
         except Exception as e:
-            proxy_logging.logger.warning(f"Error processing UDP packet: {e}")
+            proxy_logging.logger.error(f"handle_packet error: {e}")
+            proxy_logging.logger.error(traceback.format_exc())
 
         # Either drop or reinject the packet
         if drop:

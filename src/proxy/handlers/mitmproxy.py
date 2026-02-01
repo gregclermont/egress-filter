@@ -8,6 +8,7 @@ from .. import logging as proxy_logging
 from ..bpf import BPFState
 from ..policy import PolicyEnforcer, ProcessInfo
 from ..proc import get_proc_info, is_container_process
+from . import log_errors
 
 
 class MitmproxyAddon:
@@ -23,6 +24,7 @@ class MitmproxyAddon:
         self.bpf = bpf
         self.enforcer = enforcer
 
+    @log_errors
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
         """Handle TLS ClientHello - passthrough for container processes.
 
@@ -91,6 +93,7 @@ class MitmproxyAddon:
                 data.ignore_connection = True
         # else: No SNI, can decrypt - defer to request() hook
 
+    @log_errors
     def request(self, flow: http.HTTPFlow) -> None:
         """Handle HTTP/HTTPS request - log and optionally enforce policy.
 
@@ -151,6 +154,7 @@ class MitmproxyAddon:
             pid=pid,
         )
 
+    @log_errors
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         """Handle raw TCP connection - log and optionally enforce policy."""
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
@@ -190,6 +194,7 @@ class MitmproxyAddon:
             pid=pid,
         )
 
+    @log_errors
     def dns_request(self, flow: dns.DNSFlow) -> None:
         """Handle DNS request - log and optionally enforce policy."""
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
@@ -224,7 +229,7 @@ class MitmproxyAddon:
                         pid=pid,
                     )
                     # Return REFUSED response
-                    flow.response = dns.Message(
+                    flow.response = dns.DNSMessage(
                         id=flow.request.id,
                         query=False,
                         op_code=flow.request.op_code,
@@ -232,6 +237,7 @@ class MitmproxyAddon:
                         truncation=False,
                         recursion_desired=flow.request.recursion_desired,
                         recursion_available=False,
+                        reserved=0,
                         response_code=5,  # REFUSED
                         questions=flow.request.questions,
                         answers=[],
@@ -256,6 +262,7 @@ class MitmproxyAddon:
                 f"DNS cache miss: src_port={src_port} txid={txid} name={query_name}"
             )
 
+    @log_errors
     def dns_response(self, flow: dns.DNSFlow) -> None:
         """Handle DNS response - record IPs for correlation."""
         if not flow.response:

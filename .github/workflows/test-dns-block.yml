@@ -1,0 +1,67 @@
+name: Test DNS blocking (repro crash)
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+jobs:
+  test-dns-block:
+    name: DNS block test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Setup egress filter (enforce mode)
+        uses: gregclermont/egress-filter@test
+        with:
+          allow-sudo: true
+          audit: false  # Enforce mode - will block
+          policy: |
+            example.com
+            [:53/udp]
+
+      - name: Try to resolve blocked domain
+        run: |
+          INITIAL_PID=$(cat /tmp/proxy.pid)
+          echo "Initial proxy PID: $INITIAL_PID"
+          ps aux | grep -E "python|supervisor" | grep -v grep || true
+
+          echo ""
+          echo "Attempting to resolve blocked.com (not in policy)..."
+          dig +short +timeout=2 blocked.com; echo "dig exit code: $?"
+
+          echo ""
+          echo "Immediate check after dig..."
+          ps aux | grep -E "python|supervisor" | grep -v grep || true
+          cat /tmp/proxy.pid
+
+          echo ""
+          echo "Waiting 3 seconds..."
+          sleep 3
+
+          echo ""
+          echo "Check proxy state after wait..."
+          ps aux | grep -E "python|supervisor" | grep -v grep || true
+          CURRENT_PID=$(cat /tmp/proxy.pid)
+          echo "Current PID in file: $CURRENT_PID"
+
+          if [ "$CURRENT_PID" != "$INITIAL_PID" ]; then
+            echo "PID changed: proxy crashed and restarted"
+          fi
+
+          # Use sudo for kill -0 since proxy runs as root
+          if sudo kill -0 "$CURRENT_PID" 2>/dev/null; then
+            echo "Proxy is running (PID $CURRENT_PID)"
+          else
+            echo "Proxy is NOT running!"
+            exit 1
+          fi
+
+      - name: Show logs
+        if: always()
+        run: |
+          echo "=== Supervisor log ==="
+          cat /tmp/proxy-stdout.log || true
+          echo ""
+          echo "=== Proxy log (last 100 lines) ==="
+          tail -100 /tmp/proxy.log || true
