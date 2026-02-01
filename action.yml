@@ -16,9 +16,8 @@ inputs:
     required: false
     default: 'false'
   upload-log:
-    description: 'Upload connection log as workflow artifact'
+    description: 'Upload connection log as workflow artifact (default: only when audit mode or blocks)'
     required: false
-    default: 'true'
 
 runs:
   using: 'node24'

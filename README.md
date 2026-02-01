@@ -217,7 +217,11 @@ Fields:
 | `policy` | Egress policy rules (one per line) | (none) |
 | `audit` | Log connections without blocking | `false` |
 | `allow-sudo` | Keep sudo enabled for runner user | `false` |
-| `upload-log` | Upload connection log as artifact | `true` |
+| `upload-log` | Upload connection log as artifact | conditional |
+
+### Connection Log Upload
+
+By default, the connection log is only uploaded as an artifact when `audit: true` or when a connection was blocked. This reduces artifact noise for successful runs while ensuring logs are available for debugging. Set `upload-log: 'true'` to always upload, or `'false'` to never upload.
 
 ### sudo Behavior
 

@@ -97,9 +97,29 @@ async function shutdownProxy() {
 
 const CONNECTION_LOG_PATH = '/tmp/connections.jsonl';
 
+/**
+ * Check if any connections were blocked (policy: 'deny') in the log.
+ */
+function hasBlockedConnections() {
+  if (!fs.existsSync(CONNECTION_LOG_PATH)) return false;
+  const content = fs.readFileSync(CONNECTION_LOG_PATH, 'utf8');
+  return content.split('\n')
+    .filter(line => line.trim())
+    .some(line => {
+      try {
+        const entry = JSON.parse(line);
+        return entry.policy === 'deny';
+      } catch {
+        return false;
+      }
+    });
+}
+
 async function uploadConnectionLog() {
   const uploadLog = core.getInput('upload-log');
-  if (uploadLog !== 'true') {
+
+  // Explicit 'false' - never upload
+  if (uploadLog === 'false') {
     core.info('Connection log upload disabled');
     return;
   }
@@ -109,7 +129,19 @@ async function uploadConnectionLog() {
     return;
   }
 
-  core.info('Uploading connection log as artifact...');
+  // Default (empty) - conditional upload based on audit mode or blocks
+  if (uploadLog !== 'true') {
+    const auditMode = core.getInput('audit') === 'true';
+    const hasBlocks = hasBlockedConnections();
+
+    if (!auditMode && !hasBlocks) {
+      core.info('Skipping connection log upload (no audit mode, no blocks)');
+      return;
+    }
+    core.info(`Uploading connection log (audit=${auditMode}, blocks=${hasBlocks})`);
+  } else {
+    core.info('Uploading connection log (upload-log=true)');
+  }
   try {
     const client = new artifact.DefaultArtifactClient();
     const { id, size } = await client.uploadArtifact(
