@@ -96,15 +96,8 @@ setup() {
 }
 
 cleanup() {
-    # Delete rules (ignore errors - rules may not exist)
+    # Delete rules individually (ignore errors - rules may not exist)
     apply_rules -D true
-
-    # Flush tables as safety net (in case rules were partially added
-    # or script was interrupted)
-    iptables -t mangle -F 2>/dev/null || true
-    iptables -t nat -F 2>/dev/null || true
-    iptables -t filter -F 2>/dev/null || true
-    ip6tables -t filter -F 2>/dev/null || true
 }
 
 case "${1:-}" in
