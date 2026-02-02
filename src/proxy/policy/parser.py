@@ -848,3 +848,33 @@ def rule_to_dict(rule: Rule) -> dict:
         "url_base": rule.url_base,
         "attrs": attrs_dict,
     }
+
+
+def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
+    """Validate a policy and return list of errors for invalid lines.
+
+    Args:
+        policy_text: The policy text to validate.
+
+    Returns:
+        List of (line_num, line_text, error_message) tuples for invalid lines.
+        Empty list if all lines are valid.
+    """
+    errors = []
+    visitor = PolicyVisitor()
+
+    for line_num, line in enumerate(policy_text.splitlines(), start=1):
+        line_stripped = line.strip()
+
+        # Skip empty lines and comments
+        if not line_stripped or line_stripped.startswith("#"):
+            continue
+
+        try:
+            tree = GRAMMAR.parse(line)
+            visitor.rules = []
+            visitor.visit(tree)
+        except ParseError as e:
+            errors.append((line_num, line_stripped, str(e)))
+
+    return errors

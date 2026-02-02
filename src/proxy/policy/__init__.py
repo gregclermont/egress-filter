@@ -11,6 +11,7 @@ from .parser import (
     parse_policy,
     rule_to_dict,
     substitute_placeholders,
+    validate_policy,
 )
 from .types import (
     SECURE_DEFAULTS,
@@ -37,6 +38,7 @@ __all__ = [
     "rule_to_dict",
     "substitute_placeholders",
     "parse_github_repository",
+    "validate_policy",
     # Matcher
     "ConnectionEvent",
     "PolicyMatcher",

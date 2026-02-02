@@ -31,7 +31,7 @@ from .defaults import PRESETS, get_defaults
 from .dns_cache import DNSIPCache
 from .enforcer import PolicyEnforcer, ProcessInfo
 from .matcher import ConnectionEvent, PolicyMatcher
-from .parser import GRAMMAR, PolicyVisitor, parse_policy, rule_to_dict
+from .parser import GRAMMAR, PolicyVisitor, parse_policy, rule_to_dict, validate_policy
 from .defaults import RUNNER_DEFAULTS
 from .types import DefaultContext
 
@@ -58,28 +58,6 @@ def find_policies_in_workflow(workflow: dict) -> list[tuple[str, str]]:
                     policies.append((location, policy))
 
     return policies
-
-
-def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
-    """Validate a policy and return list of (line_num, line, error) for invalid lines."""
-    errors = []
-    visitor = PolicyVisitor()
-
-    for line_num, line in enumerate(policy_text.splitlines(), start=1):
-        line_stripped = line.strip()
-
-        # Skip empty lines and comments
-        if not line_stripped or line_stripped.startswith("#"):
-            continue
-
-        try:
-            tree = GRAMMAR.parse(line)
-            visitor.rules = []
-            visitor.visit(tree)
-        except ParseError as e:
-            errors.append((line_num, line_stripped, str(e)))
-
-    return errors
 
 
 def connection_key(conn: dict) -> tuple:
