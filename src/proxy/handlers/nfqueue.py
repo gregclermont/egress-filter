@@ -4,21 +4,9 @@ from __future__ import annotations
 
 import traceback
 
-# Optional imports - graceful degradation if not available
-try:
-    from netfilterqueue import NetfilterQueue
-
-    HAS_NFQUEUE = True
-except ImportError:
-    HAS_NFQUEUE = False
-
-try:
-    from scapy.layers.dns import DNS
-    from scapy.layers.inet import IP, UDP
-
-    HAS_SCAPY = True
-except ImportError:
-    HAS_SCAPY = False
+from netfilterqueue import NetfilterQueue
+from scapy.layers.dns import DNS
+from scapy.layers.inet import IP, UDP
 
 from .. import logging as proxy_logging
 from ..bpf import BPFState
@@ -84,54 +72,53 @@ class NfqueueHandler:
         drop = False
 
         try:
-            if HAS_SCAPY:
-                raw = pkt.get_payload()
-                ip = IP(raw)
+            raw = pkt.get_payload()
+            ip = IP(raw)
 
-                if ip.haslayer(UDP):
-                    udp = ip[UDP]
-                    src_ip = ip.src
-                    dst_ip = ip.dst
-                    src_port = udp.sport
-                    dst_port = udp.dport
+            if ip.haslayer(UDP):
+                udp = ip[UDP]
+                src_ip = ip.src
+                dst_ip = ip.dst
+                src_port = udp.sport
+                dst_port = udp.dport
 
-                    # Look up PID
-                    pid = self.bpf.lookup_pid(
-                        dst_ip, src_port, dst_port, protocol=IPPROTO_UDP
+                # Look up PID
+                pid = self.bpf.lookup_pid(
+                    dst_ip, src_port, dst_port, protocol=IPPROTO_UDP
+                )
+                proc_dict = get_proc_info(pid)
+
+                # DNS detection by packet structure (catches DNS on any port)
+                # This runs in mangle (before NAT), so we see the original destination
+                if ip.haslayer(DNS):
+                    dns_layer = ip[DNS]
+                    txid = dns_layer.id
+                    # Mark for redirect only (no fast-path for DNS - we want to see every query)
+                    mark = self.MARK_DNS_REDIRECT
+                    # Cache: (src_port, txid) -> (pid, dst_ip, dst_port)
+                    # Logging happens in mitmproxy's dns_request() to avoid double-logging
+                    cache_key = (src_port, txid)
+                    self.bpf.dns_cache[cache_key] = (pid, dst_ip, dst_port)
+                else:
+                    # Non-DNS UDP - check policy and log
+                    decision = self.enforcer.check_udp(
+                        dst_ip=dst_ip,
+                        dst_port=dst_port,
+                        proc=ProcessInfo.from_dict(proc_dict),
                     )
-                    proc_dict = get_proc_info(pid)
 
-                    # DNS detection by packet structure (catches DNS on any port)
-                    # This runs in mangle (before NAT), so we see the original destination
-                    if ip.haslayer(DNS):
-                        dns_layer = ip[DNS]
-                        txid = dns_layer.id
-                        # Mark for redirect only (no fast-path for DNS - we want to see every query)
-                        mark = self.MARK_DNS_REDIRECT
-                        # Cache: (src_port, txid) -> (pid, dst_ip, dst_port)
-                        # Logging happens in mitmproxy's dns_request() to avoid double-logging
-                        cache_key = (src_port, txid)
-                        self.bpf.dns_cache[cache_key] = (pid, dst_ip, dst_port)
-                    else:
-                        # Non-DNS UDP - check policy and log
-                        decision = self.enforcer.check_udp(
-                            dst_ip=dst_ip,
-                            dst_port=dst_port,
-                            proc=ProcessInfo.from_dict(proc_dict),
-                        )
+                    if decision.blocked:
+                        drop = True
 
-                        if decision.blocked:
-                            drop = True
-
-                        proxy_logging.log_connection(
-                            type="udp",
-                            dst_ip=dst_ip,
-                            dst_port=dst_port,
-                            policy=decision.policy,
-                            **proc_dict,
-                            src_port=src_port,
-                            pid=pid,
-                        )
+                    proxy_logging.log_connection(
+                        type="udp",
+                        dst_ip=dst_ip,
+                        dst_port=dst_port,
+                        policy=decision.policy,
+                        **proc_dict,
+                        src_port=src_port,
+                        pid=pid,
+                    )
         except Exception as e:
             proxy_logging.logger.error(f"handle_packet error: {e}")
             proxy_logging.logger.error(traceback.format_exc())
@@ -147,36 +134,25 @@ class NfqueueHandler:
             pkt.set_mark(mark)
             pkt.repeat()
 
-    def setup(self) -> bool:
-        """Setup nfqueue binding. Returns True if successful."""
-        if not HAS_NFQUEUE:
-            proxy_logging.logger.warning(
-                "netfilterqueue not available, skipping UDP handler"
-            )
-            return False
-
+    def setup(self):
+        """Setup nfqueue binding."""
         self.nfqueue = NetfilterQueue()
         self.nfqueue.bind(self.queue_num, self.handle_packet)
         proxy_logging.logger.info(f"nfqueue bound to queue {self.queue_num}")
-        return True
 
-    def get_fd(self) -> int | None:
+    def get_fd(self) -> int:
         """Get file descriptor for asyncio integration."""
-        if self.nfqueue:
-            return self.nfqueue.get_fd()
-        return None
+        return self.nfqueue.get_fd()
 
     def process_pending(self):
         """Process pending packets (call from asyncio)."""
-        if self.nfqueue:
-            # run(block=False) processes available packets without blocking
-            self.nfqueue.run(block=False)
+        # run(block=False) processes available packets without blocking
+        self.nfqueue.run(block=False)
 
     def cleanup(self):
         """Cleanup nfqueue."""
         proxy_logging.logger.info(f"nfqueue processed {self.packet_count} packets")
-        if self.nfqueue:
-            try:
-                self.nfqueue.unbind()
-            except Exception as e:
-                proxy_logging.logger.warning(f"Error unbinding nfqueue: {e}")
+        try:
+            self.nfqueue.unbind()
+        except Exception as e:
+            proxy_logging.logger.warning(f"Error unbinding nfqueue: {e}")

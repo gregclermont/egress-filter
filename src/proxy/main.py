@@ -59,12 +59,8 @@ async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer):
 
 async def run_nfqueue(handler: NfqueueHandler):
     """Run nfqueue handler integrated with asyncio."""
-    if not handler.setup():
-        return
-
+    handler.setup()
     fd = handler.get_fd()
-    if fd is None:
-        return
 
     loop = asyncio.get_event_loop()
     loop.add_reader(fd, handler.process_pending)
