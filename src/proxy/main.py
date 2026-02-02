@@ -24,6 +24,7 @@ from .control import ControlServer
 from .sudo import disable_sudo, enable_sudo
 from .handlers import MitmproxyAddon, NfqueueHandler
 from .policy import PolicyEnforcer
+from .policy.gha import validate_runner_environment
 from . import logging as proxy_logging
 
 # Graceful shutdown timeout (seconds)
@@ -123,6 +124,16 @@ async def async_main():
     proxy_logging.logger.info("Unified Proxy Starting")
     proxy_logging.logger.info(f"PID: {os.getpid()}")
     proxy_logging.logger.info("=" * 50)
+
+    # Validate runner environment before proceeding
+    env_errors = validate_runner_environment()
+    if env_errors:
+        for err in env_errors:
+            proxy_logging.logger.error(f"Runner environment validation failed: {err}")
+        proxy_logging.logger.error(
+            "GitHub runner layout may have changed. Please report this issue."
+        )
+        sys.exit(1)
 
     # Setup BPF
     bpf = BPFState()
