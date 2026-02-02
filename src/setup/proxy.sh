@@ -43,6 +43,7 @@ install_deps() {
 PIDFILE="/tmp/proxy.pid"
 SUPERVISOR_PIDFILE="/tmp/supervisor.pid"
 SCOPE_NAME="egress-filter-proxy"
+CA_CERT_BACKUP="/run/egress-filter-ca-certs.bak"
 
 start_proxy() {
     cd "$REPO_ROOT"
@@ -106,6 +107,10 @@ start_proxy() {
     done
 
     # Install mitmproxy certificate as system CA (direct append is much faster than update-ca-certificates)
+    # Backup first so we can restore on cleanup (prevents duplicates on proxy restart)
+    if [ ! -f "$CA_CERT_BACKUP" ]; then
+        cp /etc/ssl/certs/ca-certificates.crt "$CA_CERT_BACKUP"
+    fi
     cat "$cert_file" >> /etc/ssl/certs/ca-certificates.crt
 
     # Set CA env vars for tools that don't use system store
@@ -135,6 +140,12 @@ stop_proxy() {
 
     # Restore unprivileged user namespace creation (cleanup)
     sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
+
+    # Restore original CA certificates (removes mitmproxy CA)
+    if [ -f "$CA_CERT_BACKUP" ]; then
+        cp "$CA_CERT_BACKUP" /etc/ssl/certs/ca-certificates.crt
+        rm -f "$CA_CERT_BACKUP"
+    fi
 
     # Signal supervisor to shut down (it forwards SIGTERM to proxy)
     if [ -f "$SUPERVISOR_PIDFILE" ]; then
