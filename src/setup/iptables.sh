@@ -8,6 +8,8 @@
 
 set -e
 
+SYSCTL_ORIG_FILE="/run/egress-filter-sysctl-orig"
+
 apply_rules() {
     local action="$1"  # -A or -D
     local ignore_errors="${2:-false}"
@@ -87,6 +89,12 @@ apply_rules() {
 }
 
 setup() {
+    # Save original sysctl values
+    {
+        echo "net.ipv4.ip_forward=$(sysctl -n net.ipv4.ip_forward)"
+        echo "net.ipv4.conf.all.send_redirects=$(sysctl -n net.ipv4.conf.all.send_redirects)"
+    } > "$SYSCTL_ORIG_FILE"
+
     # Enable forwarding
     sysctl -qw net.ipv4.ip_forward=1
     sysctl -qw net.ipv4.conf.all.send_redirects=0
@@ -96,15 +104,16 @@ setup() {
 }
 
 cleanup() {
-    # Delete rules (ignore errors - rules may not exist)
+    # Delete rules individually (ignore errors - rules may not exist)
     apply_rules -D true
 
-    # Flush tables as safety net (in case rules were partially added
-    # or script was interrupted)
-    iptables -t mangle -F 2>/dev/null || true
-    iptables -t nat -F 2>/dev/null || true
-    iptables -t filter -F 2>/dev/null || true
-    ip6tables -t filter -F 2>/dev/null || true
+    # Restore original sysctl values
+    if [ -f "$SYSCTL_ORIG_FILE" ]; then
+        while IFS= read -r line; do
+            sysctl -qw "$line" 2>/dev/null || true
+        done < "$SYSCTL_ORIG_FILE"
+        rm -f "$SYSCTL_ORIG_FILE"
+    fi
 }
 
 case "${1:-}" in
