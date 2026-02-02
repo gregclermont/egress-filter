@@ -5,12 +5,22 @@ on:
     # Run weekly on Monday at 9am UTC
     - cron: '0 9 * * 1'
   workflow_dispatch: # Allow manual trigger
+  push:
+    branches: [feat/verified-deps]  # TODO: remove after testing
 
 jobs:
   check-deps:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generate manifest
+        run: |
+          echo "=== Generated manifest ==="
+          python3 src/setup/generate-deps.py | tee /tmp/generated-deps.sha256
+          echo ""
+          echo "=== Current manifest ==="
+          cat src/setup/deps.sha256
 
       - name: Check for dependency updates
         id: check
