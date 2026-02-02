@@ -13,6 +13,28 @@ SCRIPT_DIR="$(dirname "$0")"
 # Use EGRESS_FILTER_ROOT if set (from action), otherwise calculate from script location
 REPO_ROOT="${EGRESS_FILTER_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
+# Download files and verify SHA256 hashes
+# Usage: fetch_verified <manifest_file> <output_dir>
+fetch_verified() {
+    local manifest="$1" output_dir="$2"
+    local urls=()
+
+    while read -r hash url; do
+        [[ "$hash" =~ ^#.*$ || -z "$hash" ]] && continue
+        local filename="${url##*/}"
+        urls+=(-o "$output_dir/$filename" "$url")
+    done < "$manifest"
+
+    curl -fsSL --parallel --parallel-immediate "${urls[@]}"
+
+    # Verify checksums
+    while read -r hash url; do
+        [[ "$hash" =~ ^#.*$ || -z "$hash" ]] && continue
+        local filename="${url##*/}"
+        echo "$hash  $output_dir/$filename"
+    done < "$manifest" | sha256sum -c --quiet
+}
+
 install_deps() {
     # Check Ubuntu version
     source /etc/os-release
@@ -21,17 +43,15 @@ install_deps() {
         exit 1
     fi
 
-    # Install system dependencies (direct .deb download is faster than apt)
-    local base=http://archive.ubuntu.com/ubuntu/pool
-    curl -fsSL --parallel --parallel-immediate \
-        -o /tmp/libnfnetlink-dev.deb "$base/main/libn/libnfnetlink/libnfnetlink-dev_1.0.2-2build1_amd64.deb" \
-        -o /tmp/libnetfilter-queue1.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-4build1_amd64.deb" \
-        -o /tmp/libnetfilter-queue-dev.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb"
-    dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb >/dev/null
+    # Download and verify all dependencies
+    fetch_verified "$SCRIPT_DIR/deps.sha256" /tmp
 
-    # Install uv if not present (uv installs to ~/.local/bin which is /root/.local/bin when running as root)
+    # Install system packages
+    dpkg -i /tmp/*.deb >/dev/null
+
+    # Install uv if not present
     if ! command -v uv &>/dev/null; then
-        curl -LsSf https://astral.sh/uv/install.sh | UV_PRINT_QUIET=1 sh
+        UV_PRINT_QUIET=1 sh /tmp/install.sh
         export PATH="/root/.local/bin:$PATH"
     fi
 
