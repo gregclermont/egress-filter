@@ -1,0 +1,116 @@
+name: Check dependency updates
+
+# Disable default permissions - job declares what it needs
+permissions: {}
+
+on:
+  schedule:
+    # Run weekly on Monday at 9am UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+# Prevent concurrent runs - only latest matters for dependency checks
+concurrency:
+  group: check-deps
+  cancel-in-progress: true
+
+jobs:
+  check-deps:
+    name: Check for dependency updates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Push to auto/update-deps branch
+      pull-requests: write # Create/update pull request
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Generate manifest and check for changes
+        id: check
+        run: |
+          python3 src/setup/generate-deps.py > src/setup/deps.sha256
+          if ! git diff --quiet src/setup/deps.sha256; then
+            echo "updates_available=true" >> "$GITHUB_OUTPUT"
+            echo "Manifest has changed:"
+            git diff src/setup/deps.sha256
+          else
+            echo "Manifest is up to date"
+          fi
+
+      - name: Create or update PR
+        if: steps.check.outputs.updates_available == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            const branch = 'auto/update-deps';
+            const title = 'Update dependency checksums';
+            const baseBranch = 'main';
+
+            // Configure git
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+
+            // Create/reset branch from current HEAD (assumes running on main)
+            execSync(`git checkout -B ${branch}`);
+
+            // Stage manifest
+            execSync('git add src/setup/deps.sha256');
+
+            // Read manifest for PR body
+            const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
+
+            // Check if there are changes to commit
+            try {
+              execSync('git diff --cached --exit-code', { stdio: 'pipe' });
+              console.log('No changes to commit');
+              return;
+            } catch {}
+
+            execSync('git commit -m "chore: update dependency checksums"');
+            execSync(`git push -f origin ${branch}`);
+
+            // Check for existing PR
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open'
+            });
+
+            const body = `This PR updates the dependency checksum manifest.
+
+            **Review carefully** - changes could indicate:
+            - New versions of dependencies (check changelogs)
+            - Content changes at pinned URLs (potential security concern)
+
+            <details>
+            <summary>Updated manifest</summary>
+
+            \`\`\`
+            ${manifest}
+            \`\`\`
+            </details>`;
+
+            if (prs.length > 0) {
+              // Update existing PR
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prs[0].number,
+                body: body
+              });
+              console.log(`Updated PR #${prs[0].number}`);
+            } else {
+              // Create new PR
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                head: branch,
+                base: baseBranch
+              });
+              console.log(`Created PR #${pr.number}`);
+            }

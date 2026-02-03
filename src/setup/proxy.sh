@@ -13,6 +13,28 @@ SCRIPT_DIR="$(dirname "$0")"
 # Use EGRESS_FILTER_ROOT if set (from action), otherwise calculate from script location
 REPO_ROOT="${EGRESS_FILTER_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
+# Download files and verify SHA256 hashes
+# Usage: fetch_verified <manifest_file> <output_dir>
+fetch_verified() {
+    local manifest="$1" output_dir="$2"
+    local urls=()
+
+    while read -r hash url; do
+        [[ "$hash" =~ ^#.*$ || -z "$hash" ]] && continue
+        local filename="${url##*/}"
+        urls+=(-o "$output_dir/$filename" "$url")
+    done < "$manifest"
+
+    curl -fsSL --parallel --parallel-immediate "${urls[@]}"
+
+    # Verify checksums
+    while read -r hash url; do
+        [[ "$hash" =~ ^#.*$ || -z "$hash" ]] && continue
+        local filename="${url##*/}"
+        echo "$hash  $output_dir/$filename"
+    done < "$manifest" | sha256sum -c --quiet
+}
+
 install_deps() {
     # Check Ubuntu version
     source /etc/os-release
@@ -21,17 +43,15 @@ install_deps() {
         exit 1
     fi
 
-    # Install system dependencies (direct .deb download is faster than apt)
-    local base=http://archive.ubuntu.com/ubuntu/pool
-    curl -fsSL --parallel --parallel-immediate \
-        -o /tmp/libnfnetlink-dev.deb "$base/main/libn/libnfnetlink/libnfnetlink-dev_1.0.2-2build1_amd64.deb" \
-        -o /tmp/libnetfilter-queue1.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-4build1_amd64.deb" \
-        -o /tmp/libnetfilter-queue-dev.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb"
-    dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb >/dev/null
+    # Download and verify all dependencies
+    fetch_verified "$SCRIPT_DIR/deps.sha256" /tmp
 
-    # Install uv if not present (uv installs to ~/.local/bin which is /root/.local/bin when running as root)
+    # Install system packages
+    dpkg -i /tmp/*.deb >/dev/null
+
+    # Install uv if not present
     if ! command -v uv &>/dev/null; then
-        curl -LsSf https://astral.sh/uv/install.sh | UV_PRINT_QUIET=1 sh
+        UV_PRINT_QUIET=1 sh /tmp/install.sh
         export PATH="/root/.local/bin:$PATH"
     fi
 
@@ -43,6 +63,7 @@ install_deps() {
 PIDFILE="/tmp/proxy.pid"
 SUPERVISOR_PIDFILE="/tmp/supervisor.pid"
 SCOPE_NAME="egress-filter-proxy"
+USERNS_ORIG_FILE="/run/egress-filter-userns-orig"
 
 start_proxy() {
     cd "$REPO_ROOT"
@@ -63,6 +84,7 @@ start_proxy() {
     # Combined with disabling sudo (planned), this blocks ALL netns creation:
     # - Unprivileged: blocked by this sysctl
     # - Privileged: requires sudo which will be disabled
+    sysctl -n kernel.unprivileged_userns_clone > "$USERNS_ORIG_FILE"
     sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
 
     # Start supervisor in a systemd scope
@@ -133,8 +155,11 @@ stop_proxy() {
     # which breaks runner communication with GitHub (jobs appear stuck).
     "$SCRIPT_DIR"/iptables.sh cleanup 2>/dev/null || true
 
-    # Restore unprivileged user namespace creation (cleanup)
-    sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
+    # Restore unprivileged user namespace creation to original value
+    if [ -f "$USERNS_ORIG_FILE" ]; then
+        sysctl -w "kernel.unprivileged_userns_clone=$(cat "$USERNS_ORIG_FILE")" >/dev/null 2>&1 || true
+        rm -f "$USERNS_ORIG_FILE"
+    fi
 
     # Signal supervisor to shut down (it forwards SIGTERM to proxy)
     if [ -f "$SUPERVISOR_PIDFILE" ]; then
