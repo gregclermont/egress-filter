@@ -8,8 +8,6 @@ on:
     # Run weekly on Monday at 9am UTC
     - cron: '0 9 * * 1'
   workflow_dispatch: # Allow manual trigger
-  push:
-    branches: [feat/verified-deps]  # TODO: remove after testing
 
 # Prevent concurrent runs - only latest matters for dependency checks
 concurrency:
