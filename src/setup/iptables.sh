@@ -42,9 +42,7 @@ apply_rules() {
     rule mangle OUTPUT -p udp -m mark --mark 4/4 -j CONNMARK --save-mark
     rule mangle OUTPUT -p udp -m mark --mark 4/4 -j RETURN
     # Exclude systemd-resolve (system DNS stub) and proxy cgroup
-    if id -u systemd-resolve &>/dev/null; then
-        rule mangle OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
-    fi
+    rule mangle OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
     rule mangle OUTPUT -p udp -m cgroup --path "$proxy_cgroup" -j RETURN
     rule mangle OUTPUT -p udp -j NFQUEUE --queue-num 1
 
@@ -59,18 +57,16 @@ apply_rules() {
     # Docker container traffic (bridge mode)
     # Intercept traffic from docker0 for PID tracking and proxying
     # REDIRECT works in PREROUTING because packet is already at host
-    if ip link show docker0 &>/dev/null; then
-        # TCP from containers: redirect to proxy
-        rule nat PREROUTING -i docker0 -p tcp -j REDIRECT --to-port 8080
-        # UDP from containers: fast-path check, handle marked packets, then nfqueue
-        rule mangle PREROUTING -i docker0 -p udp -m connmark --mark 4/4 -j RETURN
-        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 2 -j RETURN
-        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j CONNMARK --save-mark
-        rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j RETURN
-        rule mangle PREROUTING -i docker0 -p udp -j NFQUEUE --queue-num 1
-        # DNS from containers: redirect marked packets to mitmproxy
-        rule nat PREROUTING -i docker0 -p udp -m mark --mark 2/2 -j REDIRECT --to-port 8053
-    fi
+    # TCP from containers: redirect to proxy
+    rule nat PREROUTING -i docker0 -p tcp -j REDIRECT --to-port 8080
+    # UDP from containers: fast-path check, handle marked packets, then nfqueue
+    rule mangle PREROUTING -i docker0 -p udp -m connmark --mark 4/4 -j RETURN
+    rule mangle PREROUTING -i docker0 -p udp -m mark --mark 2 -j RETURN
+    rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j CONNMARK --save-mark
+    rule mangle PREROUTING -i docker0 -p udp -m mark --mark 4/4 -j RETURN
+    rule mangle PREROUTING -i docker0 -p udp -j NFQUEUE --queue-num 1
+    # DNS from containers: redirect marked packets to mitmproxy
+    rule nat PREROUTING -i docker0 -p udp -m mark --mark 2/2 -j REDIRECT --to-port 8053
 
     # Note: IPv6 blocking for containers is handled by BPF cgroup hooks (cgroup/connect6,
     # cgroup/sendmsg6). Cgroups are orthogonal to network namespaces, so the hooks fire
