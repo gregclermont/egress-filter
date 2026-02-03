@@ -65,4 +65,14 @@ def validate_runner_environment() -> list[str]:
             f"Runner.Worker (idx {worker_idx}) should be ancestor of node24 (idx {node24_idx})"
         )
 
+    # Check cgroup of Runner.Worker (proxy itself runs in its own scope)
+    if worker_idx >= 0:
+        from proxy.proc import get_cgroup_path
+        worker_pid = ancestry[worker_idx][0]
+        worker_cgroup = get_cgroup_path(worker_pid)
+        if worker_cgroup != RUNNER_CGROUP:
+            errors.append(
+                f"Runner.Worker cgroup: got {worker_cgroup}, expected {RUNNER_CGROUP}"
+            )
+
     return errors
