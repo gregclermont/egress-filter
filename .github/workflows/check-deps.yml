@@ -28,16 +28,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check for dependency updates
+      - name: Generate manifest and check for changes
         id: check
         run: |
-          if ! python3 src/setup/generate-deps.py --check src/setup/deps.sha256; then
+          python3 src/setup/generate-deps.py > src/setup/deps.sha256
+          if ! git diff --quiet src/setup/deps.sha256; then
             echo "updates_available=true" >> "$GITHUB_OUTPUT"
+            echo "Manifest has changed:"
+            git diff src/setup/deps.sha256
+          else
+            echo "Manifest is up to date"
           fi
-
-      - name: Generate updated manifest
-        if: steps.check.outputs.updates_available == 'true'
-        run: python3 src/setup/generate-deps.py > src/setup/deps.sha256
 
       - name: Create or update PR
         if: steps.check.outputs.updates_available == 'true'
