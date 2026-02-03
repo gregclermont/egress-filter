@@ -38,14 +38,28 @@ def get_apt_package_info(package: str) -> tuple[str, str]:
         text=True,
         check=True,
     )
-    # Output format: 'URL' filename size SHA256:hash
-    match = re.match(r"'([^']+)'\s+\S+\s+\d+\s+SHA256:(\w+)", result.stdout.strip())
+    # Output format: 'URL' filename size HASH_TYPE:hash
+    # URL can be direct (http://...) or mirror+file:/etc/apt/apt-mirrors.txt/pool/...
+    line = result.stdout.strip()
+    match = re.match(r"'([^']+)'\s+(\S+)\s+\d+\s+(\w+):(\w+)", line)
     if not match:
-        raise RuntimeError(f"Failed to parse apt output for {package}: {result.stdout}")
+        raise RuntimeError(f"Failed to parse apt output for {package}: {line}")
 
-    url, sha256 = match.groups()
-    # Convert http to https
-    url = url.replace("http://", "https://")
+    raw_url, filename, hash_type, hash_value = match.groups()
+
+    # Handle mirror+file: URLs (used on GitHub runners)
+    if raw_url.startswith("mirror+file:"):
+        # Extract pool path: mirror+file:/etc/apt/apt-mirrors.txt/pool/main/...
+        pool_match = re.search(r"(/pool/.+)$", raw_url)
+        if not pool_match:
+            raise RuntimeError(f"Cannot extract pool path from {raw_url}")
+        pool_path = pool_match.group(1)
+        url = f"https://archive.ubuntu.com/ubuntu{pool_path}"
+    else:
+        url = raw_url.replace("http://", "https://")
+
+    # Always compute SHA256 ourselves (apt may provide SHA512)
+    sha256 = fetch_and_hash(url)
     return url, sha256
 
 
