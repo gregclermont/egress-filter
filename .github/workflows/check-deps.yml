@@ -65,14 +65,17 @@ jobs:
             const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
             execSync('git checkout -- src/setup/deps.sha256');
 
+            // Fetch main for reset base
+            execSync(`git fetch origin ${baseBranch}`);
+
             if (branchExists) {
               // Update existing branch
               execSync(`git fetch origin ${branch}`);
               execSync(`git checkout ${branch}`);
               execSync(`git reset --hard origin/${baseBranch}`);
             } else {
-              // Create new branch
-              execSync(`git checkout -b ${branch}`);
+              // Create new branch from main
+              execSync(`git checkout -b ${branch} origin/${baseBranch}`);
             }
 
             // Restore generated manifest
