@@ -98,21 +98,26 @@ async function shutdownProxy() {
 const CONNECTION_LOG_PATH = '/tmp/connections.jsonl';
 
 /**
- * Check if any connections were blocked (policy: 'deny') in the log.
+ * Check if any connections were blocked (policy: 'deny') or had errors
+ * (e.g., TLS failures) in the log.
  */
-function hasBlockedConnections() {
-  if (!fs.existsSync(CONNECTION_LOG_PATH)) return false;
+function hasBlockedOrErrorConnections() {
+  if (!fs.existsSync(CONNECTION_LOG_PATH)) return { blocked: false, errors: false };
   const content = fs.readFileSync(CONNECTION_LOG_PATH, 'utf8');
-  return content.split('\n')
-    .filter(line => line.trim())
-    .some(line => {
-      try {
-        const entry = JSON.parse(line);
-        return entry.policy === 'deny';
-      } catch {
-        return false;
-      }
-    });
+  let blocked = false;
+  let errors = false;
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.policy === 'deny') blocked = true;
+      if (entry.error) errors = true;
+      if (blocked && errors) break; // No need to continue
+    } catch {
+      // Ignore malformed lines
+    }
+  }
+  return { blocked, errors };
 }
 
 async function uploadConnectionLog() {
@@ -129,16 +134,16 @@ async function uploadConnectionLog() {
     return;
   }
 
-  // Default (empty) - conditional upload based on audit mode or blocks
+  // Default (empty) - conditional upload based on audit mode, blocks, or errors
   if (uploadLog !== 'true') {
     const auditMode = core.getInput('audit') === 'true';
-    const hasBlocks = hasBlockedConnections();
+    const { blocked, errors } = hasBlockedOrErrorConnections();
 
-    if (!auditMode && !hasBlocks) {
-      core.info('Skipping connection log upload (no audit mode, no blocks)');
+    if (!auditMode && !blocked && !errors) {
+      core.info('Skipping connection log upload (no audit mode, no blocks, no errors)');
       return;
     }
-    core.info(`Uploading connection log (audit=${auditMode}, blocks=${hasBlocks})`);
+    core.info(`Uploading connection log (audit=${auditMode}, blocks=${blocked}, errors=${errors})`);
   } else {
     core.info('Uploading connection log (upload-log=true)');
   }
