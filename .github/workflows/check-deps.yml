@@ -61,6 +61,10 @@ jobs:
               branchExists = true;
             } catch {}
 
+            // Save generated manifest before branch operations
+            const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
+            execSync('git checkout -- src/setup/deps.sha256');
+
             if (branchExists) {
               // Update existing branch
               execSync(`git fetch origin ${branch}`);
@@ -70,6 +74,9 @@ jobs:
               // Create new branch
               execSync(`git checkout -b ${branch}`);
             }
+
+            // Restore generated manifest
+            fs.writeFileSync('src/setup/deps.sha256', manifest);
 
             // Stage and commit
             execSync('git add src/setup/deps.sha256');
@@ -91,9 +98,6 @@ jobs:
               head: `${context.repo.owner}:${branch}`,
               state: 'open'
             });
-
-            // Read the new manifest for the PR body
-            const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
 
             const body = `This PR updates the dependency checksum manifest.
 
