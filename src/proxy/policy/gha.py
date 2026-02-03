@@ -44,26 +44,15 @@ def validate_runner_environment() -> list[str]:
     ancestry = get_process_ancestry(os.getpid(), max_depth=10)
     exe_paths = [exe for _, exe in ancestry]
 
-    # Expected positions (with tolerance for minor variations)
-    # node24 should be around index 4, Runner.Worker around index 5
+    # Expected positions (strict - no tolerance)
     node24_idx = exe_paths.index(NODE24_EXE) if NODE24_EXE in exe_paths else -1
     worker_idx = exe_paths.index(RUNNER_WORKER_EXE) if RUNNER_WORKER_EXE in exe_paths else -1
 
-    if node24_idx == -1:
-        errors.append(f"node24 ({NODE24_EXE}) not found in process ancestry")
-    elif node24_idx not in (3, 4, 5):
-        errors.append(f"node24 at unexpected position {node24_idx}, expected 3-5")
+    if node24_idx != 4:
+        errors.append(f"node24 at index {node24_idx}, expected 4")
 
-    if worker_idx == -1:
-        errors.append(f"Runner.Worker ({RUNNER_WORKER_EXE}) not found in process ancestry")
-    elif worker_idx not in (4, 5, 6):
-        errors.append(f"Runner.Worker at unexpected position {worker_idx}, expected 4-6")
-
-    # Runner.Worker must be an ancestor of node24 (higher index = further up tree)
-    if node24_idx >= 0 and worker_idx >= 0 and worker_idx <= node24_idx:
-        errors.append(
-            f"Runner.Worker (idx {worker_idx}) should be ancestor of node24 (idx {node24_idx})"
-        )
+    if worker_idx != 5:
+        errors.append(f"Runner.Worker at index {worker_idx}, expected 5")
 
     # Check cgroup of Runner.Worker (proxy itself runs in its own scope)
     if worker_idx >= 0:

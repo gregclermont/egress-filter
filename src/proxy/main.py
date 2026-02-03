@@ -125,13 +125,6 @@ async def async_main():
     proxy_logging.logger.info(f"PID: {os.getpid()}")
     proxy_logging.logger.info("=" * 50)
 
-    # Debug: print process ancestry
-    from proxy.proc import get_process_ancestry
-    ancestry = get_process_ancestry(os.getpid())
-    proxy_logging.logger.info("Process ancestry:")
-    for i, (pid, exe) in enumerate(ancestry):
-        proxy_logging.logger.info(f"  [{i}] PID {pid}: {exe}")
-
     # Validate runner environment before proceeding
     env_errors = validate_runner_environment()
     if env_errors:
