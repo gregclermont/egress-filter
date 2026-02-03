@@ -6,5 +6,4 @@ d588b5127609fe5bf98f0765d3a75a5eaf61a2d79c568d8b1ddf9fc52271db2b  https://archiv
 565072d702f7c4ceca06832d2d7dcbd0e6c29aa5ee9349b92ea49460f1d2accc  https://archive.ubuntu.com/ubuntu/pool/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb
 
 # Installers
-# Intentionally outdated to test check-deps workflow
-0000000000000000000000000000000000000000000000000000000000000000  https://astral.sh/uv/0.9.0/install.sh
+2206437df06d0fff515d0e95193cfc2f4c2719d4c82f569d70057bbf5c4caba7  https://astral.sh/uv/0.9.28/install.sh
