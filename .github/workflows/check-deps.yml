@@ -9,21 +9,14 @@ on:
     branches: [feat/verified-deps]  # TODO: remove after testing
 
 permissions:
-  issues: write
+  contents: write
+  pull-requests: write
 
 jobs:
   check-deps:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Generate manifest
-        run: |
-          echo "=== Generated manifest ==="
-          python3 src/setup/generate-deps.py | tee /tmp/generated-deps.sha256
-          echo ""
-          echo "=== Current manifest ==="
-          cat src/setup/deps.sha256
 
       - name: Check for dependency updates
         id: check
@@ -32,41 +25,99 @@ jobs:
             echo "updates_available=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create issue if updates available
+      - name: Generate updated manifest
+        if: steps.check.outputs.updates_available == 'true'
+        run: python3 src/setup/generate-deps.py > src/setup/deps.sha256
+
+      - name: Create or update PR
         if: steps.check.outputs.updates_available == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const title = 'Dependency updates available';
+            const fs = require('fs');
+            const { execSync } = require('child_process');
 
-            // Check if issue already exists
-            const issues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'dependencies'
-            });
+            const branch = 'auto/update-deps';
+            const title = 'Update dependency checksums';
+            const baseBranch = 'main';
 
-            if (issues.data.some(issue => issue.title === title)) {
-              console.log('Issue already exists, skipping');
-              return;
+            // Configure git
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+
+            // Check if branch exists on remote
+            let branchExists = false;
+            try {
+              execSync(`git ls-remote --exit-code --heads origin ${branch}`, { stdio: 'pipe' });
+              branchExists = true;
+            } catch {}
+
+            if (branchExists) {
+              // Update existing branch
+              execSync(`git fetch origin ${branch}`);
+              execSync(`git checkout ${branch}`);
+              execSync(`git reset --hard origin/${baseBranch}`);
+            } else {
+              // Create new branch
+              execSync(`git checkout -b ${branch}`);
             }
 
-            await github.rest.issues.create({
+            // Stage and commit
+            execSync('git add src/setup/deps.sha256');
+
+            // Check if there are changes to commit
+            try {
+              execSync('git diff --cached --exit-code', { stdio: 'pipe' });
+              console.log('No changes to commit');
+              return;
+            } catch {}
+
+            execSync('git commit -m "chore: update dependency checksums"');
+            execSync(`git push -f origin ${branch}`);
+
+            // Check for existing PR
+            const { data: prs } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: title,
-              body: `The dependency manifest \`src/setup/deps.sha256\` is out of date.
-
-            This could mean:
-            - A new version of a dependency is available
-            - The content at a pinned URL has changed (review carefully for security)
-
-            To update, run on an Ubuntu runner:
-            \`\`\`bash
-            python3 src/setup/generate-deps.py > src/setup/deps.sha256
-            \`\`\`
-
-            Then review the diff and commit.`,
-              labels: ['dependencies']
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open'
             });
+
+            // Read the new manifest for the PR body
+            const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
+
+            const body = `This PR updates the dependency checksum manifest.
+
+            **Review carefully** - changes could indicate:
+            - New versions of dependencies (check changelogs)
+            - Content changes at pinned URLs (potential security concern)
+
+            <details>
+            <summary>Updated manifest</summary>
+
+            \`\`\`
+            ${manifest}
+            \`\`\`
+            </details>`;
+
+            if (prs.length > 0) {
+              // Update existing PR
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prs[0].number,
+                body: body
+              });
+              console.log(`Updated PR #${prs[0].number}`);
+            } else {
+              // Create new PR
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                head: branch,
+                base: baseBranch
+              });
+              console.log(`Created PR #${pr.number}`);
+            }
