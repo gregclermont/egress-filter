@@ -23,7 +23,7 @@ from .bpf import BPFState
 from .control import ControlServer
 from .sudo import disable_sudo, enable_sudo
 from .handlers import MitmproxyAddon, NfqueueHandler
-from .policy import PolicyEnforcer
+from .policy import PolicyEnforcer, validate_policy
 from .policy.gha import validate_runner_environment
 from . import logging as proxy_logging
 
@@ -190,6 +190,21 @@ async def async_main():
         proxy_logging.logger.info(f"Loaded policy from {policy_file} ({len(policy_text)} bytes)")
     else:
         proxy_logging.logger.info("No policy file, using empty policy")
+
+    # Validate policy syntax
+    policy_errors = validate_policy(policy_text)
+    if policy_errors:
+        for line_num, line, error in policy_errors:
+            proxy_logging.logger.error(f"Invalid policy line {line_num}: {line}")
+        # Emit GitHub Actions annotation
+        print(f"::warning::Policy has {len(policy_errors)} invalid line(s) that will be skipped")
+        if not audit_mode:
+            # In enforcement mode, fail on invalid policy to prevent surprises
+            proxy_logging.logger.error(
+                "Refusing to start with invalid policy in enforcement mode. "
+                "Fix the policy or use audit-mode: true to continue with warnings."
+            )
+            sys.exit(1)
 
     enforcer = PolicyEnforcer.for_runner(
         policy_text,
