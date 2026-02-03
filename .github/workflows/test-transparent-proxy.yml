@@ -73,13 +73,3 @@ jobs:
           echo ""
           echo "=== All UDP conntrack entries (sample) ==="
           sudo conntrack -L -p udp 2>/dev/null | head -10 || true
-
-      - name: Show BPF map dump
-        if: always()
-        run: |
-          # Stop proxy gracefully to trigger map dump
-          sudo ${{ env.EGRESS_FILTER_ROOT || '/home/runner/work/_actions/gregclermont/egress-filter/test' }}/src/setup/proxy.sh stop || true
-          cat /tmp/bpf_map_dump.txt || echo "No BPF map dump found"
-          echo ""
-          echo "=== Proxy shutdown log ==="
-          tail -5 /tmp/proxy.log 2>/dev/null || true
