@@ -7,7 +7,6 @@ of any specific action. They're used for:
 """
 
 import os
-from pathlib import Path
 
 # Cgroup path for processes in the runner's process tree
 # Used to distinguish runner processes from Docker containers, Azure agent, etc.
@@ -22,43 +21,17 @@ RUNNER_WORKER_EXE = "/home/runner/actions-runner/cached/bin/Runner.Worker"
 NODE24_EXE = "/home/runner/actions-runner/cached/externals/node24/bin/node"
 
 
-def get_process_ancestry() -> list[tuple[int, str]]:
-    """Walk up the process tree and return [(pid, exe_path), ...].
-
-    Starts with current process and walks up to init (PID 1).
-    """
-    ancestry = []
-    pid = os.getpid()
-
-    while pid > 0:
-        try:
-            exe = os.readlink(f"/proc/{pid}/exe")
-            ancestry.append((pid, exe))
-
-            # Get parent PID from /proc/PID/stat
-            stat = Path(f"/proc/{pid}/stat").read_text()
-            # Format: "pid (comm) state ppid ..." - ppid is 4th field
-            # Handle comm containing spaces/parens by finding last ')'
-            ppid_start = stat.rfind(")") + 2
-            ppid = int(stat[ppid_start:].split()[1])
-
-            if ppid == pid:  # Reached init
-                break
-            pid = ppid
-        except (OSError, FileNotFoundError, ValueError):
-            break
-
-    return ancestry
-
-
 def validate_runner_environment() -> list[str]:
     """Validate that we're running under the expected GitHub runner process tree.
 
     Checks process ancestry for Runner.Worker and node24, plus cgroup.
     Returns list of error messages (empty if all valid).
     """
+    # Lazy import to avoid circular dependency (proc.py imports from gha.py)
+    from proxy.proc import get_cgroup_path, get_process_ancestry
+
     errors = []
-    ancestry = get_process_ancestry()
+    ancestry = get_process_ancestry(os.getpid())
     exe_paths = [exe for _, exe in ancestry]
 
     # Check for Runner.Worker in ancestry
@@ -72,19 +45,10 @@ def validate_runner_environment() -> list[str]:
         errors.append(f"Node.js ({NODE24_EXE}) not found in process ancestry")
 
     # Check cgroup
-    try:
-        cgroup_content = Path("/proc/self/cgroup").read_text()
-        # cgroup v2 format: "0::/path" - extract the path
-        for line in cgroup_content.strip().splitlines():
-            parts = line.split(":", 2)
-            if len(parts) == 3:
-                cgroup_path = parts[2]
-                if cgroup_path != RUNNER_CGROUP:
-                    errors.append(
-                        f"Unexpected cgroup: got {cgroup_path}, expected {RUNNER_CGROUP}"
-                    )
-                break
-    except (OSError, FileNotFoundError) as e:
-        errors.append(f"Could not read cgroup: {e}")
+    cgroup_path = get_cgroup_path(os.getpid())
+    if cgroup_path is None:
+        errors.append("Could not read cgroup")
+    elif cgroup_path != RUNNER_CGROUP:
+        errors.append(f"Unexpected cgroup: got {cgroup_path}, expected {RUNNER_CGROUP}")
 
     return errors
