@@ -5,15 +5,12 @@ Resolves latest versions for the current platform and computes SHA256 hashes.
 Run on the target platform (e.g., Ubuntu 24.04 GitHub runner) to get correct versions.
 
 Usage:
-    ./generate-deps.py > deps.sha256
-    ./generate-deps.py --check deps.sha256  # exits non-zero if manifest would change
+    python3 generate-deps.py > deps.sha256
 """
 
-import argparse
 import hashlib
 import re
 import subprocess
-import sys
 import urllib.request
 
 # Packages to install via apt
@@ -116,36 +113,9 @@ def format_manifest(entries: list[tuple[str, str, str]]) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--check",
-        metavar="FILE",
-        help="Check if FILE matches what would be generated (exit 1 if different)",
-    )
-    args = parser.parse_args()
-
     entries = generate_manifest()
     manifest = format_manifest(entries)
-
-    if args.check:
-        with open(args.check) as f:
-            existing = f.read()
-        if existing != manifest:
-            print(f"Manifest {args.check} is out of date.", file=sys.stderr)
-            print("Run ./generate-deps.py > deps.sha256 to update.", file=sys.stderr)
-            print("\nDiff:", file=sys.stderr)
-            import difflib
-            diff = difflib.unified_diff(
-                existing.splitlines(keepends=True),
-                manifest.splitlines(keepends=True),
-                fromfile=args.check,
-                tofile="(generated)",
-            )
-            sys.stderr.writelines(diff)
-            sys.exit(1)
-        print(f"Manifest {args.check} is up to date.")
-    else:
-        print(manifest, end="")
+    print(manifest, end="")
 
 
 if __name__ == "__main__":
