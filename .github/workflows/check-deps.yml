@@ -54,35 +54,14 @@ jobs:
             execSync('git config user.name "github-actions[bot]"');
             execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
 
-            // Check if branch exists on remote
-            let branchExists = false;
-            try {
-              execSync(`git ls-remote --exit-code --heads origin ${branch}`, { stdio: 'pipe' });
-              branchExists = true;
-            } catch {}
+            // Create/reset branch from current HEAD (assumes running on main)
+            execSync(`git checkout -B ${branch}`);
 
-            // Save generated manifest before branch operations
-            const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
-            execSync('git checkout -- src/setup/deps.sha256');
-
-            // Fetch main for reset base
-            execSync(`git fetch origin ${baseBranch}`);
-
-            if (branchExists) {
-              // Update existing branch
-              execSync(`git fetch origin ${branch}`);
-              execSync(`git checkout ${branch}`);
-              execSync(`git reset --hard origin/${baseBranch}`);
-            } else {
-              // Create new branch from main
-              execSync(`git checkout -b ${branch} origin/${baseBranch}`);
-            }
-
-            // Restore generated manifest
-            fs.writeFileSync('src/setup/deps.sha256', manifest);
-
-            // Stage and commit
+            // Stage manifest
             execSync('git add src/setup/deps.sha256');
+
+            // Read manifest for PR body
+            const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
 
             // Check if there are changes to commit
             try {
