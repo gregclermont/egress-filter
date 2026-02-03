@@ -53,9 +53,10 @@ def get_apt_package_info(package: str) -> tuple[str, str]:
             raise RuntimeError(f"Cannot parse mirror+file URL: {raw_url}")
         mirrors_file, pool_path = match.groups()
 
-        # Read base URL from mirrors file
+        # Read base URL from mirrors file (first line, before tab/priority)
         with open(mirrors_file) as f:
-            base_url = f.read().strip().rstrip("/")
+            first_line = f.readline().strip()
+        base_url = first_line.split("\t")[0].rstrip("/")
         url = f"{base_url}{pool_path}"
     else:
         url = raw_url.replace("http://", "https://")
