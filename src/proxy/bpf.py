@@ -67,33 +67,9 @@ class BPFState:
 
         proxy_logging.logger.info("BPF loaded and attached")
 
-    def dump_map(self, path: str = "/tmp/bpf_map_dump.txt"):
-        """Dump BPF map contents for debugging."""
-        if not self.map_v4:
-            return
-        try:
-            with open(path, "w") as f:
-                f.write("=== BPF Map Contents (conn_to_pid_v4) ===\n")
-                f.write(f"{'DST_IP':<16} {'SRC_PORT':<10} {'DST_PORT':<10} {'PROTO':<6} {'PID':<10}\n")
-                f.write("-" * 60 + "\n")
-                count = 0
-                for key, pid in self.map_v4.items():
-                    dst_ip = ".".join(str((key.dst_ip >> (8 * i)) & 0xFF) for i in range(4))
-                    proto = "TCP" if key.protocol == 6 else "UDP" if key.protocol == 17 else str(key.protocol)
-                    f.write(f"{dst_ip:<16} {key.src_port:<10} {key.dst_port:<10} {proto:<6} {pid:<10}\n")
-                    count += 1
-                f.write("-" * 60 + "\n")
-                f.write(f"Total entries: {count}\n")
-
-            proxy_logging.logger.info(f"BPF map dumped to {path} ({count} entries)")
-        except Exception as e:
-            proxy_logging.logger.warning(f"Failed to dump BPF map: {e}")
-
     def cleanup(self):
         """Cleanup BPF resources."""
         proxy_logging.logger.info("Cleaning up BPF...")
-        # Dump map contents for debugging before cleanup
-        self.dump_map()
         for link in self.bpf_links:
             try:
                 link.destroy()
