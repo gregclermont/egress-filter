@@ -46,12 +46,17 @@ def get_apt_package_info(package: str) -> tuple[str, str]:
 
     # Handle mirror+file: URLs (used on GitHub runners)
     if raw_url.startswith("mirror+file:"):
-        # Extract pool path: mirror+file:/etc/apt/apt-mirrors.txt/pool/main/...
-        pool_match = re.search(r"(/pool/.+)$", raw_url)
-        if not pool_match:
-            raise RuntimeError(f"Cannot extract pool path from {raw_url}")
-        pool_path = pool_match.group(1)
-        url = f"https://archive.ubuntu.com/ubuntu{pool_path}"
+        # Format: mirror+file:/etc/apt/apt-mirrors.txt/pool/main/...
+        # Extract mirrors file path and pool path
+        match = re.match(r"mirror\+file:(/[^/]+(?:/[^/]+)*?)(/pool/.+)$", raw_url)
+        if not match:
+            raise RuntimeError(f"Cannot parse mirror+file URL: {raw_url}")
+        mirrors_file, pool_path = match.groups()
+
+        # Read base URL from mirrors file
+        with open(mirrors_file) as f:
+            base_url = f.read().strip().rstrip("/")
+        url = f"{base_url}{pool_path}"
     else:
         url = raw_url.replace("http://", "https://")
 
