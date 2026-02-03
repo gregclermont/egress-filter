@@ -67,6 +67,13 @@ SCOPE_NAME="egress-filter-proxy"
 start_proxy() {
     cd "$REPO_ROOT"
 
+    # Protect policy file from modification by workflow code.
+    # File is created by pre.js (runner user) but proxy runs as root.
+    # Without this, attacker could modify policy and crash proxy to reload it.
+    if [ -n "$EGRESS_POLICY_FILE" ] && [ -f "$EGRESS_POLICY_FILE" ]; then
+        chown root:root "$EGRESS_POLICY_FILE"
+    fi
+
     # Cleanup iptables on failure to avoid breaking runner communication
     trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
 
