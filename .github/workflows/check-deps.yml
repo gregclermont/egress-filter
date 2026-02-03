@@ -1,5 +1,8 @@
 name: Check dependency updates
 
+# Disable default permissions - job declares what it needs
+permissions: {}
+
 on:
   schedule:
     # Run weekly on Monday at 9am UTC
@@ -8,15 +11,22 @@ on:
   push:
     branches: [feat/verified-deps]  # TODO: remove after testing
 
-permissions:
-  contents: write
-  pull-requests: write
+# Prevent concurrent runs - only latest matters for dependency checks
+concurrency:
+  group: check-deps
+  cancel-in-progress: true
 
 jobs:
   check-deps:
+    name: Check for dependency updates
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Push to auto/update-deps branch
+      pull-requests: write # Create/update pull request
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Check for dependency updates
         id: check
@@ -31,7 +41,7 @@ jobs:
 
       - name: Create or update PR
         if: steps.check.outputs.updates_available == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const fs = require('fs');
@@ -44,6 +54,10 @@ jobs:
             // Configure git
             execSync('git config user.name "github-actions[bot]"');
             execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+
+            // Set up credentials for push
+            const token = process.env.GITHUB_TOKEN;
+            execSync(`git remote set-url origin https://x-access-token:${token}@github.com/${context.repo.owner}/${context.repo.repo}.git`);
 
             // Check if branch exists on remote
             let branchExists = false;
