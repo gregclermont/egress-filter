@@ -63,7 +63,6 @@ install_deps() {
 PIDFILE="/tmp/proxy.pid"
 SUPERVISOR_PIDFILE="/tmp/supervisor.pid"
 SCOPE_NAME="egress-filter-proxy"
-USERNS_ORIG_FILE="/run/egress-filter-userns-orig"
 
 start_proxy() {
     cd "$REPO_ROOT"
@@ -84,7 +83,6 @@ start_proxy() {
     # Combined with disabling sudo (planned), this blocks ALL netns creation:
     # - Unprivileged: blocked by this sysctl
     # - Privileged: requires sudo which will be disabled
-    sysctl -n kernel.unprivileged_userns_clone > "$USERNS_ORIG_FILE"
     sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
 
     # Start supervisor in a systemd scope
@@ -154,12 +152,6 @@ stop_proxy() {
     # Otherwise traffic is still redirected to port 8080 after proxy dies,
     # which breaks runner communication with GitHub (jobs appear stuck).
     "$SCRIPT_DIR"/iptables.sh cleanup 2>/dev/null || true
-
-    # Restore unprivileged user namespace creation to original value
-    if [ -f "$USERNS_ORIG_FILE" ]; then
-        sysctl -w "kernel.unprivileged_userns_clone=$(cat "$USERNS_ORIG_FILE")" >/dev/null 2>&1 || true
-        rm -f "$USERNS_ORIG_FILE"
-    fi
 
     # Signal supervisor to shut down (it forwards SIGTERM to proxy)
     if [ -f "$SUPERVISOR_PIDFILE" ]; then
