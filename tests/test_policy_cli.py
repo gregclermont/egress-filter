@@ -275,6 +275,74 @@ class TestAnalyzeConnections:
         assert len(results["allowed"]) == 1
         assert len(results["blocked"]) == 1
 
+    def test_analyze_error_events_separated(self):
+        """Error events (TLS failures) are separated from policy decisions."""
+        policy = """
+        github.com
+        """
+        connections = [
+            # Normal connection - allowed by policy
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "github.com",
+            },
+            # Normal connection - blocked by policy
+            {
+                "type": "https",
+                "dst_ip": "5.6.7.8",
+                "dst_port": 443,
+                "host": "evil.com",
+            },
+            # Error event - TLS failure (not evaluated against policy)
+            {
+                "type": "https",
+                "dst_ip": "9.10.11.12",
+                "dst_port": 443,
+                "host": "suspicious.com",
+                "error": "tls_client_rejected_ca",
+                "exe": "/usr/bin/suspicious",
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        assert len(results["blocked"]) == 1
+        assert len(results["errors"]) == 1
+
+        # Error event should have the error field preserved
+        error_conn, error_count, _ = results["errors"][0]
+        assert error_conn["error"] == "tls_client_rejected_ca"
+        assert error_conn["host"] == "suspicious.com"
+
+    def test_analyze_deduplicates_error_events(self):
+        """Duplicate error events are counted but not repeated."""
+        policy = """
+        github.com
+        """
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "suspicious.com",
+                "error": "tls_client_rejected_ca",
+            },
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "suspicious.com",
+                "error": "tls_client_rejected_ca",
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["errors"]) == 1
+        _, count, _ = results["errors"][0]
+        assert count == 2
+
 
 class TestConnectionFormatting:
     """Tests for connection formatting."""

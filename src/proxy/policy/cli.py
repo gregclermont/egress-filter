@@ -124,21 +124,29 @@ def analyze_connections(
         connections: List of connection dicts from the log.
         defaults: Optional DefaultContext for parsing (e.g., RUNNER_DEFAULTS).
 
-    Returns dict with 'allowed' and 'blocked' lists, each containing
-    (connection, count, rule_info) tuples.
+    Returns dict with 'allowed', 'blocked', and 'errors' lists, each containing
+    (connection, count, rule_info) tuples. Error events (e.g., TLS failures)
+    are separated since they represent connection failures, not policy decisions.
     """
     matcher = PolicyMatcher(policy_text, defaults=defaults)
     dns_cache = DNSIPCache()
     enforcer = PolicyEnforcer(matcher, dns_cache)
 
-    # Deduplicate and count connections
+    # Deduplicate and count connections, separating errors
     conn_counts: dict[tuple, dict] = {}  # key -> {conn, count}
+    error_counts: dict[tuple, dict] = {}  # key -> {conn, count}
 
     for conn in connections:
         key = connection_key(conn)
-        if key not in conn_counts:
-            conn_counts[key] = {"conn": conn, "count": 0}
-        conn_counts[key]["count"] += 1
+        if conn.get("error"):
+            # Error events go to separate bucket
+            if key not in error_counts:
+                error_counts[key] = {"conn": conn, "count": 0}
+            error_counts[key]["count"] += 1
+        else:
+            if key not in conn_counts:
+                conn_counts[key] = {"conn": conn, "count": 0}
+            conn_counts[key]["count"] += 1
 
     allowed = []
     blocked = []
@@ -159,7 +167,10 @@ def analyze_connections(
         else:
             blocked.append((conn, count, None))
 
-    return {"allowed": allowed, "blocked": blocked}
+    # Collect error events (not evaluated against policy)
+    errors = [(data["conn"], data["count"], None) for data in error_counts.values()]
+
+    return {"allowed": allowed, "blocked": blocked, "errors": errors}
 
 
 def print_analysis_results(results: dict, verbose: bool = False) -> int:
@@ -169,6 +180,7 @@ def print_analysis_results(results: dict, verbose: bool = False) -> int:
     """
     blocked = results["blocked"]
     allowed = results["allowed"]
+    errors = results.get("errors", [])
 
     # Always show blocked connections (this is what users care about most)
     if blocked:
@@ -203,11 +215,34 @@ def print_analysis_results(results: dict, verbose: bool = False) -> int:
             print(f"  {formatted}{count_str}  <- {rule_info}")
         print()
 
+    # Always show error events (connection failures, not policy decisions)
+    if errors:
+        print("FAILED connections (TLS/connection errors - not policy decisions):")
+        print("-" * 60)
+        for conn, count, _ in sorted(errors, key=lambda x: format_connection(x[0])):
+            formatted = format_connection(conn)
+            count_str = f" (x{count})" if count > 1 else ""
+            error = conn.get("error", "unknown")
+
+            # Show process info if available
+            exe = conn.get("exe", "")
+            step = conn.get("step", "")
+            context_parts = [f"error={error}"]
+            if exe:
+                context_parts.append(f"exe={exe}")
+            if step:
+                context_parts.append(f"step={step}")
+            context = f"  [{', '.join(context_parts)}]"
+
+            print(f"  {formatted}{count_str}{context}")
+        print()
+
     # Summary
-    total = len(blocked) + len(allowed)
-    print(
-        f"Summary: {len(allowed)} allowed, {len(blocked)} blocked (out of {total} unique connections)"
-    )
+    total = len(blocked) + len(allowed) + len(errors)
+    summary_parts = [f"{len(allowed)} allowed", f"{len(blocked)} blocked"]
+    if errors:
+        summary_parts.append(f"{len(errors)} failed")
+    print(f"Summary: {', '.join(summary_parts)} (out of {total} unique connections)")
 
     if blocked:
         print("\nTo allow blocked connections, add rules for them to your policy.")
