@@ -21,15 +21,6 @@ apply_rules() {
         fi
     }
 
-    rule6() {
-        local table="$1"; shift
-        if [[ "$ignore_errors" == "true" ]]; then
-            ip6tables -t "$table" "$action" "$@" 2>/dev/null || true
-        else
-            ip6tables -t "$table" "$action" "$@"
-        fi
-    }
-
     # Cgroup path for the proxy (set by proxy.sh using systemd-run)
     local proxy_cgroup="system.slice/egress-filter-proxy.scope"
 
