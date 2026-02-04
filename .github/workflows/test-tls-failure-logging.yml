@@ -1,0 +1,53 @@
+name: Test TLS failure logging
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          policy: |
+            # Allow the test target
+            example.com
+
+            # DNS
+            [:53/udp]
+            168.63.129.16
+
+      - name: Make HTTPS request that rejects CA (should fail and be logged)
+        run: |
+          # This curl command explicitly uses an empty CA store, so it will
+          # reject mitmproxy's CA certificate and trigger tls_failed_client
+          echo "Making HTTPS request with empty CA store (should fail)..."
+          curl --cacert /dev/null --max-time 5 https://example.com/ 2>&1 || true
+          echo "Request completed (expected to fail)"
+
+      - name: Verify TLS failure was logged
+        run: |
+          echo "=== Connection log ==="
+          cat /tmp/connections.jsonl || echo "No connection log found"
+          echo ""
+          echo "=== Checking for TLS failure event ==="
+          if grep -q '"error":"tls_client_rejected_ca"' /tmp/connections.jsonl; then
+            echo "SUCCESS: TLS failure event found in log"
+            grep '"error":"tls_client_rejected_ca"' /tmp/connections.jsonl
+          else
+            echo "FAILURE: TLS failure event NOT found in log"
+            echo "Expected an event with error=tls_client_rejected_ca"
+            exit 1
+          fi
+
+      - name: Show proxy logs
+        if: always()
+        run: cat /tmp/proxy.log || echo "No proxy log found"
