@@ -16,6 +16,7 @@ import json
 import sys
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -113,6 +114,9 @@ def analyze_connections(
 ) -> dict:
     """Analyze connections against a policy.
 
+    Uses the same PolicyEnforcer logic as the live proxy to ensure consistent
+    behavior between CLI analysis and runtime enforcement.
+
     Args:
         policy_text: The policy text to parse.
         connections: List of connection dicts from the log.
@@ -125,6 +129,21 @@ def analyze_connections(
     matcher = PolicyMatcher(policy_text, defaults=defaults)
     dns_cache = DNSIPCache()
     enforcer = PolicyEnforcer(matcher, dns_cache)
+
+    # Pre-populate DNS cache from HTTPS/HTTP connections that have hostname info.
+    # This enables TCP connections to the same IPs to match hostname rules,
+    # similar to how the live proxy correlates DNS responses with later connections.
+    for conn in connections:
+        dst_ip = conn.get("dst_ip")
+        host = conn.get("host")  # SNI for HTTPS
+        if dst_ip and host:
+            dns_cache.add(dst_ip, host, ttl=3600)
+        # Also extract hostname from HTTP URLs
+        url = conn.get("url")
+        if dst_ip and url:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                dns_cache.add(dst_ip, parsed.hostname, ttl=3600)
 
     # Deduplicate and count connections, separating errors
     conn_counts: dict[tuple, dict] = {}  # key -> {conn, count}
@@ -148,15 +167,66 @@ def analyze_connections(
     for key, data in conn_counts.items():
         conn = data["conn"]
         count = data["count"]
+        conn_type = conn.get("type", "")
 
-        # Create ConnectionEvent from log entry
-        event = ConnectionEvent.from_dict(conn)
+        # Build ProcessInfo from connection data
+        proc = ProcessInfo(
+            exe=conn.get("exe"),
+            cmdline=conn.get("cmdline"),
+            cgroup=conn.get("cgroup"),
+            step=conn.get("step"),
+            action=conn.get("action"),
+        )
 
-        # Check against policy
-        is_allowed, rule_idx = matcher.match(event)
+        # Use the same enforcer methods as the live proxy
+        dst_ip = conn.get("dst_ip", "")
+        dst_port = conn.get("dst_port", 0)
 
-        if is_allowed:
-            rule_info = f"rule {rule_idx}" if rule_idx is not None else "unknown"
+        if conn_type == "https":
+            decision = enforcer.check_https(
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                sni=conn.get("host"),
+                proc=proc,
+            )
+        elif conn_type == "http":
+            decision = enforcer.check_http(
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                url=conn.get("url", ""),
+                method=conn.get("method", "GET"),
+                proc=proc,
+            )
+        elif conn_type == "tcp":
+            decision = enforcer.check_tcp(
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                proc=proc,
+            )
+        elif conn_type == "dns":
+            decision = enforcer.check_dns(
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                query_name=conn.get("name", ""),
+                proc=proc,
+            )
+        elif conn_type == "udp":
+            decision = enforcer.check_udp(
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                proc=proc,
+            )
+        else:
+            # Unknown type - fall back to direct matcher
+            event = ConnectionEvent.from_dict(conn)
+            is_allowed, rule_idx = matcher.match(event)
+            decision = type('Decision', (), {
+                'allowed': is_allowed,
+                'matched_rule': rule_idx
+            })()
+
+        if decision.allowed:
+            rule_info = f"rule {decision.matched_rule}" if decision.matched_rule is not None else "unknown"
             allowed.append((conn, count, rule_info))
         else:
             blocked.append((conn, count, None))
