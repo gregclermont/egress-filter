@@ -56,7 +56,9 @@ path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
 path_rule       = (method_attr ws+)? "/" path_rest kv_attrs?
 
-network_rule    = (cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs?
+network_rule    = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? kv_attrs?
+
+dns_host_rule   = "dns:" (wildcard_host / exact_host)
 
 host_rule       = wildcard_host / exact_host
 wildcard_host   = subdomain_wildcard / label_wildcard
@@ -529,6 +531,22 @@ class PolicyVisitor(NodeVisitor):
         for item in flat:
             if isinstance(item, dict):
                 return item
+        return None
+
+    def visit_dns_host_rule(self, node, visited_children):
+        # "dns:" (wildcard_host / exact_host)
+        # The child returns {"type": "host" or "wildcard_host", "target": ...}
+        # We need to transform to dns_host or dns_wildcard_host
+        _, host_data = visited_children
+        flat = _flatten([host_data])
+        for item in flat:
+            if isinstance(item, dict) and "type" in item:
+                # Transform type to dns_ variant
+                original_type = item["type"]
+                if original_type == "wildcard_host":
+                    return {"type": "dns_wildcard_host", "target": item["target"]}
+                else:  # host
+                    return {"type": "dns_host", "target": item["target"]}
         return None
 
     def visit_wildcard_host(self, node, visited_children):

@@ -1059,3 +1059,84 @@ tests:
         methods: null
         url_base: null
         attrs: {}
+
+  # =============================================================================
+  # DNS-only rules (dns: prefix)
+  # =============================================================================
+
+  - name: DNS-only exact hostname
+    policy: |
+      dns:example.com
+    rules:
+      - type: dns_host
+        target: example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: DNS-only wildcard hostname
+    policy: |
+      dns:*.example.com
+    rules:
+      - type: dns_wildcard_host
+        target: "*.example.com"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: DNS-only with label wildcard
+    policy: |
+      dns:sub*.example.com
+    rules:
+      - type: dns_wildcard_host
+        target: sub*.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: DNS-only with attributes
+    policy: |
+      dns:example.com exe=/usr/bin/curl
+    rules:
+      - type: dns_host
+        target: example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          exe: /usr/bin/curl
+
+  - name: Mixed DNS-only and normal rules
+    policy: |
+      dns:resolve-only.com
+      github.com
+      dns:*.internal.corp
+    rules:
+      - type: dns_host
+        target: resolve-only.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+      - type: dns_wildcard_host
+        target: "*.internal.corp"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
