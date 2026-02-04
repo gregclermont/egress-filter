@@ -361,11 +361,21 @@ def match_dns_name_against_rule(rule: Rule, name: str, event: ConnectionEvent) -
     This allows hostname/URL rules to implicitly allow DNS resolution.
     For example, allowing "github.com" also allows DNS queries for "github.com".
 
+    DNS-only rules (dns:hostname) also match here but don't allow egress.
+
     Only checks hostname matching and attributes - ignores port/protocol
     since DNS resolution is independent of the eventual connection port.
     """
     # Extract hostname from rule based on rule type
-    if rule.type == "host":
+    if rule.type == "dns_host":
+        # DNS-only rule - allows resolution but not egress
+        if not match_hostname(rule.target, name, is_wildcard=False):
+            return False
+    elif rule.type == "dns_wildcard_host":
+        # DNS-only wildcard rule - allows resolution but not egress
+        if not match_hostname(rule.target, name, is_wildcard=True):
+            return False
+    elif rule.type == "host":
         if not match_hostname(rule.target, name, is_wildcard=False):
             return False
     elif rule.type == "wildcard_host":
@@ -401,6 +411,10 @@ def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
 
     All parts of a rule must match (AND semantics within a rule).
     """
+    # DNS-only rules (dns:hostname) don't match egress connections
+    if rule.type in ("dns_host", "dns_wildcard_host"):
+        return False
+
     # Check protocol first
     if not match_protocol(rule.protocol, event.type):
         return False

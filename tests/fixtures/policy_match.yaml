@@ -1397,3 +1397,177 @@ tests:
           dst_port: 443
           host: example.com
         verdict: block
+
+  # =============================================================================
+  # DNS-only rules (dns: prefix)
+  # =============================================================================
+
+  - name: DNS-only rule allows DNS resolution
+    policy: |
+      8.8.8.8:53/udp
+      dns:example.com
+    connections:
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: example.com
+        verdict: allow
+
+  - name: DNS-only rule blocks HTTPS egress
+    policy: |
+      8.8.8.8:53/udp
+      dns:example.com
+    connections:
+      - event:
+          type: https
+          dst_ip: 93.184.216.34
+          dst_port: 443
+          host: example.com
+        verdict: block
+
+  - name: DNS-only rule blocks TCP egress
+    policy: |
+      8.8.8.8:53/udp
+      dns:example.com
+    connections:
+      - event:
+          type: tcp
+          dst_ip: 93.184.216.34
+          dst_port: 22
+          host: example.com
+        verdict: block
+
+  - name: DNS-only wildcard allows DNS for subdomains
+    policy: |
+      8.8.8.8:53/udp
+      dns:*.example.com
+    connections:
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: api.example.com
+        verdict: allow
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: deep.nested.example.com
+        verdict: allow
+
+  - name: DNS-only wildcard blocks HTTPS for subdomains
+    policy: |
+      8.8.8.8:53/udp
+      dns:*.example.com
+    connections:
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: api.example.com
+        verdict: block
+
+  - name: Normal rule allows both DNS and egress
+    policy: |
+      8.8.8.8:53/udp
+      github.com
+    connections:
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: github.com
+        verdict: allow
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+        verdict: allow
+
+  - name: Mixed DNS-only and normal rules
+    policy: |
+      8.8.8.8:53/udp
+      dns:resolve-only.com
+      github.com
+    connections:
+      # DNS-only rule allows DNS
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: resolve-only.com
+        verdict: allow
+      # DNS-only rule blocks egress
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: resolve-only.com
+        verdict: block
+      # Normal rule allows DNS
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: github.com
+        verdict: allow
+      # Normal rule allows egress
+      - event:
+          type: https
+          dst_ip: 140.82.121.4
+          dst_port: 443
+          host: github.com
+        verdict: allow
+
+  - name: DNS-only rule with exe attribute
+    policy: |
+      8.8.8.8:53/udp
+      dns:example.com exe=/usr/bin/curl
+    connections:
+      # Matching exe - allowed
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: example.com
+          exe: /usr/bin/curl
+        verdict: allow
+      # Non-matching exe - blocked
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: example.com
+          exe: /usr/bin/wget
+        verdict: block
+      # No exe in event - blocked
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: example.com
+        verdict: block
+
+  - name: DNS-only wildcard rule with cgroup attribute
+    policy: |
+      8.8.8.8:53/udp
+      dns:*.internal.corp cgroup=/system.slice/myservice.service
+    connections:
+      # Matching cgroup - allowed
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: api.internal.corp
+          cgroup: /system.slice/myservice.service
+        verdict: allow
+      # Non-matching cgroup - blocked
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: api.internal.corp
+          cgroup: /user.slice/other.service
+        verdict: block

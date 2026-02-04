@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-RuleType = Literal["host", "wildcard_host", "ip", "cidr", "url", "path"]
+RuleType = Literal["host", "wildcard_host", "ip", "cidr", "url", "path", "dns_host", "dns_wildcard_host"]
 Protocol = Literal["tcp", "udp"]
 
 
