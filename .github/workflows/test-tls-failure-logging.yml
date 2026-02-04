@@ -25,13 +25,41 @@ jobs:
             [:53/udp]
             168.63.129.16
 
+      - name: Make warmup request (should succeed)
+        run: |
+          # First make a normal request to warm up the connection
+          echo "Making warmup HTTPS request..."
+          curl -s --max-time 5 https://example.com/ > /dev/null && echo "Warmup succeeded" || echo "Warmup failed"
+          sleep 1
+
       - name: Make HTTPS request that rejects CA (should fail and be logged)
         run: |
-          # This curl command explicitly uses an empty CA store, so it will
-          # reject mitmproxy's CA certificate and trigger tls_failed_client
+          # Use Python to create an SSL context with NO trusted CAs
+          # This will reject mitmproxy's certificate and trigger tls_failed_client
           echo "Making HTTPS request with empty CA store (should fail)..."
-          curl --cacert /dev/null --max-time 5 https://example.com/ 2>&1 || true
+          python3 << 'EOF'
+          import ssl
+          import socket
+          import sys
+
+          # Create SSL context that requires cert verification but has no trusted CAs
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+          ctx.verify_mode = ssl.CERT_REQUIRED
+          ctx.check_hostname = True
+          # Don't load default certs - this means NO CAs are trusted
+
+          try:
+              with socket.create_connection(('example.com', 443), timeout=10) as sock:
+                  with ctx.wrap_socket(sock, server_hostname='example.com') as ssock:
+                      print("ERROR: Connection succeeded (should have failed)")
+                      sys.exit(1)
+          except ssl.SSLCertVerificationError as e:
+              print(f"Expected: TLS verification failed: {e}")
+          except Exception as e:
+              print(f"Connection failed: {type(e).__name__}: {e}")
+          EOF
           echo "Request completed (expected to fail)"
+          sleep 1  # Give proxy time to log
 
       - name: Verify TLS failure was logged
         run: |
@@ -44,7 +72,9 @@ jobs:
             grep '"error":"tls_client_rejected_ca"' /tmp/connections.jsonl
           else
             echo "FAILURE: TLS failure event NOT found in log"
-            echo "Expected an event with error=tls_client_rejected_ca"
+            echo ""
+            echo "Debug: Checking for any HTTPS events..."
+            grep '"type":"https"' /tmp/connections.jsonl || echo "No HTTPS events found"
             exit 1
           fi
 
