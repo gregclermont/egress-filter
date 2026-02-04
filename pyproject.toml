@@ -4,12 +4,20 @@ version = "0.1.0"
 description = "eBPF-based connection-to-PID tracker for egress firewall"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "parsimonious",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+proxy = [
     "tinybpf==0.2.2",
     "mitmproxy",
     "netfilterqueue",
     "scapy",
-    "parsimonious",
 ]
+
+[project.scripts]
+egress-policy = "proxy.policy.cli:main"
 
 [[tool.uv.index]]
 name = "tinybpf"

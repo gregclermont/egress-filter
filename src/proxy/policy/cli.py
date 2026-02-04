@@ -17,13 +17,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:
-    print(
-        "Error: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr
-    )
-    sys.exit(2)
+import yaml
 
 from parsimonious.exceptions import ParseError
 
