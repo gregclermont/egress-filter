@@ -101,7 +101,7 @@ Start in audit mode to discover what your workflow needs:
 After the workflow runs, download the connection log artifact and analyze it against your policy:
 
 ```bash
-gh run download <run-id> -n egress-connections
+gh run download -n egress-connections <run-id>
 python -m proxy.policy .github/workflows/build.yml --analyze-log connections.jsonl
 ```
 

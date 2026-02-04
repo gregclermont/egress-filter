@@ -185,7 +185,7 @@ The recommended workflow for developing a policy:
 
 2. **Download the connection log** (uploaded automatically as an artifact):
    ```bash
-   gh run download <run-id> -n egress-connections
+   gh run download -n egress-connections <run-id>
    ```
 
 3. **Analyze against your policy**:
