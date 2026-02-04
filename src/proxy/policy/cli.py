@@ -26,7 +26,15 @@ from .defaults import PRESETS, get_defaults
 from .dns_cache import DNSIPCache
 from .enforcer import PolicyEnforcer, ProcessInfo
 from .matcher import ConnectionEvent, PolicyMatcher
-from .parser import GRAMMAR, PolicyVisitor, parse_policy, rule_to_dict, validate_policy
+from .parser import (
+    GRAMMAR,
+    PolicyVisitor,
+    parse_github_repository,
+    parse_policy,
+    rule_to_dict,
+    substitute_placeholders,
+    validate_policy,
+)
 from .defaults import RUNNER_DEFAULTS
 from .types import DefaultContext
 
@@ -332,6 +340,47 @@ def load_connections_log(log_path: Path) -> list[dict]:
     return connections
 
 
+def build_combined_policy(
+    policies: list[tuple[str, str]],
+    include_defaults: bool = True,
+    presets: list[str] | None = None,
+    repo: str | None = None,
+) -> str:
+    """Build a combined policy from defaults, presets, and workflow policies.
+
+    Args:
+        policies: List of (location, policy_text) tuples from workflow.
+        include_defaults: Whether to include GitHub Actions infrastructure defaults.
+        presets: List of preset names to include.
+        repo: OWNER/REPO string for {owner}/{repo} placeholder substitution.
+
+    Returns:
+        Combined policy text with placeholders substituted.
+    """
+    policy_parts = []
+
+    if include_defaults:
+        policy_parts.append(get_defaults())
+
+    if presets:
+        for preset_name in presets:
+            preset = PRESETS.get(preset_name)
+            if preset:
+                policy_parts.append(preset)
+
+    for _, policy_text in policies:
+        policy_parts.append(policy_text)
+
+    combined_policy = "\n".join(policy_parts)
+
+    # Substitute {owner} and {repo} placeholders
+    if repo:
+        owner, repo_name = parse_github_repository(repo)
+        combined_policy = substitute_placeholders(combined_policy, owner=owner, repo=repo_name)
+
+    return combined_policy
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Validate egress filter policies in GitHub Actions workflow files.",
@@ -380,6 +429,11 @@ def main():
         action="store_true",
         help="Disable the default runner cgroup constraint (for generic/non-runner use)",
     )
+    parser.add_argument(
+        "--repo",
+        metavar="OWNER/REPO",
+        help="Substitute {owner} and {repo} placeholders in policy (e.g., 'myorg/myrepo')",
+    )
 
     args = parser.parse_args()
 
@@ -413,22 +467,12 @@ def main():
 
     # Handle --dump-rules mode
     if args.dump_rules:
-        # Build combined policy from defaults, presets, and workflow policies
-        policy_parts = []
-
-        if not args.no_defaults:
-            policy_parts.append(get_defaults())
-
-        if args.include_preset:
-            for preset_name in args.include_preset:
-                preset = PRESETS.get(preset_name)
-                if preset:
-                    policy_parts.append(preset)
-
-        for _, policy_text in policies:
-            policy_parts.append(policy_text)
-
-        combined_policy = "\n".join(policy_parts)
+        combined_policy = build_combined_policy(
+            policies,
+            include_defaults=not args.no_defaults,
+            presets=args.include_preset,
+            repo=args.repo,
+        )
 
         # Report syntax errors to stderr
         errors = validate_policy(combined_policy)
@@ -452,25 +496,12 @@ def main():
             print(f"Error: Log file not found: {args.analyze_log}", file=sys.stderr)
             sys.exit(2)
 
-        # Build combined policy from defaults, presets, and workflow policies
-        policy_parts = []
-
-        # Include defaults if requested
-        if not args.no_defaults:
-            policy_parts.append(get_defaults())
-
-        # Include presets if requested
-        if args.include_preset:
-            for preset_name in args.include_preset:
-                preset = PRESETS.get(preset_name)
-                if preset:
-                    policy_parts.append(preset)
-
-        # Add workflow policies
-        for _, policy_text in policies:
-            policy_parts.append(policy_text)
-
-        combined_policy = "\n".join(policy_parts)
+        combined_policy = build_combined_policy(
+            policies,
+            include_defaults=not args.no_defaults,
+            presets=args.include_preset,
+            repo=args.repo,
+        )
 
         # Report syntax errors to stderr
         errors = validate_policy(combined_policy)
@@ -498,7 +529,14 @@ def main():
     total_errors = 0
     total_rules = 0
 
+    # Parse --repo for placeholder substitution
+    owner, repo_name = parse_github_repository(args.repo) if args.repo else (None, None)
+
     for location, policy_text in policies:
+        # Substitute placeholders before validation
+        if args.repo:
+            policy_text = substitute_placeholders(policy_text, owner=owner, repo=repo_name)
+
         errors = validate_policy(policy_text)
 
         # Count valid rules
