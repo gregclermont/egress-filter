@@ -53,6 +53,8 @@ src/
     ├── iptables.sh      # All iptables rules: TCP redirect, UDP nfqueue/DNS, Docker bridge, anti-bypass
     ├── deps.sha256      # Dependency manifest with SHA256 hashes
     └── generate-deps.py # Script to regenerate deps.sha256
+tools/
+    └── dump_mitmproxy_flows.py  # Dev tool: dump flow object structure for test mock creation
 tests/                   # Policy unit tests (pytest + hypothesis)
 ```
 
@@ -72,6 +74,9 @@ tests/                   # Policy unit tests (pytest + hypothesis)
 # Policy unit tests (the main local test suite)
 uv run --with pytest --with hypothesis python -m pytest tests/
 
+# Handler tests (require proxy dependencies)
+uv run --extra proxy --with pytest python -m pytest tests/test_handler_mitmproxy.py tests/test_handler_nfqueue.py -v
+
 # Integration tests run as GitHub Actions workflows (.github/workflows/test-*.yml)
 # Trigger by pushing to the test branch:
 git push -f origin HEAD:test
@@ -84,6 +89,22 @@ uv sync
 uv run tinybpf docker-compile src/bpf/conn_tracker.bpf.c -o dist/bpf/conn_tracker.bpf.o  # requires Docker
 sudo PYTHONPATH=src .venv/bin/python -m proxy.main  # requires root for BPF
 ```
+
+### Dumping mitmproxy flow objects
+
+`tools/dump_mitmproxy_flows.py` runs mitmproxy as an explicit proxy (no root needed) and dumps the flow object attributes that `MitmproxyAddon` accesses. Useful for creating realistic mock objects for handler tests.
+
+```bash
+# Terminal 1: start the dumper
+uv run --extra proxy python tools/dump_mitmproxy_flows.py
+
+# Terminal 2: generate flows
+curl -x http://localhost:8080 http://example.com           # HTTP
+curl -x http://localhost:8080 -k https://example.com       # HTTPS (MITM)
+dig @127.0.0.1 -p 8053 example.com                        # DNS
+```
+
+Output is JSON with the attribute values and types for each hook (`tls_clienthello`, `request`, `tcp_start`, `dns_request`, `dns_response`, `tls_failed_client`).
 
 ## Policy DSL
 
