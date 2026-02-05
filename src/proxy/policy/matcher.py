@@ -517,6 +517,52 @@ def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
     return True
 
 
+def match_rule_hostname_only(rule: Rule, event: ConnectionEvent) -> bool:
+    """Check if a URL/path rule's hostname matches the event for TLS pre-matching.
+
+    Used at the TLS stage for non-container processes: if a URL/path rule's
+    hostname matches the SNI, the connection should be allowed through to MITM
+    so that request() can evaluate the full URL with path and method.
+
+    Only applies to 'url' and 'path' rule types. Checks protocol, port,
+    hostname, and attributes — but NOT path or method.
+    """
+    if rule.type not in ("url", "path"):
+        return False
+
+    if not match_protocol(rule.protocol, event.type):
+        return False
+
+    if not match_port(rule.port, event.dst_port):
+        return False
+
+    hostname = get_event_hostname(event)
+    if hostname is None:
+        return False
+
+    # Extract hostname from rule target
+    if rule.type == "url":
+        rule_hostname = urlparse(rule.target).hostname
+    elif rule.type == "path":
+        if not rule.url_base:
+            return False
+        rule_hostname = urlparse(rule.url_base).hostname
+    else:
+        return False
+
+    if not rule_hostname:
+        return False
+
+    # URL rules don't support hostname wildcards (grammar: url_host = ipv4 / hostname)
+    if rule_hostname.lower() != hostname.lower():
+        return False
+
+    if not match_attrs(rule, event):
+        return False
+
+    return True
+
+
 class PolicyMatcher:
     """Matches connection events against a policy."""
 
@@ -581,6 +627,31 @@ class PolicyMatcher:
         # Check 2: Is the domain allowed? (hostname/URL rules)
         for i, rule in enumerate(self.rules):
             if match_dns_name_against_rule(rule, event.name, event):
+                return (True, i)
+
+        return (False, None)
+
+    def match_sni(self, event: ConnectionEvent | dict) -> tuple[bool, int | None]:
+        """Match an SNI-only event, with fallback to hostname-only URL/path matching.
+
+        First tries normal match(). If that fails, checks whether any URL/path
+        rule's hostname matches the SNI. This allows non-container TLS connections
+        to proceed to MITM when URL rules exist for the hostname, so request()
+        can evaluate the full URL.
+
+        Returns (allowed, matching_rule_index).
+        """
+        if isinstance(event, dict):
+            event = ConnectionEvent.from_dict(event)
+
+        # Try normal matching first (handles host, wildcard_host, ip, cidr rules)
+        allowed, rule_idx = self.match(event)
+        if allowed:
+            return (allowed, rule_idx)
+
+        # Fallback: check if any URL/path rule's hostname matches
+        for i, rule in enumerate(self.rules):
+            if match_rule_hostname_only(rule, event):
                 return (True, i)
 
         return (False, None)

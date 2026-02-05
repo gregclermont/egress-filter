@@ -431,6 +431,7 @@ def test_policy_enforcer(scenario):
                 dst_port=check["dst_port"],
                 sni=check.get("sni"),
                 proc=proc,
+                can_mitm=check.get("can_mitm", False),
             )
         elif check_type == "http":
             decision = enforcer.check_http(

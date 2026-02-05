@@ -799,3 +799,118 @@ tests:
         dst_ip: 140.82.121.4
         dst_port: 80
         verdict: block
+
+  # =============================================================================
+  # HTTPS URL rules with can_mitm (TLS hostname pre-matching)
+  # =============================================================================
+
+  - name: URL-only rule allows hostname pre-match with can_mitm
+    policy: |
+      GET https://example.com/*
+    checks:
+      # Without can_mitm, SNI-only check fails for URL rules
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        verdict: block
+
+      # With can_mitm, hostname pre-match allows through for MITM
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+
+      # Full URL match still works via check_http
+      - type: http
+        url: https://example.com/api/data
+        method: GET
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        verdict: allow
+
+  - name: URL-only rule blocks wrong hostname with can_mitm
+    policy: |
+      GET https://example.com/*
+    checks:
+      - type: https
+        sni: evil.com
+        dst_ip: 1.2.3.4
+        dst_port: 443
+        can_mitm: true
+        verdict: block
+
+  - name: URL-only rule blocks wrong port with can_mitm
+    policy: |
+      GET https://example.com/*
+    checks:
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 8443
+        can_mitm: true
+        verdict: block
+
+  - name: URL rule with exe attr checks attr during hostname pre-match
+    policy: |
+      GET https://example.com/* exe=/usr/bin/curl
+    checks:
+      # Matching exe — allowed
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        can_mitm: true
+        proc:
+          exe: /usr/bin/curl
+        verdict: allow
+
+      # Wrong exe — blocked
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        can_mitm: true
+        proc:
+          exe: /usr/bin/wget
+        verdict: block
+
+  - name: Path rule with url_base allows hostname pre-match with can_mitm
+    policy: |
+      [https://api.github.com]
+      GET /repos/*
+    checks:
+      - type: https
+        sni: api.github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+
+      # Wrong hostname for path rule
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        verdict: block
+
+  - name: Bare hostname rule still works with can_mitm (via normal match)
+    policy: |
+      example.com
+    checks:
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+
+      # Also works without can_mitm
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        verdict: allow
