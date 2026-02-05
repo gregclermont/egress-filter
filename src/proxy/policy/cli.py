@@ -71,6 +71,9 @@ def connection_key(conn: dict) -> tuple:
         # For HTTP, group by method + URL (without query params)
         return (conn_type, conn.get("method", "GET"), conn.get("url", ""))
     elif conn_type == "https":
+        if conn.get("url"):
+            # MITMed HTTPS: proxy decrypted TLS and has full URL — key like HTTP
+            return (conn_type, conn.get("method", "GET"), conn.get("url", ""))
         return (conn_type, conn.get("host", ""), conn.get("dst_port", 443))
     elif conn_type == "dns":
         return (conn_type, conn.get("name", ""), conn.get("dst_port", 53))
@@ -94,6 +97,11 @@ def format_connection(conn: dict) -> str:
         url = conn.get("url", "")
         return f"{method} {url}"
     elif conn_type == "https":
+        if conn.get("url"):
+            # MITMed HTTPS: proxy decrypted TLS and has full URL
+            method = conn.get("method", "GET")
+            url = conn.get("url", "")
+            return f"{method} {url}"
         host = conn.get("host", conn.get("dst_ip", "unknown"))
         port = conn.get("dst_port", 443)
         if port == 443:
@@ -190,7 +198,17 @@ def analyze_connections(
         dst_ip = conn.get("dst_ip", "")
         dst_port = conn.get("dst_port", 0)
 
-        if conn_type == "https":
+        if conn_type == "https" and conn.get("url"):
+            # MITMed HTTPS: proxy decrypted TLS and evaluated as HTTP request.
+            # Use check_http() to match runtime behavior.
+            decision = enforcer.check_http(
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                url=conn.get("url", ""),
+                method=conn.get("method", "GET"),
+                proc=proc,
+            )
+        elif conn_type == "https":
             decision = enforcer.check_https(
                 dst_ip=dst_ip,
                 dst_port=dst_port,
