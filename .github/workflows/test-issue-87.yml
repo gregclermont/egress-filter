@@ -1,0 +1,105 @@
+name: "Test issue #87: URL-only HTTPS rules"
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Test 1: URL-only rule (no bare hostname) — should this work?
+  url-only:
+    name: "URL-only rule"
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          policy: |
+            # DNS
+            [:53/udp]
+            168.63.129.16
+
+            # Only a URL rule for example.com — no bare hostname
+            []
+            GET https://example.com/*
+
+      - name: "curl https://example.com/ (URL-only rule)"
+        run: |
+          echo "=== Testing URL-only HTTPS rule ==="
+          if curl -sf --max-time 5 https://example.com/ -o /dev/null; then
+            echo "PASS: Connection succeeded"
+          else
+            echo "FAIL: Connection blocked (exit code $?)"
+          fi
+
+      - name: Show proxy logs
+        if: always()
+        run: cat /tmp/proxy.log || echo "No proxy log found"
+
+  # Test 2: Hostname + URL rule — should definitely work
+  hostname-plus-url:
+    name: "Hostname + URL rule"
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          policy: |
+            # DNS
+            [:53/udp]
+            168.63.129.16
+
+            # Bare hostname (passes TLS gate) + URL rule (path filtering)
+            []
+            example.com
+            GET https://example.com/*
+
+      - name: "curl https://example.com/ (hostname + URL rule)"
+        run: |
+          echo "=== Testing hostname + URL HTTPS rule ==="
+          if curl -sf --max-time 5 https://example.com/ -o /dev/null; then
+            echo "PASS: Connection succeeded"
+          else
+            echo "FAIL: Connection blocked (exit code $?)"
+          fi
+
+      - name: Show proxy logs
+        if: always()
+        run: cat /tmp/proxy.log || echo "No proxy log found"
+
+  # Test 3: Hostname-only rule — baseline
+  hostname-only:
+    name: "Hostname-only rule"
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          policy: |
+            # DNS
+            [:53/udp]
+            168.63.129.16
+
+            # Just the hostname
+            []
+            example.com
+
+      - name: "curl https://example.com/ (hostname-only rule)"
+        run: |
+          echo "=== Testing hostname-only HTTPS rule ==="
+          if curl -sf --max-time 5 https://example.com/ -o /dev/null; then
+            echo "PASS: Connection succeeded"
+          else
+            echo "FAIL: Connection blocked (exit code $?)"
+          fi
+
+      - name: Show proxy logs
+        if: always()
+        run: cat /tmp/proxy.log || echo "No proxy log found"

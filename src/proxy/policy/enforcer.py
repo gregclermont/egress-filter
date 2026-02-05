@@ -171,6 +171,7 @@ class PolicyEnforcer:
         dst_port: int,
         sni: str | None,
         proc: ProcessInfo | None = None,
+        can_mitm: bool = False,
     ) -> Decision:
         """Check an HTTPS connection (TLS with SNI).
 
@@ -179,6 +180,9 @@ class PolicyEnforcer:
             dst_port: Destination port
             sni: Server Name Indication (hostname from TLS ClientHello)
             proc: Process information
+            can_mitm: If True, allow connections that match URL/path rules
+                by hostname only, so MITM can proceed and request() can
+                evaluate the full URL. Use for non-container processes.
 
         Returns:
             Decision with verdict and reason
@@ -194,7 +198,11 @@ class PolicyEnforcer:
                 host=sni,
                 **proc_dict,
             )
-            allowed, rule_idx = self.matcher.match(event)
+
+            if can_mitm:
+                allowed, rule_idx = self.matcher.match_sni(event)
+            else:
+                allowed, rule_idx = self.matcher.match(event)
 
             if allowed:
                 return self._make_decision(

@@ -64,6 +64,7 @@ class MitmproxyAddon:
                 dst_port=dst_port,
                 sni=sni,
                 proc=ProcessInfo.from_dict(proc_dict),
+                can_mitm=not is_container,
             )
 
             if decision.blocked:
