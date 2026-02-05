@@ -275,6 +275,78 @@ class TestAnalyzeConnections:
         assert len(results["allowed"]) == 1
         assert len(results["blocked"]) == 1
 
+    def test_analyze_mitmed_https_with_url_rules(self):
+        """MITMed HTTPS connections (with url field) match URL rules."""
+        policy = """
+        GET https://github.com/owner/repo/info/refs
+        POST https://github.com/owner/repo/git-upload-pack
+        """
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+                "url": "https://github.com/owner/repo/info/refs?service=git-upload-pack",
+                "method": "GET",
+            },
+            {
+                "type": "https",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+                "url": "https://github.com/owner/repo/git-upload-pack",
+                "method": "POST",
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 2
+        assert len(results["blocked"]) == 0
+
+    def test_analyze_mitmed_https_deduplicates_by_url(self):
+        """MITMed HTTPS connections are deduplicated by method + URL."""
+        policy = """
+        github.com
+        """
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+                "url": "https://github.com/owner/repo/info/refs",
+                "method": "GET",
+            },
+            {
+                "type": "https",
+                "dst_ip": "140.82.113.5",
+                "dst_port": 443,
+                "url": "https://github.com/owner/repo/info/refs",
+                "method": "GET",
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        conn, count, _ = results["allowed"][0]
+        assert count == 2
+
+    def test_analyze_non_mitmed_https_still_uses_sni(self):
+        """Non-MITMed HTTPS connections (no url, has host) use check_https."""
+        policy = """
+        github.com
+        """
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+                "host": "github.com",
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        assert len(results["blocked"]) == 0
+
     def test_analyze_error_events_separated(self):
         """Error events (TLS failures) are separated from policy decisions."""
         policy = """
@@ -355,6 +427,17 @@ class TestConnectionFormatting:
         conn = {"type": "https", "host": "github.com", "dst_port": 8443}
         assert format_connection(conn) == "https://github.com:8443"
 
+    def test_format_mitmed_https(self):
+        """MITMed HTTPS connections (with url) show method + URL."""
+        conn = {
+            "type": "https",
+            "dst_ip": "140.82.113.4",
+            "dst_port": 443,
+            "url": "https://github.com/owner/repo/info/refs",
+            "method": "GET",
+        }
+        assert format_connection(conn) == "GET https://github.com/owner/repo/info/refs"
+
     def test_format_http(self):
         """HTTP connections formatted correctly."""
         conn = {"type": "http", "method": "POST", "url": "http://example.com/api"}
@@ -380,7 +463,7 @@ class TestConnectionKey:
     """Tests for connection deduplication keys."""
 
     def test_https_key_by_host_and_port(self):
-        """HTTPS connections keyed by host and port."""
+        """Non-MITMed HTTPS connections keyed by host and port."""
         conn1 = {
             "type": "https",
             "host": "github.com",
@@ -394,6 +477,42 @@ class TestConnectionKey:
             "dst_ip": "2.2.2.2",
         }
         assert connection_key(conn1) == connection_key(conn2)
+
+    def test_mitmed_https_key_by_method_and_url(self):
+        """MITMed HTTPS connections (with url) keyed by method + URL."""
+        conn1 = {
+            "type": "https",
+            "dst_ip": "1.1.1.1",
+            "dst_port": 443,
+            "url": "https://github.com/owner/repo/info/refs",
+            "method": "GET",
+        }
+        conn2 = {
+            "type": "https",
+            "dst_ip": "2.2.2.2",
+            "dst_port": 443,
+            "url": "https://github.com/owner/repo/info/refs",
+            "method": "GET",
+        }
+        assert connection_key(conn1) == connection_key(conn2)
+
+    def test_mitmed_https_different_urls_different_keys(self):
+        """MITMed HTTPS connections with different URLs get different keys."""
+        conn1 = {
+            "type": "https",
+            "dst_ip": "1.1.1.1",
+            "dst_port": 443,
+            "url": "https://github.com/owner/repo/info/refs",
+            "method": "GET",
+        }
+        conn2 = {
+            "type": "https",
+            "dst_ip": "1.1.1.1",
+            "dst_port": 443,
+            "url": "https://github.com/owner/repo/git-upload-pack",
+            "method": "POST",
+        }
+        assert connection_key(conn1) != connection_key(conn2)
 
     def test_http_key_by_method_and_url(self):
         """HTTP connections keyed by method and URL."""
