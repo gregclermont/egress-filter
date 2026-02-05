@@ -292,16 +292,15 @@ class MitmproxyAddon:
 
         for answer in flow.response.answers:
             # Check for A record (type 1) or AAAA record (type 28)
-            if hasattr(answer, "data"):
-                if answer.type == 1:  # A record
-                    ips.append(str(answer.data))
-                    if hasattr(answer, "ttl"):
-                        min_ttl = min(min_ttl, answer.ttl)
-                # Note: AAAA records are blocked at kernel level, but handle anyway
-                elif answer.type == 28:  # AAAA record
-                    ips.append(str(answer.data))
-                    if hasattr(answer, "ttl"):
-                        min_ttl = min(min_ttl, answer.ttl)
+            if answer.type == 1:  # A record
+                ips.append(str(answer.ipv4_address))
+                if hasattr(answer, "ttl"):
+                    min_ttl = min(min_ttl, answer.ttl)
+            # Note: AAAA records are blocked at kernel level, but handle anyway
+            elif answer.type == 28:  # AAAA record
+                ips.append(str(answer.ipv6_address))
+                if hasattr(answer, "ttl"):
+                    min_ttl = min(min_ttl, answer.ttl)
 
         if ips:
             self.enforcer.record_dns_response(query_name, ips, min_ttl)
