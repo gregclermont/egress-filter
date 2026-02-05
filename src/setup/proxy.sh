@@ -57,7 +57,7 @@ install_deps() {
 
     # Install Python dependencies
     cd "$REPO_ROOT"
-    uv sync --quiet
+    uv sync --quiet --extra proxy
 }
 
 PIDFILE="/tmp/proxy.pid"
