@@ -178,3 +178,14 @@ class TestSocketDevClient:
 
         assert result.blocked is True
         assert result.reasons == ["critical:malware", "high:installScripts"]
+
+    def test_request_url_and_headers(self):
+        """Verify correct API endpoint URL and User-Agent header."""
+        resp = _mock_response({"alerts": []})
+        with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp) as mock_urlopen:
+            client = SocketDevClient()
+            client.check("pkg:npm/express@4.18.2")
+
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "https://firewall-api.socket.dev/purl/pkg%3Anpm%2Fexpress%404.18.2"
+        assert req.get_header("User-agent") == "egress-filter/1.0"
