@@ -71,10 +71,9 @@ class SocketDevClient:
         reasons: list[str] = []
 
         for alert in data.get("alerts", []):
-            severity = alert.get("severity", "")
-            if severity in ("critical", "high"):
+            if alert.get("action") == "error":
                 blocked = True
                 alert_type = alert.get("type", "unknown")
-                reasons.append(f"{severity}:{alert_type}")
+                reasons.append(alert_type)
 
         return SecurityCheckResult(blocked=blocked, reasons=reasons)

@@ -109,7 +109,7 @@ Severity is a **fixed property** of each alert type (not configurable per-org). 
 | **medium** | Environment Variable Access, Filesystem Access, Non-existent Author, Medium CVE, Network Access, Shell Access, Native Code, Obfuscated Code, and other supply chain risks | Elevated risk — suspicious capabilities that may be legitimate |
 | **low** | Minified Code, Low CVE, Unpopular Package, Deprecated, Unmaintained, license issues | Informational — quality/maintenance signals, not direct threats |
 
-**egress-filter blocks on `critical` and `high`**, which covers malware, typosquats, protestware, telemetry, and critical/high CVEs.
+**egress-filter blocks when `action == "error"`**, which in Socket's default policy means Known Malware only. This defers to Socket's own judgment about what's block-worthy and avoids false positives from informational alerts (telemetry, missing tests, etc.).
 
 ### HTTP Status Codes
 

@@ -38,10 +38,10 @@ class TestSocketDevClient:
         assert result.reasons == []
 
     def test_malicious_package(self):
-        """Critical alert → blocked with reason."""
+        """action=error → blocked with alert type as reason."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "critical", "type": "malware"},
+                {"type": "malware", "action": "error", "severity": "critical"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):
@@ -50,28 +50,27 @@ class TestSocketDevClient:
 
         assert result is not None
         assert result.blocked is True
-        assert result.reasons == ["critical:malware"]
+        assert result.reasons == ["malware"]
 
-    def test_high_severity_blocks(self):
-        """High severity alert → blocked."""
+    def test_warn_action_not_blocked(self):
+        """action=warn → not blocked (even if high severity)."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "high", "type": "protestware"},
+                {"type": "protestware", "action": "warn", "severity": "high"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):
             client = SocketDevClient()
-            result = client.check("pkg:npm/bad@1.0.0")
+            result = client.check("pkg:npm/warned@1.0.0")
 
-        assert result.blocked is True
-        assert "high:protestware" in result.reasons
+        assert result.blocked is False
 
-    def test_low_severity_not_blocked(self):
-        """Low/medium severity → not blocked."""
+    def test_monitor_and_ignore_not_blocked(self):
+        """action=monitor/ignore → not blocked."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "low", "type": "noTests"},
-                {"severity": "medium", "type": "noLicense"},
+                {"type": "noTests", "action": "monitor", "severity": "low"},
+                {"type": "noLicense", "action": "ignore", "severity": "low"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):
@@ -163,13 +162,13 @@ class TestSocketDevClient:
         assert r2 is None
         assert mock_urlopen.call_count == 1
 
-    def test_multiple_critical_alerts(self):
-        """Multiple critical/high alerts → all collected in reasons."""
+    def test_multiple_alerts_only_errors_block(self):
+        """Only action=error alerts trigger block and appear in reasons."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "critical", "type": "malware"},
-                {"severity": "high", "type": "installScripts"},
-                {"severity": "low", "type": "noTests"},
+                {"type": "malware", "action": "error", "severity": "critical"},
+                {"type": "protestware", "action": "warn", "severity": "high"},
+                {"type": "noTests", "action": "monitor", "severity": "low"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):
@@ -177,7 +176,7 @@ class TestSocketDevClient:
             result = client.check("pkg:npm/multi@1.0.0")
 
         assert result.blocked is True
-        assert result.reasons == ["critical:malware", "high:installScripts"]
+        assert result.reasons == ["malware"]
 
     def test_request_url_and_headers(self):
         """Verify correct API endpoint URL and User-Agent header."""

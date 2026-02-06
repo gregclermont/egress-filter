@@ -680,7 +680,7 @@ class TestSocketDevIntegration:
         enforcer.check_http.return_value = _make_decision(True)
 
         socket_dev = MagicMock()
-        socket_dev.check.return_value = MagicMock(blocked=True, reasons=["critical:malware"])
+        socket_dev.check.return_value = MagicMock(blocked=True, reasons=["malware"])
 
         gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
         addon, log_conn, _, _, _ = next(gen)
