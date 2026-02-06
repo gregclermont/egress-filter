@@ -85840,6 +85840,7 @@ async function run() {
     const policy = core.getInput('policy') || '';
     const audit = core.getInput('audit') === 'true';
     const allowSudo = core.getInput('allow-sudo') === 'true';
+    const socketSecurity = core.getInput('socket-security') === 'true';
 
     // Write policy to temp file (multiline string)
     const policyFile = '/tmp/egress-policy.txt';
@@ -85859,6 +85860,7 @@ async function run() {
       `EGRESS_POLICY_FILE=${policyFile}`,
       `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,
       `EGRESS_ALLOW_SUDO=${allowSudo ? '1' : '0'}`,
+      `EGRESS_SOCKET_SECURITY=${socketSecurity ? '1' : '0'}`,
     ];
 
     core.info('Installing dependencies...');

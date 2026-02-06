@@ -35,8 +35,10 @@ src/
 │   ├── logging.py       # Operational log + JSONL connection event log
 │   ├── proc.py          # /proc readers: exe, cmdline, cgroup, environ, ancestry, trusted GitHub env
 │   ├── utils.py         # ip_to_int (little-endian for BPF), protocol constants
+│   ├── purl.py          # Registry URL → PURL parser (npm, PyPI, Cargo)
+│   ├── socket_dev.py    # Socket.dev API client: package security checks, caching, fail-open
 │   ├── handlers/
-│   │   ├── mitmproxy.py # Addon: TLS/HTTP/TCP/DNS hooks, policy enforcement, container passthrough
+│   │   ├── mitmproxy.py # Addon: TLS/HTTP/TCP/DNS hooks, policy enforcement, container passthrough, Socket.dev
 │   │   └── nfqueue.py   # UDP: DNS detection → mark for redirect, non-DNS → policy check + fast-path
 │   └── policy/
 │       ├── types.py     # Rule, AttrValue, DefaultContext, HeaderContext
@@ -67,6 +69,7 @@ tests/                   # Policy unit tests (pytest + hypothesis)
 5. **mitmproxy** handles HTTP/HTTPS/TCP/DNS: looks up PID from BPF map, enforces policy, logs to JSONL. Container processes get TLS passthrough (no MITM). DNS responses populate an IP→hostname cache for later TCP correlation.
 6. **Control socket** (`/tmp/egress-filter-control.sock`) authenticates callers via `SO_PEERCRED` + process ancestry + `GITHUB_ACTION_REPOSITORY` match. Used by post.js for shutdown.
 7. **Startup hardening**: sudo disabled (sudoers truncated), user namespaces blocked (`unprivileged_userns_clone=0`), proxy runs in systemd scope for cgroup isolation
+8. **Socket.dev integration** (opt-in via `socket-security: true`): After policy allows an HTTP request, `purl.py` checks if the URL is a package registry download (npm, PyPI, Cargo) and converts it to a PURL. `socket_dev.py` queries the Socket.dev API and blocks packages with critical/high severity alerts. Fail-open on API errors. Results cached in-memory.
 
 ## Running Tests
 

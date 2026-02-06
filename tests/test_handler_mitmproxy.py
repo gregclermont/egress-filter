@@ -179,7 +179,7 @@ def addon(bpf, enforcer):
         yield a
 
 
-def _make_addon(bpf, enforcer, proc_dict=None, is_container=False):
+def _make_addon(bpf, enforcer, proc_dict=None, is_container=False, socket_dev=None):
     """Helper: create addon with specific proc/container config.
 
     Returns (addon, log_connection_mock, logger_mock).
@@ -194,7 +194,7 @@ def _make_addon(bpf, enforcer, proc_dict=None, is_container=False):
         mock_logging.logger = MagicMock()
 
         from proxy.handlers.mitmproxy import MitmproxyAddon
-        a = MitmproxyAddon(bpf, enforcer)
+        a = MitmproxyAddon(bpf, enforcer, socket_dev=socket_dev)
         yield a, mock_logging.log_connection, mock_logging.logger, gpi, icp
 
 
@@ -666,3 +666,153 @@ class TestTlsFailedClient:
         assert kw["dst_ip"] == "10.0.0.1"
         assert kw["pid"] == 1234
         assert kw["src_port"] == 12345
+
+
+# ---------------------------------------------------------------------------
+# Tests: Socket.dev integration
+# ---------------------------------------------------------------------------
+
+class TestSocketDevIntegration:
+    """Tests for Socket.dev package security check in request() hook."""
+
+    def test_malicious_package_blocked(self, bpf, enforcer):
+        """Registry URL for malicious package -> 403 with security_block log."""
+        enforcer.check_http.return_value = _make_decision(True)
+
+        socket_dev = MagicMock()
+        socket_dev.check.return_value = MagicMock(blocked=True, reasons=["malware"])
+
+        gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://registry.npmjs.org/evil-pkg/-/evil-pkg-1.0.0.tgz",
+            method="GET",
+            dst_port=443,
+        )
+        addon.request(flow)
+
+        # Should block with 403
+        assert flow.response is not None
+        assert flow.response.status_code == 403
+        assert b"Socket.dev" in flow.response.content
+
+        # Should log with security_block
+        log_conn.assert_called_once()
+        kw = log_conn.call_args.kwargs
+        assert kw["policy"] == "deny"
+        assert kw["security_block"] is True
+        assert kw["purl"] == "pkg:npm/evil-pkg@1.0.0"
+
+    def test_clean_package_allowed(self, bpf, enforcer):
+        """Registry URL for clean package -> allowed normally."""
+        enforcer.check_http.return_value = _make_decision(True)
+
+        socket_dev = MagicMock()
+        socket_dev.check.return_value = MagicMock(blocked=False, reasons=[])
+
+        gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
+            method="GET",
+            dst_port=443,
+        )
+        addon.request(flow)
+
+        assert flow.response is None
+        log_conn.assert_called_once()
+        assert log_conn.call_args.kwargs["policy"] == "allow"
+
+    def test_non_registry_url_skipped(self, bpf, enforcer):
+        """Non-registry URL -> no socket_dev check, allowed normally."""
+        enforcer.check_http.return_value = _make_decision(True)
+
+        socket_dev = MagicMock()
+
+        gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(url="https://example.com/api/data", method="GET")
+        addon.request(flow)
+
+        socket_dev.check.assert_not_called()
+        assert flow.response is None
+
+    def test_socket_dev_none_result_allows(self, bpf, enforcer):
+        """socket_dev.check returns None (API error) -> fail-open, allow."""
+        enforcer.check_http.return_value = _make_decision(True)
+
+        socket_dev = MagicMock()
+        socket_dev.check.return_value = None
+
+        gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
+            method="GET",
+            dst_port=443,
+        )
+        addon.request(flow)
+
+        assert flow.response is None
+        log_conn.assert_called_once()
+        assert log_conn.call_args.kwargs["policy"] == "allow"
+
+    def test_no_socket_dev_client_skips_check(self, bpf, enforcer):
+        """No socket_dev client -> no check, normal flow."""
+        enforcer.check_http.return_value = _make_decision(True)
+
+        gen = _make_addon(bpf, enforcer, socket_dev=None)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
+            method="GET",
+            dst_port=443,
+        )
+        addon.request(flow)
+
+        assert flow.response is None
+
+    def test_policy_deny_takes_precedence(self, bpf, enforcer):
+        """Policy denies before socket_dev is checked."""
+        enforcer.check_http.return_value = _make_decision(False)
+
+        socket_dev = MagicMock()
+
+        gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
+            method="GET",
+            dst_port=443,
+        )
+        addon.request(flow)
+
+        # Policy blocked it, socket_dev never called
+        socket_dev.check.assert_not_called()
+        assert flow.response is not None
+        assert flow.response.status_code == 403
+
+    def test_pypi_package_checked(self, bpf, enforcer):
+        """PyPI package URL -> socket_dev check called with correct PURL."""
+        enforcer.check_http.return_value = _make_decision(True)
+
+        socket_dev = MagicMock()
+        socket_dev.check.return_value = MagicMock(blocked=False, reasons=[])
+
+        gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://files.pythonhosted.org/packages/ab/cd/requests-2.31.0.tar.gz",
+            method="GET",
+            dst_port=443,
+        )
+        addon.request(flow)
+
+        socket_dev.check.assert_called_once_with("pkg:pypi/requests@2.31.0")
