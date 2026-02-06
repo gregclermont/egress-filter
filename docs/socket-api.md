@@ -89,10 +89,27 @@ Newline-delimited JSON (NDJSON). Each line is a separate JSON object.
 
 | Field | Type | Values |
 |-------|------|--------|
-| `type` | string | Alert type identifier |
-| `action` | string | `"error"`, `"warn"`, `"info"` |
+| `key` | string | Opaque alert identifier |
+| `type` | string | Alert type (e.g., `"malware"`, `"protestware"`, `"criticalCVE"`) |
+| `action` | string | `"error"`, `"warn"`, `"monitor"`, `"ignore"` |
 | `severity` | string | `"critical"`, `"high"`, `"medium"`, `"low"` |
-| `category` | string | `"vulnerability"`, `"license"`, `"quality"`, `"supplyChain"` |
+| `category` | string | `"vulnerability"`, `"license"`, `"quality"`, `"supplyChainRisk"` |
+| `file` | string | Source file that triggered the alert (when applicable) |
+| `props` | object | Additional context (e.g., `note` with human-readable description) |
+| `fix` | object | Suggested remediation (`type`, `description`) |
+
+### Alert Severity Levels
+
+Severity is a **fixed property** of each alert type (not configurable per-org). The org-configurable part is the **action** (block, warn, monitor, ignore).
+
+| Severity | Alert Types | Description |
+|----------|-------------|-------------|
+| **critical** | Known Malware, Possible Typosquat Attack | Immediate threat — package is confirmed malicious or impersonating another package |
+| **high** | Telemetry, Protestware, Critical CVE, High CVE | Serious risk — data exfiltration, intentional sabotage, or severe vulnerabilities |
+| **medium** | Environment Variable Access, Filesystem Access, Non-existent Author, Medium CVE, Network Access, Shell Access, Native Code, Obfuscated Code, and other supply chain risks | Elevated risk — suspicious capabilities that may be legitimate |
+| **low** | Minified Code, Low CVE, Unpopular Package, Deprecated, Unmaintained, license issues | Informational — quality/maintenance signals, not direct threats |
+
+**egress-filter blocks on `critical` and `high`**, which covers malware, typosquats, protestware, telemetry, and critical/high CVEs.
 
 ### HTTP Status Codes
 
@@ -155,6 +172,9 @@ These are large JSON files containing package names flagged as malicious.
 ## References
 
 - [Package URL Specification](https://github.com/package-url/purl-spec)
+- [Socket: Organization Alerts](https://docs.socket.dev/docs/organization-alerts) — severity definitions and full alert type list
+- [Socket: Security Policy (Default Enabled Alerts)](https://docs.socket.dev/docs/security-policy-default-enabled-alerts) — default actions per alert type
+- [Socket: Package Scores](https://docs.socket.dev/docs/package-scores) — scoring methodology
 - [Deno audit implementation](https://github.com/denoland/deno/blob/main/cli/tools/pm/audit.rs)
 - [bun-security-scanner](https://github.com/SocketDev/bun-security-scanner)
 - [Aikido malware lists](https://malware-list.aikido.dev/)
