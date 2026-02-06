@@ -25,13 +25,14 @@ from .sudo import disable_sudo, enable_sudo
 from .handlers import MitmproxyAddon, NfqueueHandler
 from .policy import PolicyEnforcer, validate_policy
 from .policy.gha import validate_runner_environment
+from .socket_dev import SocketDevClient
 from . import logging as proxy_logging
 
 # Graceful shutdown timeout (seconds)
 SHUTDOWN_TIMEOUT = 3.0
 
 
-async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer):
+async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer, socket_dev=None):
     """Run mitmproxy with our addon."""
     proxy_logging.logger.info("Initializing mitmproxy...")
     master = None
@@ -41,7 +42,7 @@ async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer):
             showhost=True,
         )
         master = DumpMaster(opts)
-        master.addons.add(MitmproxyAddon(bpf, enforcer))
+        master.addons.add(MitmproxyAddon(bpf, enforcer, socket_dev=socket_dev))
         proxy_logging.logger.info("Starting mitmproxy on port 8080 (TCP) and 8053 (DNS)...")
         await master.run()
     except asyncio.CancelledError:
@@ -209,9 +210,16 @@ async def async_main():
     )
     proxy_logging.logger.info(f"Policy enforcer created (audit_mode={audit_mode})")
 
+    # Optional Socket.dev package security checks
+    socket_security = os.environ.get("EGRESS_SOCKET_SECURITY", "0") == "1"
+    socket_dev = None
+    if socket_security:
+        socket_dev = SocketDevClient()
+        proxy_logging.logger.info("Socket.dev package security checks enabled")
+
     # Create tasks
     nfqueue_handler = NfqueueHandler(bpf, enforcer)
-    mitmproxy_task = asyncio.create_task(run_mitmproxy(bpf, enforcer), name="mitmproxy")
+    mitmproxy_task = asyncio.create_task(run_mitmproxy(bpf, enforcer, socket_dev=socket_dev), name="mitmproxy")
     nfqueue_task = asyncio.create_task(run_nfqueue(nfqueue_handler), name="nfqueue")
     tasks = [mitmproxy_task, nfqueue_task]
 

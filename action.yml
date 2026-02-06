@@ -15,6 +15,10 @@ inputs:
     description: 'Allow sudo for the runner user (less secure, needed for some actions like Tailscale)'
     required: false
     default: 'false'
+  socket-security:
+    description: 'Check package downloads against Socket.dev for known-malicious packages'
+    required: false
+    default: 'false'
   upload-log:
     description: 'Upload connection log as workflow artifact (default: only when audit mode, blocks, or errors)'
     required: false

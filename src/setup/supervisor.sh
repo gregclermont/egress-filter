@@ -36,6 +36,7 @@ start_proxy() {
         GITHUB_ACTION_REPOSITORY="${GITHUB_ACTION_REPOSITORY:-}" \
         GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}" \
         EGRESS_ALLOW_SUDO="${EGRESS_ALLOW_SUDO:-0}" \
+        EGRESS_SOCKET_SECURITY="${EGRESS_SOCKET_SECURITY:-0}" \
         "$REPO_ROOT"/.venv/bin/python -m proxy.main >> /tmp/proxy-stdout.log 2>&1 &
     PROXY_PID=$!
     echo "$PROXY_PID" > "$PIDFILE"

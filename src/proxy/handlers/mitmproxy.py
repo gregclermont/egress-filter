@@ -7,6 +7,7 @@ from mitmproxy import dns, http, tcp, tls
 from .. import logging as proxy_logging
 from ..bpf import BPFState
 from ..policy import PolicyEnforcer, ProcessInfo
+from ..purl import parse_registry_url
 from ..proc import get_proc_info, is_container_process
 from . import log_errors
 
@@ -14,15 +15,17 @@ from . import log_errors
 class MitmproxyAddon:
     """Mitmproxy addon for PID tracking, connection logging, and policy enforcement."""
 
-    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer):
+    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer, socket_dev=None):
         """Initialize the addon.
 
         Args:
             bpf: BPF state for PID lookup
             enforcer: Policy enforcer (use audit_mode=True for observation only)
+            socket_dev: Optional SocketDevClient for package security checks
         """
         self.bpf = bpf
         self.enforcer = enforcer
+        self.socket_dev = socket_dev
         # Stash allowed DNS request context for dns_response to log with answers.
         # Keyed by flow.id (a UUID string assigned at flow creation).
         self._pending_dns: dict[str, dict] = {}
@@ -145,6 +148,33 @@ class MitmproxyAddon:
                 {"Content-Type": "text/plain"},
             )
             return
+
+        # Socket.dev package security check (after policy allows, before logging)
+        if self.socket_dev:
+            pkg = parse_registry_url(url)
+            if pkg:
+                result = self.socket_dev.check(pkg.purl)
+                if result and result.blocked:
+                    proxy_logging.log_connection(
+                        type=conn_type,
+                        dst_ip=dst_ip,
+                        dst_port=dst_port,
+                        url=url,
+                        method=method,
+                        policy="deny",
+                        security_block=True,
+                        purl=pkg.purl,
+                        reasons=result.reasons,
+                        **proc_dict,
+                        src_port=src_port,
+                        pid=pid,
+                    )
+                    flow.response = http.Response.make(
+                        403,
+                        f"Blocked by Socket.dev: {pkg.purl}",
+                        {"Content-Type": "text/plain"},
+                    )
+                    return
 
         proxy_logging.log_connection(
             type=conn_type,
