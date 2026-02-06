@@ -41,7 +41,7 @@ class TestSocketDevClient:
         """Critical alert → blocked with reason."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "critical", "key": "malware"},
+                {"severity": "critical", "type": "malware"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):
@@ -56,7 +56,7 @@ class TestSocketDevClient:
         """High severity alert → blocked."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "high", "key": "protestware"},
+                {"severity": "high", "type": "protestware"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):
@@ -70,8 +70,8 @@ class TestSocketDevClient:
         """Low/medium severity → not blocked."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "low", "key": "noTests"},
-                {"severity": "medium", "key": "noLicense"},
+                {"severity": "low", "type": "noTests"},
+                {"severity": "medium", "type": "noLicense"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):
@@ -110,7 +110,7 @@ class TestSocketDevClient:
     def test_rate_limit_429(self):
         """429 → returns None, logs rate-limit warning."""
         error = urllib.error.HTTPError(
-            url="https://socket.dev/api/npm/score",
+            url="https://firewall-api.socket.dev/purl",
             code=429,
             msg="Too Many Requests",
             hdrs={},
@@ -128,7 +128,7 @@ class TestSocketDevClient:
     def test_http_500(self):
         """Server error → returns None."""
         error = urllib.error.HTTPError(
-            url="https://socket.dev/api/npm/score",
+            url="https://firewall-api.socket.dev/purl",
             code=500,
             msg="Internal Server Error",
             hdrs={},
@@ -167,9 +167,9 @@ class TestSocketDevClient:
         """Multiple critical/high alerts → all collected in reasons."""
         resp = _mock_response({
             "alerts": [
-                {"severity": "critical", "key": "malware"},
-                {"severity": "high", "key": "installScripts"},
-                {"severity": "low", "key": "noTests"},
+                {"severity": "critical", "type": "malware"},
+                {"severity": "high", "type": "installScripts"},
+                {"severity": "low", "type": "noTests"},
             ],
         })
         with patch("proxy.socket_dev.urllib.request.urlopen", return_value=resp):

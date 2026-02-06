@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("egress_proxy")
 
-_API_URL = "https://socket.dev/api/npm/score?purl="
+_API_BASE = "https://firewall-api.socket.dev/purl/"
 _TIMEOUT = 2  # seconds
+_USER_AGENT = "egress-filter/1.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,9 +46,10 @@ class SocketDevClient:
         return result
 
     def _fetch(self, purl: str) -> SecurityCheckResult | None:
-        url = f"{_API_URL}{urllib.request.quote(purl, safe='')}"
+        url = f"{_API_BASE}{urllib.request.quote(purl, safe='')}"
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         try:
-            with urllib.request.urlopen(url, timeout=_TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
                 first_line = resp.readline()
         except urllib.error.HTTPError as e:
             if e.code == 429:
@@ -72,7 +74,7 @@ class SocketDevClient:
             severity = alert.get("severity", "")
             if severity in ("critical", "high"):
                 blocked = True
-                key = alert.get("key", "unknown")
-                reasons.append(f"{severity}:{key}")
+                alert_type = alert.get("type", "unknown")
+                reasons.append(f"{severity}:{alert_type}")
 
         return SecurityCheckResult(blocked=blocked, reasons=reasons)
