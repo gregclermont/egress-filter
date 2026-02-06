@@ -38,7 +38,7 @@ results-receiver.actions.githubusercontent.com
 # Hosted compute watchdog (provisioning agent telemetry)
 # The provjobd daemon sends traces to a datacenter-specific endpoint.
 [exe=/tmp/provjobd*]
-*.githubapp.com
+hosted-compute-watchdog-prod-*.githubapp.com
 
 # Reset context for user rules that follow
 []
