@@ -211,6 +211,36 @@ Fields:
 | `host` | Hostname (SNI) | `https` (TLS-layer) |
 | `name` | DNS query name | `dns` |
 | `error` | Connection error type | On failure (e.g., `tls_client_rejected_ca`) |
+| `security_block` | Socket.dev blocked this package | When `socket-security` blocks |
+| `purl` | Package URL (e.g., `pkg:npm/evil@1.0`) | When `socket-security` blocks |
+| `reasons` | Alert reasons (e.g., `["critical:malware"]`) | When `socket-security` blocks |
+
+## Package Security (Socket.dev)
+
+When `socket-security: true` is set, the proxy intercepts package downloads from npm, PyPI, and Cargo registries and checks them against [Socket.dev](https://socket.dev)'s free API. Packages flagged with critical or high severity alerts (malware, protestware, etc.) are blocked with a 403 response.
+
+```yaml
+- uses: gregclermont/egress-filter@v1
+  with:
+    socket-security: true
+    policy: |
+      *.npmjs.org
+      files.pythonhosted.org
+      crates.io
+      static.crates.io
+```
+
+This is **opt-in** and **fail-open**:
+- Only enabled when `socket-security: true` is set
+- API errors or timeouts never break your build
+- Only checks URLs that your policy already allows
+- Results are cached in-memory for the duration of the CI run
+
+Blocked packages appear in the connection log with `security_block: true` and the package PURL:
+
+```json
+{"ts":"...","type":"https","url":"https://registry.npmjs.org/evil-pkg/-/evil-pkg-1.0.0.tgz","policy":"deny","security_block":true,"purl":"pkg:npm/evil-pkg@1.0.0","reasons":["critical:malware"]}
+```
 
 ## Inputs
 
@@ -219,6 +249,7 @@ Fields:
 | `policy` | Egress policy rules (one per line) | (none) |
 | `audit` | Log connections without blocking | `false` |
 | `allow-sudo` | Keep sudo enabled for runner user | `false` |
+| `socket-security` | Check package downloads against Socket.dev | `false` |
 | `upload-log` | Upload connection log as artifact | conditional |
 
 ### Connection Log Upload
