@@ -852,7 +852,7 @@ class TestGitHubTokenTagging:
     """Tests for GITHUB_TOKEN detection in request() hook."""
 
     def test_github_token_detected_bearer(self, bpf, enforcer):
-        """api.github.com + Bearer token -> github_token: True in log."""
+        """api.github.com + Bearer token -> github_token: True, no oidc_token."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
         addon, log_conn, _, _, _ = next(gen)
@@ -866,6 +866,7 @@ class TestGitHubTokenTagging:
 
         log_conn.assert_called_once()
         assert log_conn.call_args.kwargs["github_token"] is True
+        assert "oidc_token" not in log_conn.call_args.kwargs
 
     def test_github_token_detected_token_prefix(self, bpf, enforcer):
         """api.github.com + 'token <T>' format -> tagged."""
@@ -898,7 +899,7 @@ class TestGitHubTokenTagging:
         assert log_conn.call_args.kwargs["github_token"] is True
 
     def test_oidc_token_detected(self, bpf, enforcer):
-        """Request matching OIDC URL + token -> tagged."""
+        """Request matching OIDC URL + token -> tagged with both flags."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, oidc_token_url=OIDC_URL, oidc_token=OIDC_TOKEN)
         addon, log_conn, _, _, _ = next(gen)
@@ -911,6 +912,7 @@ class TestGitHubTokenTagging:
         addon.request(flow)
 
         assert log_conn.call_args.kwargs["github_token"] is True
+        assert log_conn.call_args.kwargs["oidc_token"] is True
 
     def test_github_token_detected_lowercase_bearer(self, bpf, enforcer):
         """Auth scheme is case-insensitive per RFC 7235."""

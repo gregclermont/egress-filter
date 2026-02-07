@@ -82,11 +82,16 @@ _EXPLICIT_MAP: list[tuple[str, str, str, str]] = [
     ("DELETE", "milestones/*", "issues", "write"),
 ]
 
-# Pre-compile: split path suffixes into segment tuples for matching
-_COMPILED_MAP: list[tuple[str, tuple[str, ...], str, str]] = [
-    (method, tuple(path.split("/")), scope, access)
-    for method, path, scope, access in _EXPLICIT_MAP
-]
+# Pre-compile: split path suffixes into segment tuples for matching.
+# Sorted by wildcard count (fewest first) so the first match is always
+# the most specific — entry ordering in _EXPLICIT_MAP doesn't matter.
+_COMPILED_MAP: list[tuple[str, tuple[str, ...], str, str]] = sorted(
+    [
+        (method, tuple(path.split("/")), scope, access)
+        for method, path, scope, access in _EXPLICIT_MAP
+    ],
+    key=lambda entry: sum(1 for s in entry[1] if s == "*"),
+)
 
 # Resource name -> permission scope (for pattern-based fallback)
 _RESOURCE_SCOPE: dict[str, str] = {
@@ -162,25 +167,13 @@ def match_permission(method: str, path: str) -> list[tuple[str, str]]:
     # HEAD is semantically equivalent to GET for permission purposes
     lookup_method = "GET" if method == "HEAD" else method
 
-    # 1. Try explicit map — prefer exact matches over wildcard matches.
-    # With equal wildcard counts, first match in _EXPLICIT_MAP wins;
-    # entries must be ordered so more specific patterns come first.
-    best_match = None
-    best_wildcards = None
+    # 1. Try explicit map — _COMPILED_MAP is sorted by wildcard count
+    # (fewest first), so the first match is the most specific.
     for pat_method, pat_segments, scope, access in _COMPILED_MAP:
         if pat_method == lookup_method and _segments_match(pat_segments, suffix):
-            wildcards = sum(1 for s in pat_segments if s == "*")
-            if best_wildcards is None or wildcards < best_wildcards:
-                best_match = (scope, access)
-                best_wildcards = wildcards
-                if wildcards == 0:
-                    break  # Exact match, can't do better
-
-    if best_match is not None:
-        scope, access = best_match
-        if "," in scope:
-            return [(s, access) for s in scope.split(",")]
-        return [(scope, access)]
+            if "," in scope:
+                return [(s, access) for s in scope.split(",")]
+            return [(scope, access)]
 
     # 2. Pattern-based fallback: match by resource name
     resource = suffix[0]
@@ -258,12 +251,9 @@ def analyze_permissions(connections: list[dict]) -> dict:
         host = parsed.hostname or ""
         path = parsed.path
 
-        # OIDC token request — subdomains of actions.githubusercontent.com.
-        # This hostname check is broader than the runtime check in
-        # handlers/mitmproxy.py::_is_github_token_request (which verifies
-        # the exact OIDC URL + bearer token). This is safe because the
-        # github_token flag is only set to True by that strict runtime check.
-        if host.endswith(".actions.githubusercontent.com"):
+        # OIDC token request — tagged by runtime token detection in
+        # handlers/mitmproxy.py::_classify_token (exact URL + bearer token match)
+        if conn.get("oidc_token"):
             _merge_permission(permissions, "id-token", "write")
             details.append((method, path, "id-token", "write"))
             continue

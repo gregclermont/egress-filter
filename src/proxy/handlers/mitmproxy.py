@@ -37,26 +37,32 @@ class MitmproxyAddon:
         # Keyed by flow.id (a UUID string assigned at flow creation).
         self._pending_dns: dict[str, dict] = {}
 
-    def _is_github_token_request(self, flow: http.HTTPFlow) -> bool:
-        """Check if this request uses the workflow's GITHUB_TOKEN or OIDC token."""
+    def _classify_token(self, flow: http.HTTPFlow) -> str | None:
+        """Classify the token used in this request.
+
+        Returns:
+            "github" for GITHUB_TOKEN on api.github.com / uploads.github.com
+            "oidc" for OIDC token request
+            None if no recognized token
+        """
         if not self._github_token and not self._oidc_token_url:
-            return False
+            return None
         auth = flow.request.headers.get("authorization", "")
         if not auth:
-            return False
+            return None
         # Check GITHUB_TOKEN on api.github.com and uploads.github.com
         # Use pretty_host: in transparent mode, flow.request.host returns the IP address
         # Auth scheme is case-insensitive per RFC 7235; token value is case-sensitive
         parts = auth.split(None, 1)
         if len(parts) != 2:
-            return False
+            return None
         scheme, credential = parts
         scheme_lower = scheme.lower()
         if self._github_token:
             host = flow.request.pretty_host
             if host in ("api.github.com", "uploads.github.com"):
                 if scheme_lower in ("token", "bearer") and credential == self._github_token:
-                    return True
+                    return "github"
         # Check OIDC token request (also case-insensitive scheme)
         if self._oidc_token_url and self._oidc_token:
             url = flow.request.pretty_url
@@ -65,8 +71,8 @@ class MitmproxyAddon:
                          or url[len(self._oidc_token_url)] in ("?", "&", "#"))
                     and scheme_lower == "bearer"
                     and credential == self._oidc_token):
-                return True
-        return False
+                return "oidc"
+        return None
 
     @log_errors
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
@@ -156,8 +162,14 @@ class MitmproxyAddon:
         # Determine connection type from URL scheme
         conn_type = "https" if url.startswith("https://") else "http"
 
-        # Detect if this request uses the workflow's GITHUB_TOKEN
-        token_kwargs = {"github_token": True} if self._is_github_token_request(flow) else {}
+        # Detect if this request uses the workflow's GITHUB_TOKEN or OIDC token
+        token_type = self._classify_token(flow)
+        token_kwargs = {}
+        if token_type == "github":
+            token_kwargs["github_token"] = True
+        elif token_type == "oidc":
+            token_kwargs["github_token"] = True
+            token_kwargs["oidc_token"] = True
 
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
         proc_dict = get_proc_info(pid)
