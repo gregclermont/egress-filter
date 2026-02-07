@@ -76,7 +76,7 @@ jobs:
                       8.8.8.8
           EOF
 
-          PYTHONPATH=src python -m proxy.policy test-workflow.yml
+          PYTHONPATH=src python -m proxy.cli validate test-workflow.yml
           echo "Exit code: $?"
 
       # Test 2: Dump rules
@@ -100,7 +100,7 @@ jobs:
                       GET /repos/*/releases
           EOF
 
-          PYTHONPATH=src python -m proxy.policy test-workflow.yml --dump-rules | tee rules.json
+          PYTHONPATH=src python -m proxy.cli validate test-workflow.yml --dump-rules | tee rules.json
 
           # Verify we got expected rules
           echo "Rule count: $(jq length rules.json)"
@@ -152,7 +152,7 @@ jobs:
                       168.63.129.16:80|32526
           EOF
 
-          PYTHONPATH=src python -m proxy.policy permissive-workflow.yml --analyze-log connections.jsonl -v
+          PYTHONPATH=src python -m proxy.cli analyze permissive-workflow.yml connections.jsonl -v
           exit_code=$?
 
           if [ $exit_code -ne 0 ]; then
@@ -182,7 +182,7 @@ jobs:
 
           # This should fail (exit 1) because many connections won't match
           set +e
-          PYTHONPATH=src python -m proxy.policy restrictive-workflow.yml --analyze-log connections.jsonl
+          PYTHONPATH=src python -m proxy.cli analyze restrictive-workflow.yml connections.jsonl
           exit_code=$?
           set -e
 
@@ -215,7 +215,7 @@ jobs:
 
           echo "=== Analysis with partial policy ==="
           set +e
-          PYTHONPATH=src python -m proxy.policy partial-workflow.yml --analyze-log connections.jsonl -v
+          PYTHONPATH=src python -m proxy.cli analyze partial-workflow.yml connections.jsonl -v
           set -e
           echo ""
           echo "=== Blocked connections should include DNS, UDP, TCP ==="
@@ -240,7 +240,7 @@ jobs:
           EOF
 
           set +e
-          PYTHONPATH=src python -m proxy.policy invalid-workflow.yml
+          PYTHONPATH=src python -m proxy.cli validate invalid-workflow.yml
           exit_code=$?
           set -e
 
@@ -281,7 +281,7 @@ jobs:
           EOF
 
           echo "=== Analysis with defaults ==="
-          PYTHONPATH=src python -m proxy.policy defaults-workflow.yml --analyze-log connections.jsonl -v
+          PYTHONPATH=src python -m proxy.cli analyze defaults-workflow.yml connections.jsonl -v
           exit_code=$?
 
           if [ $exit_code -ne 0 ]; then
@@ -317,7 +317,7 @@ jobs:
                       GET|HEAD http://example.com/*
           EOF
 
-          PYTHONPATH=src python -m proxy.policy url-workflow.yml --dump-rules | tee url-rules.json
+          PYTHONPATH=src python -m proxy.cli validate url-workflow.yml --dump-rules | tee url-rules.json
 
           # Verify URL rules parsed correctly
           echo ""

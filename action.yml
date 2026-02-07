@@ -19,6 +19,10 @@ inputs:
     description: 'Check package downloads against Socket.dev for known-malicious packages'
     required: false
     default: 'false'
+  github-token:
+    description: 'GitHub token for API permissions analysis (detected in requests, not used for API calls)'
+    required: false
+    default: ${{ github.token }}
   upload-log:
     description: 'Upload connection log as workflow artifact (default: only when audit mode, blocks, or errors)'
     required: false

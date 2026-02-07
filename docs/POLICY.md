@@ -285,7 +285,7 @@ The recommended workflow for developing a policy:
 
 3. **Analyze against your policy**:
    ```bash
-   egress-policy --analyze-log connections.jsonl workflow.yml
+   egress-filter analyze --log connections.jsonl workflow.yml
    ```
 
 4. **Iterate** - add rules for blocked connections, re-run analysis until all pass.
@@ -309,11 +309,11 @@ The policy CLI can be installed standalone without the heavy proxy dependencies 
 
 ```bash
 # Run directly without installing (recommended for one-off use)
-uvx --from 'git+https://github.com/gregclermont/egress-filter' egress-policy workflow.yml
+uvx --from 'git+https://github.com/gregclermont/egress-filter' egress-filter validate workflow.yml
 
 # Install as a global tool
 uv tool install 'git+https://github.com/gregclermont/egress-filter'
-egress-policy workflow.yml
+egress-filter validate workflow.yml
 
 # Or with pip
 pip install 'git+https://github.com/gregclermont/egress-filter'
@@ -323,13 +323,16 @@ pip install 'git+https://github.com/gregclermont/egress-filter'
 
 ```bash
 # Validate policy syntax
-egress-policy workflow.yml
+egress-filter validate workflow.yml
 
 # Analyze connections against policy (verbose shows allowed connections too)
-egress-policy --analyze-log connections.jsonl -v workflow.yml
+egress-filter analyze --log connections.jsonl -v workflow.yml
 
 # Dump parsed rules as JSON
-egress-policy --dump-rules workflow.yml
+egress-filter validate workflow.yml --dump-rules
+
+# Analyze GitHub API permissions from connection log
+egress-filter permissions connections.jsonl
 ```
 
 ### Enable Debug Logging

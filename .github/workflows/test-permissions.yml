@@ -1,0 +1,339 @@
+name: Test permissions analysis
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  permissions-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # Wide permissions so we can exercise many API endpoints
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      checks: write
+      statuses: write
+      actions: read
+      deployments: write
+      id-token: write
+
+    steps:
+      - name: Setup egress filter (audit mode)
+        uses: gregclermont/egress-filter@test
+        with:
+          audit: true
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            src
+            tests
+          fetch-depth: 1
+
+      # ---------------------------------------------------------------
+      # Exercise GitHub API endpoints via actions/github-script
+      # ---------------------------------------------------------------
+
+      # contents: read
+      - name: "API: contents read (list branches)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branches = await github.rest.repos.listBranches({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 1,
+            });
+            console.log(`Branches: ${branches.data.length}`);
+
+      # contents: write (create + delete a lightweight tag)
+      - name: "API: contents write (create and delete tag)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'test-permissions-tmp';
+            const sha = context.sha;
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/tags/${tag}`,
+              sha,
+            });
+            console.log(`Created tag ${tag}`);
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `tags/${tag}`,
+            });
+            console.log(`Deleted tag ${tag}`);
+
+      # issues: write (create + close issue)
+      - name: "API: issues write (create and close)"
+        id: issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '[test] permissions analysis - auto cleanup',
+              body: 'Created by test-permissions workflow. Will be closed automatically.',
+              labels: [],
+            });
+            console.log(`Created issue #${issue.data.number}`);
+            core.setOutput('number', issue.data.number);
+
+            // Brief delay for GitHub eventual consistency
+            await new Promise(r => setTimeout(r, 2000));
+
+            // Comment on it (exercises issues/*/comments)
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.data.number,
+              body: 'Test comment from permissions analysis workflow.',
+            });
+            console.log('Added comment');
+
+            // Add a label
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.data.number,
+              labels: ['test'],
+            });
+            console.log('Added label');
+
+            // Close it
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.data.number,
+              state: 'closed',
+            });
+            console.log(`Closed issue #${issue.data.number}`);
+
+      # pull-requests: read (list PRs)
+      - name: "API: pull-requests read (list)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pulls = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              per_page: 1,
+            });
+            console.log(`PRs: ${pulls.data.length}`);
+
+      # actions: read (list workflow runs)
+      - name: "API: actions read (list runs)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 1,
+            });
+            console.log(`Workflow runs: ${runs.data.total_count}`);
+
+      # statuses: write (create commit status)
+      - name: "API: statuses write (create status)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'success',
+              description: 'Permissions analysis test',
+              context: 'test/permissions-analysis',
+            });
+            console.log('Created commit status');
+
+      # checks: write (create + complete check run)
+      - name: "API: checks write (create check run)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'permissions-analysis-test',
+              head_sha: context.sha,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: 'Test check',
+                summary: 'Created by test-permissions workflow.',
+              },
+            });
+            console.log(`Created check run ${check.data.id}`);
+
+      # deployments: write (create + mark inactive)
+      - name: "API: deployments write (create deployment)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'test-permissions',
+              auto_merge: false,
+              required_contexts: [],
+              transient_environment: true,
+            });
+            console.log(`Created deployment ${deployment.data.id}`);
+
+            // Mark it inactive
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'inactive',
+            });
+            console.log('Marked deployment inactive');
+
+      # id-token: write (request OIDC token)
+      - name: "API: id-token write (OIDC request)"
+        run: |
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            # Request an OIDC token (the actual JWT)
+            response=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://test-permissions")
+            echo "OIDC token request succeeded ($(echo "$response" | wc -c) bytes)"
+          else
+            echo "OIDC not available (ACTIONS_ID_TOKEN_REQUEST_URL not set)"
+          fi
+
+      # Issue/PR disambiguation edge case:
+      # Read the issue we created via the /issues/ endpoint AND confirm
+      # it's NOT a PR via /pulls/ — tests the disambiguation logic
+      - name: "API: disambiguation (issue via /issues/ and /pulls/ check)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNum = ${{ steps.issue.outputs.number }};
+
+            // Read via /issues/ endpoint (ambiguous)
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNum,
+            });
+            console.log(`Read issue #${issueNum} via /issues/: "${issue.data.title}"`);
+
+            // Try /pulls/ endpoint — should 404 since it's an issue, not a PR
+            try {
+              await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: issueNum,
+              });
+              console.log(`#${issueNum} is actually a PR`);
+            } catch (e) {
+              if (e.status === 404) {
+                console.log(`#${issueNum} confirmed as issue (not a PR)`);
+              }
+            }
+
+      # ---------------------------------------------------------------
+      # Analyze the connection log
+      # ---------------------------------------------------------------
+
+      - name: Install CLI dependencies
+        run: pip install pyyaml parsimonious
+
+      - name: "Analyze: run --permissions on connection log"
+        run: |
+          echo "=== Connection log entries with github_token ==="
+          grep -c '"github_token":true' /tmp/connections.jsonl || echo "0 entries"
+          echo ""
+
+          echo "=== Permissions analysis ==="
+          PYTHONPATH=src python -m proxy.cli permissions /tmp/connections.jsonl | tee /tmp/permissions.yml
+          echo ""
+
+      - name: "Verify: expected permissions detected"
+        run: |
+          set -e
+          perms=/tmp/permissions.yml
+
+          check_scope() {
+            local scope=$1 access=$2
+            if grep -q "  $scope: $access" "$perms"; then
+              echo "PASS: $scope: $access"
+            elif grep -q "  $scope: write" "$perms" && [ "$access" = "read" ]; then
+              echo "PASS: $scope: write (supersedes expected read)"
+            else
+              echo "FAIL: expected $scope: $access"
+              FAILED=1
+            fi
+          }
+
+          FAILED=0
+          check_scope "contents" "write"
+          check_scope "issues" "write"
+          check_scope "pull-requests" "read"
+          check_scope "actions" "read"
+          check_scope "statuses" "write"
+          check_scope "checks" "write"
+          check_scope "deployments" "write"
+          check_scope "id-token" "write"
+
+          echo ""
+          if [ "$FAILED" -eq 1 ]; then
+            echo "=== Full output ==="
+            cat "$perms"
+            echo ""
+            echo "=== github_token connections ==="
+            grep '"github_token":true' /tmp/connections.jsonl | python3 -c "
+          import sys, json
+          for line in sys.stdin:
+              c = json.loads(line)
+              print(f\"{c.get('method','?'):6s} {c.get('url','?')}\")
+          "
+            exit 1
+          fi
+          echo ""
+          echo "All expected permissions detected!"
+
+      - name: "Cleanup: close test issue if still open"
+        if: always() && steps.issue.outputs.number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNum = ${{ steps.issue.outputs.number }};
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNum,
+              });
+              if (issue.data.state === 'open') {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNum,
+                  state: 'closed',
+                });
+                console.log(`Cleaned up: closed issue #${issueNum}`);
+              }
+            } catch (e) {
+              console.log(`Cleanup skipped: ${e.message}`);
+            }
+
+      - name: Show proxy logs
+        if: always()
+        run: cat /tmp/proxy.log || echo "No proxy log found"
