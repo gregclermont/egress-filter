@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Command-line utility to validate egress filter policies in workflow YAML files.
+"""Command-line utility for egress filter policy management.
 
 Usage:
-    python -m proxy.policy <workflow.yml> [--strict]
-    python -m proxy.policy <workflow.yml> --analyze-log <connections.jsonl>
+    egress-policy validate <workflow.yml> [--strict] [--dump-rules]
+    egress-policy analyze <workflow.yml> <connections.jsonl>
+    egress-policy permissions <connections.jsonl>
 
 Exit codes:
     0 - Valid policy (or all connections allowed in analyze mode)
@@ -410,141 +411,26 @@ def build_combined_policy(
     return combined_policy
 
 
-def _run_permissions_analysis(args) -> None:
-    """Analyze GitHub API token usage from a connections log."""
-    from ..permissions import analyze_permissions, format_permissions_yaml
-
-    # Warn about flags that are ignored in --permissions mode
-    ignored = []
-    if args.workflow:
-        ignored.append("workflow file")
-    if getattr(args, "analyze_log", None):
-        ignored.append("--analyze-log")
-    if args.strict:
-        ignored.append("--strict")
-    if args.dump_rules:
-        ignored.append("--dump-rules")
-    if ignored:
-        print(f"Warning: {', '.join(ignored)} ignored with --permissions",
-              file=sys.stderr)
-
-    if not args.permissions.exists():
-        print(f"Error: Log file not found: {args.permissions}", file=sys.stderr)
+def _load_workflow(path: Path) -> dict:
+    """Load and validate a workflow YAML file."""
+    if not path.exists():
+        print(f"Error: File not found: {path}", file=sys.stderr)
         sys.exit(2)
-
-    connections = load_connections_log(args.permissions)
-    if not connections:
-        print("No connections found in log file.", file=sys.stderr)
-        sys.exit(0)
-
-    result = analyze_permissions(connections)
-
-    if not result["permissions"]:
-        print("No GitHub API calls with GITHUB_TOKEN detected.")
-        print(
-            "\nNote: Token detection requires the proxy to have GITHUB_TOKEN"
-            "\n(set automatically by GitHub Actions)."
-        )
-        sys.exit(0)
-
-    print(format_permissions_yaml(result))
-
-    if result["unknown"]:
-        print("# Unrecognized API calls (may need manual review):", file=sys.stderr)
-        for method, path in result["unknown"]:
-            print(f"#   {method} {path}", file=sys.stderr)
-
-    sys.exit(0)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Validate egress filter policies in GitHub Actions workflow files.",
-        epilog="Exit codes: 0=valid/all-allowed, 1=invalid/some-blocked, 2=file error",
-    )
-    parser.add_argument("workflow", type=Path, nargs="?", default=None,
-                        help="Path to workflow YAML file")
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Treat any parse error as fatal (exit 1 on first error)",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Show valid rules (validate) or allowed connections (analyze)",
-    )
-    parser.add_argument(
-        "-q", "--quiet", action="store_true", help="Only output errors, no summary"
-    )
-    parser.add_argument(
-        "--dump-rules",
-        action="store_true",
-        help="Output all parsed rules as JSON to stdout",
-    )
-    parser.add_argument(
-        "--analyze-log",
-        type=Path,
-        metavar="CONNECTIONS.jsonl",
-        help="Analyze a connections log against the policy (test before deploying)",
-    )
-    parser.add_argument(
-        "--no-defaults",
-        action="store_true",
-        help="Disable GitHub Actions infrastructure defaults (local DNS, git, actions runner)",
-    )
-    parser.add_argument(
-        "--include-preset",
-        action="append",
-        metavar="NAME",
-        choices=list(PRESETS.keys()),
-        help=f"Include a preset policy. Available: {', '.join(PRESETS.keys())}",
-    )
-    parser.add_argument(
-        "--no-runner-cgroup",
-        action="store_true",
-        help="Disable the default runner cgroup constraint (for generic/non-runner use)",
-    )
-    parser.add_argument(
-        "--repo",
-        metavar="OWNER/REPO",
-        help="Substitute {owner} and {repo} placeholders in policy (e.g., 'myorg/myrepo')",
-    )
-    parser.add_argument(
-        "--permissions",
-        type=Path,
-        metavar="CONNECTIONS.jsonl",
-        help="Analyze GitHub API token usage and recommend minimum permissions",
-    )
-
-    args = parser.parse_args()
-
-    # Handle --permissions mode (doesn't need a workflow file)
-    if args.permissions:
-        _run_permissions_analysis(args)
-        return
-
-    if not args.workflow:
-        parser.error("workflow argument is required (unless using --permissions)")
-
-    # Read workflow file
-    if not args.workflow.exists():
-        print(f"Error: File not found: {args.workflow}", file=sys.stderr)
-        sys.exit(2)
-
     try:
-        with open(args.workflow) as f:
+        with open(path) as f:
             workflow = yaml.safe_load(f)
     except yaml.YAMLError as e:
         print(f"Error: Invalid YAML: {e}", file=sys.stderr)
         sys.exit(2)
-
     if not isinstance(workflow, dict):
         print(f"Error: Workflow file is not a valid YAML mapping", file=sys.stderr)
         sys.exit(2)
+    return workflow
 
-    # Find policies
+
+def _cmd_validate(args) -> None:
+    """Handle the 'validate' subcommand."""
+    workflow = _load_workflow(args.workflow)
     policies = find_policies_in_workflow(workflow)
 
     if not policies:
@@ -580,41 +466,6 @@ def main():
             all_rules.append(rule_to_dict(rule))
         print(json.dumps(all_rules, indent=2))
         sys.exit(1 if errors else 0)
-
-    # Handle --analyze-log mode
-    if args.analyze_log:
-        if not args.analyze_log.exists():
-            print(f"Error: Log file not found: {args.analyze_log}", file=sys.stderr)
-            sys.exit(2)
-
-        combined_policy = build_combined_policy(
-            policies,
-            include_defaults=not args.no_defaults,
-            presets=args.include_preset,
-            repo=args.repo,
-        )
-
-        # Report syntax errors to stderr
-        errors = validate_policy(combined_policy)
-        if errors:
-            for line_num, line, error in errors:
-                print(f"Syntax error on line {line_num}: {line}", file=sys.stderr)
-            print(file=sys.stderr)
-
-        # Load connections
-        connections = load_connections_log(args.analyze_log)
-        if not connections:
-            print("No connections found in log file.", file=sys.stderr)
-            sys.exit(0)
-
-        # Apply runner cgroup constraint by default (disable with --no-runner-cgroup)
-        defaults = None if args.no_runner_cgroup else RUNNER_DEFAULTS
-
-        # Analyze
-        results = analyze_connections(combined_policy, connections, defaults=defaults)
-        exit_code = print_analysis_results(results, verbose=args.verbose)
-        # Exit with error if there were syntax errors
-        sys.exit(1 if errors else exit_code)
 
     # Validate each policy
     total_errors = 0
@@ -669,6 +520,158 @@ def main():
             print(f"\nValidation passed: {total_rules} rule(s)")
 
     sys.exit(1 if total_errors > 0 else 0)
+
+
+def _cmd_analyze(args) -> None:
+    """Handle the 'analyze' subcommand."""
+    workflow = _load_workflow(args.workflow)
+    policies = find_policies_in_workflow(workflow)
+
+    if not policies:
+        if not args.quiet:
+            print(
+                f"No egress-filter policies found in {args.workflow}", file=sys.stderr
+            )
+        sys.exit(0)
+
+    if not args.log.exists():
+        print(f"Error: Log file not found: {args.log}", file=sys.stderr)
+        sys.exit(2)
+
+    combined_policy = build_combined_policy(
+        policies,
+        include_defaults=not args.no_defaults,
+        presets=args.include_preset,
+        repo=args.repo,
+    )
+
+    # Report syntax errors to stderr
+    errors = validate_policy(combined_policy)
+    if errors:
+        for line_num, line, error in errors:
+            print(f"Syntax error on line {line_num}: {line}", file=sys.stderr)
+        print(file=sys.stderr)
+
+    # Load connections
+    connections = load_connections_log(args.log)
+    if not connections:
+        print("No connections found in log file.", file=sys.stderr)
+        sys.exit(0)
+
+    # Apply runner cgroup constraint by default (disable with --no-runner-cgroup)
+    defaults = None if args.no_runner_cgroup else RUNNER_DEFAULTS
+
+    # Analyze
+    results = analyze_connections(combined_policy, connections, defaults=defaults)
+    exit_code = print_analysis_results(results, verbose=args.verbose)
+    # Exit with error if there were syntax errors
+    sys.exit(1 if errors else exit_code)
+
+
+def _cmd_permissions(args) -> None:
+    """Handle the 'permissions' subcommand."""
+    from ..permissions import analyze_permissions, format_permissions_yaml
+
+    if not args.log.exists():
+        print(f"Error: Log file not found: {args.log}", file=sys.stderr)
+        sys.exit(2)
+
+    connections = load_connections_log(args.log)
+    if not connections:
+        print("No connections found in log file.", file=sys.stderr)
+        sys.exit(0)
+
+    result = analyze_permissions(connections)
+
+    if not result["permissions"]:
+        print("No GitHub API calls with GITHUB_TOKEN detected.")
+        print(
+            "\nNote: Token detection requires the proxy to have GITHUB_TOKEN"
+            "\n(set automatically by GitHub Actions)."
+        )
+        sys.exit(0)
+
+    print(format_permissions_yaml(result))
+
+    if result["unknown"]:
+        print("# Unrecognized API calls (may need manual review):", file=sys.stderr)
+        for method, path in result["unknown"]:
+            print(f"#   {method} {path}", file=sys.stderr)
+
+    sys.exit(0)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Egress filter policy tools.",
+        epilog="Exit codes: 0=valid/all-allowed, 1=invalid/some-blocked, 2=file error",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Shared parser for policy-building options (used by validate + analyze)
+    policy_parent = argparse.ArgumentParser(add_help=False)
+    policy_parent.add_argument(
+        "--no-defaults",
+        action="store_true",
+        help="Disable GitHub Actions infrastructure defaults",
+    )
+    policy_parent.add_argument(
+        "--include-preset",
+        action="append",
+        metavar="NAME",
+        choices=list(PRESETS.keys()),
+        help=f"Include a preset policy. Available: {', '.join(PRESETS.keys())}",
+    )
+    policy_parent.add_argument(
+        "--no-runner-cgroup",
+        action="store_true",
+        help="Disable the default runner cgroup constraint",
+    )
+    policy_parent.add_argument(
+        "--repo",
+        metavar="OWNER/REPO",
+        help="Substitute {owner} and {repo} placeholders in policy",
+    )
+
+    # validate
+    p_validate = subparsers.add_parser(
+        "validate", parents=[policy_parent],
+        help="Validate policy syntax in a workflow file",
+    )
+    p_validate.add_argument("workflow", type=Path, help="Path to workflow YAML file")
+    p_validate.add_argument("--strict", action="store_true",
+                            help="Exit on first error")
+    p_validate.add_argument("-v", "--verbose", action="store_true",
+                            help="Show valid rules")
+    p_validate.add_argument("-q", "--quiet", action="store_true",
+                            help="Only output errors")
+    p_validate.add_argument("--dump-rules", action="store_true",
+                            help="Output parsed rules as JSON")
+    p_validate.set_defaults(func=_cmd_validate)
+
+    # analyze
+    p_analyze = subparsers.add_parser(
+        "analyze", parents=[policy_parent],
+        help="Test a policy against a connection log",
+    )
+    p_analyze.add_argument("workflow", type=Path, help="Path to workflow YAML file")
+    p_analyze.add_argument("log", type=Path, help="Path to connections JSONL log")
+    p_analyze.add_argument("-v", "--verbose", action="store_true",
+                           help="Show allowed connections")
+    p_analyze.add_argument("-q", "--quiet", action="store_true",
+                           help="Only output errors")
+    p_analyze.set_defaults(func=_cmd_analyze)
+
+    # permissions
+    p_permissions = subparsers.add_parser(
+        "permissions",
+        help="Analyze GitHub API token usage and recommend minimum permissions",
+    )
+    p_permissions.add_argument("log", type=Path, help="Path to connections JSONL log")
+    p_permissions.set_defaults(func=_cmd_permissions)
+
+    args = parser.parse_args()
+    args.func(args)
 
 
 if __name__ == "__main__":

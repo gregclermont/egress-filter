@@ -272,7 +272,7 @@ class TestAnalyzePermissions:
     def test_oidc_request(self):
         conns = [
             _conn("https://vstoken.actions.githubusercontent.com/_apis/pipelines/1/runs/1?api-version=7.1",
-                  github_token=True, oidc_token=True),
+                  github_token=True),
         ]
         result = analyze_permissions(conns)
         assert result["permissions"] == {"id-token": "write"}
@@ -367,15 +367,6 @@ class TestAnalyzePermissions:
         assert "pull-requests" in result["permissions"]
         assert "issues" not in result["permissions"]
 
-    def test_oidc_requires_oidc_token_flag(self):
-        """OIDC detection uses oidc_token flag, not hostname heuristics."""
-        conns = [
-            _conn("https://vstoken.actions.githubusercontent.com/foo",
-                  github_token=True),
-        ]
-        result = analyze_permissions(conns)
-        # Without oidc_token=True, even an OIDC hostname is not mapped to id-token
-        assert result["permissions"] == {}
 
     def test_uploads_github_com_get_is_read(self):
         """GET to uploads.github.com -> contents: read, not write."""

@@ -251,9 +251,8 @@ def analyze_permissions(connections: list[dict]) -> dict:
         host = parsed.hostname or ""
         path = parsed.path
 
-        # OIDC token request — tagged by runtime token detection in
-        # handlers/mitmproxy.py::_classify_token (exact URL + bearer token match)
-        if conn.get("oidc_token"):
+        # OIDC token request (host is *.actions.githubusercontent.com)
+        if host.endswith(".actions.githubusercontent.com"):
             _merge_permission(permissions, "id-token", "write")
             details.append((method, path, "id-token", "write"))
             continue

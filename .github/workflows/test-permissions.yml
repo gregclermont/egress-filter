@@ -262,7 +262,7 @@ jobs:
           echo ""
 
           echo "=== Permissions analysis ==="
-          PYTHONPATH=src python -m proxy.policy --permissions /tmp/connections.jsonl | tee /tmp/permissions.yml
+          PYTHONPATH=src python -m proxy.policy permissions /tmp/connections.jsonl | tee /tmp/permissions.yml
           echo ""
 
       - name: "Verify: expected permissions detected"
