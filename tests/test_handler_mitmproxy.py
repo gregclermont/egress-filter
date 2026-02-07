@@ -971,6 +971,22 @@ class TestGitHubTokenTagging:
 
         assert "github_token" not in log_conn.call_args.kwargs
 
+    def test_oidc_url_boundary_not_matched(self, bpf, enforcer):
+        """OIDC URL prefix match must not match longer run IDs."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, oidc_token_url=OIDC_URL, oidc_token=OIDC_TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        # URL ends with /runs/1 but request is /runs/1234 — should NOT match
+        flow = make_http_flow(
+            url=f"{OIDC_URL}234",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"Bearer {OIDC_TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert "github_token" not in log_conn.call_args.kwargs
+
     def test_tagged_on_blocked_request(self, bpf, enforcer):
         """Token detected even when policy blocks."""
         enforcer.check_http.return_value = _make_decision(False)

@@ -55,7 +55,10 @@ class MitmproxyAddon:
         # Check OIDC token request
         if self._oidc_token_url and self._oidc_token:
             url = flow.request.pretty_url
-            if url.startswith(self._oidc_token_url) and auth == f"Bearer {self._oidc_token}":
+            if (url.startswith(self._oidc_token_url)
+                    and (len(url) == len(self._oidc_token_url)
+                         or url[len(self._oidc_token_url)] in ("?", "&", "#"))
+                    and auth == f"Bearer {self._oidc_token}"):
                 return True
         return False
 

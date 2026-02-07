@@ -311,6 +311,44 @@ class TestAnalyzePermissions:
         assert len(result["details"]) == 1
         assert result["details"][0][2] == "contents"
 
+    def test_repositories_prefix_disambiguation(self):
+        """/repositories/{id}/pulls/{num} confirms PR for disambiguation."""
+        conns = [
+            _conn("https://api.github.com/repositories/12345/pulls/7"),
+            _conn("https://api.github.com/repositories/12345/issues/7/comments"),
+        ]
+        result = analyze_permissions(conns)
+        assert "pull-requests" in result["permissions"]
+        # Should NOT have issues since #7 was confirmed as PR
+        assert "issues" not in result["permissions"]
+
+    def test_repositories_prefix_ambiguous_fallback(self):
+        """/repositories/{id}/issues/{num} without /pulls/ -> both scopes."""
+        conns = [
+            _conn("https://api.github.com/repositories/12345/issues/7/comments"),
+        ]
+        result = analyze_permissions(conns)
+        assert "issues" in result["permissions"]
+        assert "pull-requests" in result["permissions"]
+
+    def test_oidc_hostname_suffix_match(self):
+        """OIDC detection uses suffix match, not substring."""
+        conns = [
+            _conn("https://not-actions.githubusercontent.com/foo",
+                  github_token=True),
+        ]
+        result = analyze_permissions(conns)
+        assert result["permissions"] == {}
+
+    def test_uploads_github_com_get_is_read(self):
+        """GET to uploads.github.com -> contents: read, not write."""
+        conns = [
+            _conn("https://uploads.github.com/repos/o/r/releases/1/assets",
+                  method="GET", github_token=True),
+        ]
+        result = analyze_permissions(conns)
+        assert result["permissions"] == {"contents": "read"}
+
 
 # ---------------------------------------------------------------------------
 # format_permissions_yaml

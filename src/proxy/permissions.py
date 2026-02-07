@@ -192,8 +192,9 @@ def match_permission(method: str, path: str) -> list[tuple[str, str]]:
 # Issue/PR disambiguation
 # ---------------------------------------------------------------------------
 
-_PULLS_RE = re.compile(r"/repos/[^/]+/[^/]+/pulls/(\d+)")
-_ISSUES_RE = re.compile(r"/repos/[^/]+/[^/]+/issues/(\d+)")
+_REPO_PREFIX = r"(?:/repos/[^/]+/[^/]+|/repositories/\d+)"
+_PULLS_RE = re.compile(_REPO_PREFIX + r"/pulls/(\d+)")
+_ISSUES_RE = re.compile(_REPO_PREFIX + r"/issues/(\d+)")
 
 
 def _find_pr_numbers(connections: list[dict]) -> set[str]:
@@ -261,15 +262,16 @@ def analyze_permissions(connections: list[dict]) -> dict:
         path = parsed.path
 
         # OIDC token request
-        if "actions.githubusercontent.com" in host:
+        if host.endswith(".actions.githubusercontent.com"):
             _merge_permission(permissions, "id-token", "write")
             details.append((method, path, "id-token", "write"))
             continue
 
-        # Release asset upload
+        # Release asset upload / download
         if host == "uploads.github.com":
-            _merge_permission(permissions, "contents", "write")
-            details.append((method, path, "contents", "write"))
+            access = "read" if method in ("GET", "HEAD") else "write"
+            _merge_permission(permissions, "contents", access)
+            details.append((method, path, "contents", access))
             continue
 
         # Standard API

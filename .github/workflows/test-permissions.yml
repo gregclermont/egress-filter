@@ -309,6 +309,31 @@ jobs:
           echo ""
           echo "All expected permissions detected!"
 
+      - name: "Cleanup: close test issue if still open"
+        if: always() && steps.issue.outputs.number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNum = ${{ steps.issue.outputs.number }};
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNum,
+              });
+              if (issue.data.state === 'open') {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNum,
+                  state: 'closed',
+                });
+                console.log(`Cleaned up: closed issue #${issueNum}`);
+              }
+            } catch (e) {
+              console.log(`Cleanup skipped: ${e.message}`);
+            }
+
       - name: Show proxy logs
         if: always()
         run: cat /tmp/proxy.log || echo "No proxy log found"
