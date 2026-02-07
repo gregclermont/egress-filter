@@ -524,6 +524,12 @@ def _cmd_validate(args) -> None:
 
 def _cmd_analyze(args) -> None:
     """Handle the 'analyze' subcommand."""
+    log_path = args.log or args.log_flag
+    if not log_path:
+        print("Error: connection log required (positional or --log)", file=sys.stderr)
+        sys.exit(2)
+    args.log = log_path
+
     workflow = _load_workflow(args.workflow)
     policies = find_policies_in_workflow(workflow)
 
@@ -655,7 +661,10 @@ def main():
         help="Test a policy against a connection log",
     )
     p_analyze.add_argument("workflow", type=Path, help="Path to workflow YAML file")
-    p_analyze.add_argument("log", type=Path, help="Path to connections JSONL log")
+    p_analyze.add_argument("log", type=Path, nargs="?", default=None,
+                           help="Path to connections JSONL log")
+    p_analyze.add_argument("--log", type=Path, dest="log_flag", metavar="CONNECTIONS.jsonl",
+                           help="Path to connections JSONL log (alternative to positional)")
     p_analyze.add_argument("-v", "--verbose", action="store_true",
                            help="Show allowed connections")
     p_analyze.add_argument("-q", "--quiet", action="store_true",
