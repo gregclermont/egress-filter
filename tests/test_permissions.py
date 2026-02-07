@@ -183,6 +183,20 @@ class TestMatchPermission:
 
     # -- Edge cases --
 
+    # -- HEAD method --
+
+    def test_head_treated_as_get_explicit(self):
+        """HEAD matches explicit GET entries (same permission)."""
+        result = match_permission("HEAD", "/repos/o/r/branches")
+        assert result == [("contents", "read")]
+
+    def test_head_treated_as_get_pattern(self):
+        """HEAD matches pattern-based fallback as read."""
+        result = match_permission("HEAD", "/repos/o/r/actions/runs")
+        assert result == [("actions", "read")]
+
+    # -- Edge cases --
+
     def test_unknown_endpoint(self):
         result = match_permission("GET", "/some/random/path")
         assert result == [("unknown", "unknown")]
@@ -330,6 +344,27 @@ class TestAnalyzePermissions:
         result = analyze_permissions(conns)
         assert "issues" in result["permissions"]
         assert "pull-requests" in result["permissions"]
+
+    def test_cross_repo_disambiguation_independent(self):
+        """PR #42 in repo a/x should not affect issue #42 in repo b/y."""
+        conns = [
+            _conn("https://api.github.com/repos/a/x/pulls/42"),
+            _conn("https://api.github.com/repos/b/y/issues/42/comments"),
+        ]
+        result = analyze_permissions(conns)
+        # #42 in b/y is unresolved — both scopes should be reported
+        assert "issues" in result["permissions"]
+        assert "pull-requests" in result["permissions"]
+
+    def test_cross_repo_disambiguation_same_repo(self):
+        """PR #42 confirmed in same repo still disambiguates correctly."""
+        conns = [
+            _conn("https://api.github.com/repos/o/r/pulls/42"),
+            _conn("https://api.github.com/repos/o/r/issues/42/comments"),
+        ]
+        result = analyze_permissions(conns)
+        assert "pull-requests" in result["permissions"]
+        assert "issues" not in result["permissions"]
 
     def test_oidc_hostname_suffix_match(self):
         """OIDC detection uses suffix match, not substring."""

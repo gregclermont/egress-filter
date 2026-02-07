@@ -912,6 +912,36 @@ class TestGitHubTokenTagging:
 
         assert log_conn.call_args.kwargs["github_token"] is True
 
+    def test_github_token_detected_lowercase_bearer(self, bpf, enforcer):
+        """Auth scheme is case-insensitive per RFC 7235."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo/issues",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"bearer {TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert log_conn.call_args.kwargs["github_token"] is True
+
+    def test_github_token_detected_uppercase_token(self, bpf, enforcer):
+        """'TOKEN <value>' is also valid per RFC 7235."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo/pulls",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"TOKEN {TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert log_conn.call_args.kwargs["github_token"] is True
+
     def test_different_host_not_tagged(self, bpf, enforcer):
         """example.com with matching auth -> NOT tagged."""
         enforcer.check_http.return_value = _make_decision(True)

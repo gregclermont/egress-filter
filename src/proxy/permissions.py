@@ -159,12 +159,14 @@ def match_permission(method: str, path: str) -> list[tuple[str, str]]:
         return []
 
     method = method.upper()
+    # HEAD is semantically equivalent to GET for permission purposes
+    lookup_method = "GET" if method == "HEAD" else method
 
     # 1. Try explicit map — prefer exact matches over wildcard matches
     best_match = None
     best_wildcards = None
     for pat_method, pat_segments, scope, access in _COMPILED_MAP:
-        if pat_method == method and _segments_match(pat_segments, suffix):
+        if pat_method == lookup_method and _segments_match(pat_segments, suffix):
             wildcards = sum(1 for s in pat_segments if s == "*")
             if best_wildcards is None or wildcards < best_wildcards:
                 best_match = (scope, access)
@@ -192,30 +194,37 @@ def match_permission(method: str, path: str) -> list[tuple[str, str]]:
 # Issue/PR disambiguation
 # ---------------------------------------------------------------------------
 
-_REPO_PREFIX = r"(?:/repos/[^/]+/[^/]+|/repositories/\d+)"
+_REPO_PREFIX = r"(/repos/[^/]+/[^/]+|/repositories/\d+)"
 _PULLS_RE = re.compile(_REPO_PREFIX + r"/pulls/(\d+)")
 _ISSUES_RE = re.compile(_REPO_PREFIX + r"/issues/(\d+)")
 
 
-def _find_pr_numbers(connections: list[dict]) -> set[str]:
-    """Find issue numbers that are confirmed PRs (seen in /pulls/ URLs)."""
-    pr_numbers: set[str] = set()
+def _find_pr_numbers(connections: list[dict]) -> set[tuple[str, str]]:
+    """Find issue numbers that are confirmed PRs (seen in /pulls/ URLs).
+
+    Returns set of (repo_prefix, number) tuples, scoped per-repo so that
+    PR #42 in repo a/x doesn't affect disambiguation of #42 in repo b/y.
+    """
+    pr_numbers: set[tuple[str, str]] = set()
     for conn in connections:
         url = conn.get("url", "")
         m = _PULLS_RE.search(url)
         if m:
-            pr_numbers.add(m.group(1))
+            pr_numbers.add((m.group(1), m.group(2)))
     return pr_numbers
 
 
-def _find_ambiguous_numbers(connections: list[dict]) -> set[str]:
-    """Find issue numbers from ambiguous /issues/ endpoints."""
-    numbers: set[str] = set()
+def _find_ambiguous_numbers(connections: list[dict]) -> set[tuple[str, str]]:
+    """Find issue numbers from ambiguous /issues/ endpoints.
+
+    Returns set of (repo_prefix, number) tuples, scoped per-repo.
+    """
+    numbers: set[tuple[str, str]] = set()
     for conn in connections:
         url = conn.get("url", "")
         m = _ISSUES_RE.search(url)
         if m:
-            numbers.add(m.group(1))
+            numbers.add((m.group(1), m.group(2)))
     return numbers
 
 
@@ -261,7 +270,9 @@ def analyze_permissions(connections: list[dict]) -> dict:
         host = parsed.hostname or ""
         path = parsed.path
 
-        # OIDC token request
+        # OIDC token request — subdomains of actions.githubusercontent.com
+        # (tagging is done in handlers/mitmproxy.py::_is_github_token_request
+        #  which verifies the exact OIDC URL + token before setting github_token=True)
         if host.endswith(".actions.githubusercontent.com"):
             _merge_permission(permissions, "id-token", "write")
             details.append((method, path, "id-token", "write"))
@@ -289,12 +300,13 @@ def analyze_permissions(connections: list[dict]) -> dict:
                 # Ambiguous: "issues/pull-requests"
                 # Try to disambiguate using PR numbers from the log
                 m = _ISSUES_RE.search(path)
-                number = m.group(1) if m else None
+                repo_key = m.group(1) if m else None
+                number = m.group(2) if m else None
 
-                if number and number in pr_numbers:
+                if number and (repo_key, number) in pr_numbers:
                     _merge_permission(permissions, "pull-requests", access)
                     details.append((method, path, "pull-requests", access))
-                elif number and number in unresolved:
+                elif number and (repo_key, number) in unresolved:
                     # Can't tell — report both conservatively
                     _merge_permission(permissions, "issues", access)
                     _merge_permission(permissions, "pull-requests", access)
@@ -309,7 +321,7 @@ def analyze_permissions(connections: list[dict]) -> dict:
                 details.append((method, path, scope, access))
 
     if unresolved:
-        nums = ", ".join(sorted(unresolved, key=int))
+        nums = ", ".join(sorted({n for _, n in unresolved}, key=int))
         notes.append(
             f"Issue numbers {nums} could be issues or PRs; "
             f"reporting both scopes conservatively"
@@ -328,7 +340,7 @@ def analyze_permissions(connections: list[dict]) -> dict:
 
 def _merge_permission(perms: dict[str, str], scope: str, access: str) -> None:
     """Merge a permission, keeping the highest access level (write > read)."""
-    if scope not in perms or access == "write":
+    if perms.get(scope) != "write":
         perms[scope] = access
 
 

@@ -46,19 +46,25 @@ class MitmproxyAddon:
             return False
         # Check GITHUB_TOKEN on api.github.com and uploads.github.com
         # Use pretty_host: in transparent mode, flow.request.host returns the IP address
+        # Auth scheme is case-insensitive per RFC 7235; token value is case-sensitive
+        parts = auth.split(None, 1)
+        if len(parts) != 2:
+            return False
+        scheme, credential = parts
+        scheme_lower = scheme.lower()
         if self._github_token:
             host = flow.request.pretty_host
             if host in ("api.github.com", "uploads.github.com"):
-                expected = self._github_token
-                if auth == f"token {expected}" or auth == f"Bearer {expected}":
+                if scheme_lower in ("token", "bearer") and credential == self._github_token:
                     return True
-        # Check OIDC token request
+        # Check OIDC token request (also case-insensitive scheme)
         if self._oidc_token_url and self._oidc_token:
             url = flow.request.pretty_url
             if (url.startswith(self._oidc_token_url)
                     and (len(url) == len(self._oidc_token_url)
                          or url[len(self._oidc_token_url)] in ("?", "&", "#"))
-                    and auth == f"Bearer {self._oidc_token}"):
+                    and scheme_lower == "bearer"
+                    and credential == self._oidc_token):
                 return True
         return False
 

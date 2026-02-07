@@ -414,6 +414,20 @@ def _run_permissions_analysis(args) -> None:
     """Analyze GitHub API token usage from a connections log."""
     from ..permissions import analyze_permissions, format_permissions_yaml
 
+    # Warn about flags that are ignored in --permissions mode
+    ignored = []
+    if args.workflow:
+        ignored.append("workflow file")
+    if getattr(args, "analyze_log", None):
+        ignored.append("--analyze-log")
+    if args.strict:
+        ignored.append("--strict")
+    if args.dump_rules:
+        ignored.append("--dump-rules")
+    if ignored:
+        print(f"Warning: {', '.join(ignored)} ignored with --permissions",
+              file=sys.stderr)
+
     if not args.permissions.exists():
         print(f"Error: Log file not found: {args.permissions}", file=sys.stderr)
         sys.exit(2)
