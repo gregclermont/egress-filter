@@ -162,7 +162,9 @@ def match_permission(method: str, path: str) -> list[tuple[str, str]]:
     # HEAD is semantically equivalent to GET for permission purposes
     lookup_method = "GET" if method == "HEAD" else method
 
-    # 1. Try explicit map — prefer exact matches over wildcard matches
+    # 1. Try explicit map — prefer exact matches over wildcard matches.
+    # With equal wildcard counts, first match in _EXPLICIT_MAP wins;
+    # entries must be ordered so more specific patterns come first.
     best_match = None
     best_wildcards = None
     for pat_method, pat_segments, scope, access in _COMPILED_MAP:
@@ -199,30 +201,16 @@ _PULLS_RE = re.compile(_REPO_PREFIX + r"/pulls/(\d+)")
 _ISSUES_RE = re.compile(_REPO_PREFIX + r"/issues/(\d+)")
 
 
-def _find_pr_numbers(connections: list[dict]) -> set[tuple[str, str]]:
-    """Find issue numbers that are confirmed PRs (seen in /pulls/ URLs).
+def _find_numbers(connections: list[dict], regex: re.Pattern) -> set[tuple[str, str]]:
+    """Find (repo_prefix, number) tuples matching a regex in connection URLs.
 
     Returns set of (repo_prefix, number) tuples, scoped per-repo so that
     PR #42 in repo a/x doesn't affect disambiguation of #42 in repo b/y.
     """
-    pr_numbers: set[tuple[str, str]] = set()
-    for conn in connections:
-        url = conn.get("url", "")
-        m = _PULLS_RE.search(url)
-        if m:
-            pr_numbers.add((m.group(1), m.group(2)))
-    return pr_numbers
-
-
-def _find_ambiguous_numbers(connections: list[dict]) -> set[tuple[str, str]]:
-    """Find issue numbers from ambiguous /issues/ endpoints.
-
-    Returns set of (repo_prefix, number) tuples, scoped per-repo.
-    """
     numbers: set[tuple[str, str]] = set()
     for conn in connections:
         url = conn.get("url", "")
-        m = _ISSUES_RE.search(url)
+        m = regex.search(url)
         if m:
             numbers.add((m.group(1), m.group(2)))
     return numbers
@@ -256,8 +244,8 @@ def analyze_permissions(connections: list[dict]) -> dict:
         return {"permissions": {}, "details": [], "unknown": [], "notes": []}
 
     # Collect ambiguous issue numbers and confirmed PR numbers for disambiguation
-    pr_numbers = _find_pr_numbers(token_conns)
-    ambiguous_numbers = _find_ambiguous_numbers(token_conns)
+    pr_numbers = _find_numbers(token_conns, _PULLS_RE)
+    ambiguous_numbers = _find_numbers(token_conns, _ISSUES_RE)
 
     # Numbers that are ambiguous (in /issues/ but not confirmed as PR)
     unresolved = ambiguous_numbers - pr_numbers
@@ -270,9 +258,11 @@ def analyze_permissions(connections: list[dict]) -> dict:
         host = parsed.hostname or ""
         path = parsed.path
 
-        # OIDC token request — subdomains of actions.githubusercontent.com
-        # (tagging is done in handlers/mitmproxy.py::_is_github_token_request
-        #  which verifies the exact OIDC URL + token before setting github_token=True)
+        # OIDC token request — subdomains of actions.githubusercontent.com.
+        # This hostname check is broader than the runtime check in
+        # handlers/mitmproxy.py::_is_github_token_request (which verifies
+        # the exact OIDC URL + bearer token). This is safe because the
+        # github_token flag is only set to True by that strict runtime check.
         if host.endswith(".actions.githubusercontent.com"):
             _merge_permission(permissions, "id-token", "write")
             details.append((method, path, "id-token", "write"))
@@ -297,9 +287,12 @@ def analyze_permissions(connections: list[dict]) -> dict:
                 continue
 
             if "/" in scope:
-                # Ambiguous: "issues/pull-requests"
-                # Try to disambiguate using PR numbers from the log
-                m = _ISSUES_RE.search(path)
+                # Ambiguous: "issues/pull-requests" — exactly one scope
+                # applies but we need the issue number to determine which.
+                # (Distinct from "issues,pull-requests" in match_permission
+                # which means BOTH scopes apply and is handled via comma-split.)
+                # Use full URL for consistency with _find_numbers().
+                m = _ISSUES_RE.search(url)
                 repo_key = m.group(1) if m else None
                 number = m.group(2) if m else None
 
@@ -321,11 +314,15 @@ def analyze_permissions(connections: list[dict]) -> dict:
                 details.append((method, path, scope, access))
 
     if unresolved:
-        nums = ", ".join(sorted({n for _, n in unresolved}, key=int))
-        notes.append(
-            f"Issue numbers {nums} could be issues or PRs; "
-            f"reporting both scopes conservatively"
-        )
+        by_repo: dict[str, list[str]] = {}
+        for repo_prefix, num in unresolved:
+            by_repo.setdefault(repo_prefix, []).append(num)
+        for repo_prefix in sorted(by_repo):
+            nums_str = ", ".join(sorted(by_repo[repo_prefix], key=int))
+            notes.append(
+                f"Issue numbers {nums_str} ({repo_prefix}) could be issues or PRs; "
+                f"reporting both scopes conservatively"
+            )
 
     # Deduplicate unknowns
     unknown = sorted(set(unknown))

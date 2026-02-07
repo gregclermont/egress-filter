@@ -307,6 +307,7 @@ class TestAnalyzePermissions:
         assert "pull-requests" in result["permissions"]
         assert len(result["notes"]) > 0
         assert "42" in result["notes"][0]
+        assert "/repos/o/r" in result["notes"][0]
 
     def test_empty_log(self):
         result = analyze_permissions([])
