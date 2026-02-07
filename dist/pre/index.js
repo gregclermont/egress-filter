@@ -85861,6 +85861,9 @@ async function run() {
       `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,
       `EGRESS_ALLOW_SUDO=${allowSudo ? '1' : '0'}`,
       `EGRESS_SOCKET_SECURITY=${socketSecurity ? '1' : '0'}`,
+      `GITHUB_TOKEN=${core.getInput('github-token') || ''}`,
+      `ACTIONS_ID_TOKEN_REQUEST_URL=${process.env.ACTIONS_ID_TOKEN_REQUEST_URL || ''}`,
+      `ACTIONS_ID_TOKEN_REQUEST_TOKEN=${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN || ''}`,
     ];
 
     core.info('Installing dependencies...');

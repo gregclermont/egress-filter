@@ -15,20 +15,49 @@ from . import log_errors
 class MitmproxyAddon:
     """Mitmproxy addon for PID tracking, connection logging, and policy enforcement."""
 
-    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer, socket_dev=None):
+    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer, socket_dev=None,
+                 github_token=None, oidc_token_url=None, oidc_token=None):
         """Initialize the addon.
 
         Args:
             bpf: BPF state for PID lookup
             enforcer: Policy enforcer (use audit_mode=True for observation only)
             socket_dev: Optional SocketDevClient for package security checks
+            github_token: Optional GITHUB_TOKEN for tagging API requests in logs
+            oidc_token_url: Optional ACTIONS_ID_TOKEN_REQUEST_URL for OIDC detection
+            oidc_token: Optional ACTIONS_ID_TOKEN_REQUEST_TOKEN for OIDC detection
         """
         self.bpf = bpf
         self.enforcer = enforcer
         self.socket_dev = socket_dev
+        self._github_token = github_token
+        self._oidc_token_url = oidc_token_url
+        self._oidc_token = oidc_token
         # Stash allowed DNS request context for dns_response to log with answers.
         # Keyed by flow.id (a UUID string assigned at flow creation).
         self._pending_dns: dict[str, dict] = {}
+
+    def _is_github_token_request(self, flow: http.HTTPFlow) -> bool:
+        """Check if this request uses the workflow's GITHUB_TOKEN or OIDC token."""
+        if not self._github_token and not self._oidc_token_url:
+            return False
+        auth = flow.request.headers.get("authorization", "")
+        if not auth:
+            return False
+        # Check GITHUB_TOKEN on api.github.com and uploads.github.com
+        # Use pretty_host: in transparent mode, flow.request.host returns the IP address
+        if self._github_token:
+            host = flow.request.pretty_host
+            if host in ("api.github.com", "uploads.github.com"):
+                expected = self._github_token
+                if auth == f"token {expected}" or auth == f"Bearer {expected}":
+                    return True
+        # Check OIDC token request
+        if self._oidc_token_url and self._oidc_token:
+            url = flow.request.pretty_url
+            if url.startswith(self._oidc_token_url) and auth == f"Bearer {self._oidc_token}":
+                return True
+        return False
 
     @log_errors
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
@@ -118,6 +147,9 @@ class MitmproxyAddon:
         # Determine connection type from URL scheme
         conn_type = "https" if url.startswith("https://") else "http"
 
+        # Detect if this request uses the workflow's GITHUB_TOKEN
+        token_kwargs = {"github_token": True} if self._is_github_token_request(flow) else {}
+
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
         proc_dict = get_proc_info(pid)
 
@@ -137,6 +169,7 @@ class MitmproxyAddon:
                 url=url,
                 method=method,
                 policy=decision.policy,
+                **token_kwargs,
                 **proc_dict,
                 src_port=src_port,
                 pid=pid,
@@ -165,6 +198,7 @@ class MitmproxyAddon:
                         security_block=True,
                         purl=pkg.purl,
                         reasons=result.reasons,
+                        **token_kwargs,
                         **proc_dict,
                         src_port=src_port,
                         pid=pid,
@@ -183,6 +217,7 @@ class MitmproxyAddon:
             url=url,
             method=method,
             policy=decision.policy,
+            **token_kwargs,
             **proc_dict,
             src_port=src_port,
             pid=pid,

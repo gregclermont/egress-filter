@@ -32,7 +32,8 @@ from . import logging as proxy_logging
 SHUTDOWN_TIMEOUT = 3.0
 
 
-async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer, socket_dev=None):
+async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer, socket_dev=None,
+                        github_token=None, oidc_token_url=None, oidc_token=None):
     """Run mitmproxy with our addon."""
     proxy_logging.logger.info("Initializing mitmproxy...")
     master = None
@@ -42,7 +43,11 @@ async def run_mitmproxy(bpf: BPFState, enforcer: PolicyEnforcer, socket_dev=None
             showhost=True,
         )
         master = DumpMaster(opts)
-        master.addons.add(MitmproxyAddon(bpf, enforcer, socket_dev=socket_dev))
+        master.addons.add(MitmproxyAddon(
+            bpf, enforcer, socket_dev=socket_dev,
+            github_token=github_token, oidc_token_url=oidc_token_url,
+            oidc_token=oidc_token,
+        ))
         proxy_logging.logger.info("Starting mitmproxy on port 8080 (TCP) and 8053 (DNS)...")
         await master.run()
     except asyncio.CancelledError:
@@ -217,9 +222,19 @@ async def async_main():
         socket_dev = SocketDevClient()
         proxy_logging.logger.info("Socket.dev package security checks enabled")
 
+    # GitHub token detection for permissions analysis
+    github_token = os.environ.get("GITHUB_TOKEN") or None
+    oidc_token_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") or None
+    oidc_token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN") or None
+
     # Create tasks
     nfqueue_handler = NfqueueHandler(bpf, enforcer)
-    mitmproxy_task = asyncio.create_task(run_mitmproxy(bpf, enforcer, socket_dev=socket_dev), name="mitmproxy")
+    mitmproxy_task = asyncio.create_task(
+        run_mitmproxy(bpf, enforcer, socket_dev=socket_dev,
+                      github_token=github_token, oidc_token_url=oidc_token_url,
+                      oidc_token=oidc_token),
+        name="mitmproxy",
+    )
     nfqueue_task = asyncio.create_task(run_nfqueue(nfqueue_handler), name="nfqueue")
     tasks = [mitmproxy_task, nfqueue_task]
 

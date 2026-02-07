@@ -59,12 +59,20 @@ def make_tls_clienthello_data(sni="example.com", dst_ip="93.184.216.34",
 
 
 def make_http_flow(url="http://example.com/path", method="GET",
-                   dst_ip="93.184.216.34", dst_port=80, src_port=54321):
+                   dst_ip="93.184.216.34", dst_port=80, src_port=54321,
+                   headers=None):
     """Create an http.HTTPFlow-like object."""
+    # Extract host from URL
+    host = ""
+    if "//" in url:
+        host = url.split("//")[1].split("/")[0].split(":")[0]
     flow = SimpleNamespace(
         client_conn=SimpleNamespace(peername=("127.0.0.1", src_port)),
         server_conn=SimpleNamespace(address=(dst_ip, dst_port)),
-        request=SimpleNamespace(pretty_url=url, method=method),
+        request=SimpleNamespace(
+            pretty_url=url, method=method,
+            host=host, pretty_host=host, headers=MockHeaders(headers),
+        ),
         response=None,
     )
     return flow
@@ -142,6 +150,16 @@ def make_tls_data(sni="example.com", dst_ip="93.184.216.34", dst_port=443,
 # Fixtures
 # ---------------------------------------------------------------------------
 
+class MockHeaders:
+    """Minimal case-insensitive dict mock for mitmproxy Headers."""
+
+    def __init__(self, data=None):
+        self._data = {k.lower(): v for k, v in (data or {}).items()}
+
+    def get(self, key, default=""):
+        return self._data.get(key.lower(), default)
+
+
 PROC_DICT = {"exe": "/usr/bin/curl", "cgroup": "/system.slice/runner.service"}
 
 
@@ -179,7 +197,8 @@ def addon(bpf, enforcer):
         yield a
 
 
-def _make_addon(bpf, enforcer, proc_dict=None, is_container=False, socket_dev=None):
+def _make_addon(bpf, enforcer, proc_dict=None, is_container=False, socket_dev=None,
+                github_token=None, oidc_token_url=None, oidc_token=None):
     """Helper: create addon with specific proc/container config.
 
     Returns (addon, log_connection_mock, logger_mock).
@@ -194,7 +213,9 @@ def _make_addon(bpf, enforcer, proc_dict=None, is_container=False, socket_dev=No
         mock_logging.logger = MagicMock()
 
         from proxy.handlers.mitmproxy import MitmproxyAddon
-        a = MitmproxyAddon(bpf, enforcer, socket_dev=socket_dev)
+        a = MitmproxyAddon(bpf, enforcer, socket_dev=socket_dev,
+                           github_token=github_token, oidc_token_url=oidc_token_url,
+                           oidc_token=oidc_token)
         yield a, mock_logging.log_connection, mock_logging.logger, gpi, icp
 
 
@@ -816,3 +837,152 @@ class TestSocketDevIntegration:
         addon.request(flow)
 
         socket_dev.check.assert_called_once_with("pkg:pypi/requests@2.31.0")
+
+
+# ---------------------------------------------------------------------------
+# Tests: GitHub token tagging
+# ---------------------------------------------------------------------------
+
+TOKEN = "ghs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+OIDC_URL = "https://vstoken.actions.githubusercontent.com/_apis/pipelines/1/runs/1"
+OIDC_TOKEN = "eyJhbGciOiJSUzI1NiJ9.runtime-token"
+
+
+class TestGitHubTokenTagging:
+    """Tests for GITHUB_TOKEN detection in request() hook."""
+
+    def test_github_token_detected_bearer(self, bpf, enforcer):
+        """api.github.com + Bearer token -> github_token: True in log."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo/issues",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        addon.request(flow)
+
+        log_conn.assert_called_once()
+        assert log_conn.call_args.kwargs["github_token"] is True
+
+    def test_github_token_detected_token_prefix(self, bpf, enforcer):
+        """api.github.com + 'token <T>' format -> tagged."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo/pulls",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"token {TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert log_conn.call_args.kwargs["github_token"] is True
+
+    def test_uploads_github_com_detected(self, bpf, enforcer):
+        """uploads.github.com with matching token -> tagged."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://uploads.github.com/repos/o/r/releases/1/assets?name=f.zip",
+            method="POST", dst_port=443,
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert log_conn.call_args.kwargs["github_token"] is True
+
+    def test_oidc_token_detected(self, bpf, enforcer):
+        """Request matching OIDC URL + token -> tagged."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, oidc_token_url=OIDC_URL, oidc_token=OIDC_TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url=f"{OIDC_URL}?api-version=7.1",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"Bearer {OIDC_TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert log_conn.call_args.kwargs["github_token"] is True
+
+    def test_different_host_not_tagged(self, bpf, enforcer):
+        """example.com with matching auth -> NOT tagged."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://example.com/api",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert "github_token" not in log_conn.call_args.kwargs
+
+    def test_wrong_token_not_tagged(self, bpf, enforcer):
+        """api.github.com with different token -> NOT tagged."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo",
+            method="GET", dst_port=443,
+            headers={"Authorization": "Bearer some-other-token"},
+        )
+        addon.request(flow)
+
+        assert "github_token" not in log_conn.call_args.kwargs
+
+    def test_no_auth_not_tagged(self, bpf, enforcer):
+        """api.github.com without auth header -> NOT tagged."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo",
+            method="GET", dst_port=443,
+        )
+        addon.request(flow)
+
+        assert "github_token" not in log_conn.call_args.kwargs
+
+    def test_no_github_token_configured(self, bpf, enforcer):
+        """Addon without github_token param -> no detection."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo",
+            method="GET", dst_port=443,
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert "github_token" not in log_conn.call_args.kwargs
+
+    def test_tagged_on_blocked_request(self, bpf, enforcer):
+        """Token detected even when policy blocks."""
+        enforcer.check_http.return_value = _make_decision(False)
+        gen = _make_addon(bpf, enforcer, github_token=TOKEN)
+        addon, log_conn, _, _, _ = next(gen)
+
+        flow = make_http_flow(
+            url="https://api.github.com/repos/owner/repo",
+            method="DELETE", dst_port=443,
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        addon.request(flow)
+
+        assert flow.response.status_code == 403
+        assert log_conn.call_args.kwargs["github_token"] is True

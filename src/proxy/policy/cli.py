@@ -410,12 +410,46 @@ def build_combined_policy(
     return combined_policy
 
 
+def _run_permissions_analysis(args) -> None:
+    """Analyze GitHub API token usage from a connections log."""
+    from ..permissions import analyze_permissions, format_permissions_yaml
+
+    if not args.permissions.exists():
+        print(f"Error: Log file not found: {args.permissions}", file=sys.stderr)
+        sys.exit(2)
+
+    connections = load_connections_log(args.permissions)
+    if not connections:
+        print("No connections found in log file.", file=sys.stderr)
+        sys.exit(0)
+
+    result = analyze_permissions(connections)
+
+    if not result["permissions"]:
+        print("No GitHub API calls with GITHUB_TOKEN detected.")
+        print(
+            "\nNote: Token detection requires the proxy to have GITHUB_TOKEN"
+            "\n(set automatically by GitHub Actions)."
+        )
+        sys.exit(0)
+
+    print(format_permissions_yaml(result))
+
+    if result["unknown"]:
+        print("# Unrecognized API calls (may need manual review):", file=sys.stderr)
+        for method, path in result["unknown"]:
+            print(f"#   {method} {path}", file=sys.stderr)
+
+    sys.exit(0)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Validate egress filter policies in GitHub Actions workflow files.",
         epilog="Exit codes: 0=valid/all-allowed, 1=invalid/some-blocked, 2=file error",
     )
-    parser.add_argument("workflow", type=Path, help="Path to workflow YAML file")
+    parser.add_argument("workflow", type=Path, nargs="?", default=None,
+                        help="Path to workflow YAML file")
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -463,8 +497,22 @@ def main():
         metavar="OWNER/REPO",
         help="Substitute {owner} and {repo} placeholders in policy (e.g., 'myorg/myrepo')",
     )
+    parser.add_argument(
+        "--permissions",
+        type=Path,
+        metavar="CONNECTIONS.jsonl",
+        help="Analyze GitHub API token usage and recommend minimum permissions",
+    )
 
     args = parser.parse_args()
+
+    # Handle --permissions mode (doesn't need a workflow file)
+    if args.permissions:
+        _run_permissions_analysis(args)
+        return
+
+    if not args.workflow:
+        parser.error("workflow argument is required (unless using --permissions)")
 
     # Read workflow file
     if not args.workflow.exists():
