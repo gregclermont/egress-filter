@@ -9,13 +9,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from proxy.policy.cli import (
+from proxy.cli import (
     analyze_connections,
     connection_key,
     find_policies_in_workflow,
     format_connection,
-    validate_policy,
 )
+from proxy.policy.parser import validate_policy
 from proxy.policy.parser import parse_policy, rule_to_dict
 
 
