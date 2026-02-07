@@ -17,7 +17,7 @@ proxy = [
 ]
 
 [project.scripts]
-egress-policy = "proxy.policy.cli:main"
+egress-filter = "proxy.policy.cli:main"
 
 [[tool.uv.index]]
 name = "tinybpf"

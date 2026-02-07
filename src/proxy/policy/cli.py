@@ -2,9 +2,9 @@
 """Command-line utility for egress filter policy management.
 
 Usage:
-    egress-policy validate <workflow.yml> [--strict] [--dump-rules]
-    egress-policy analyze <workflow.yml> <connections.jsonl>
-    egress-policy permissions <connections.jsonl>
+    egress-filter validate <workflow.yml> [--strict] [--dump-rules]
+    egress-filter analyze <workflow.yml> <connections.jsonl>
+    egress-filter permissions <connections.jsonl>
 
 Exit codes:
     0 - Valid policy (or all connections allowed in analyze mode)
