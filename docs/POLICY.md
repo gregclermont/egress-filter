@@ -285,7 +285,7 @@ The recommended workflow for developing a policy:
 
 3. **Analyze against your policy**:
    ```bash
-   egress-filter analyze workflow.yml connections.jsonl
+   egress-filter analyze --log connections.jsonl workflow.yml
    ```
 
 4. **Iterate** - add rules for blocked connections, re-run analysis until all pass.
@@ -326,7 +326,7 @@ pip install 'git+https://github.com/gregclermont/egress-filter'
 egress-filter validate workflow.yml
 
 # Analyze connections against policy (verbose shows allowed connections too)
-egress-filter analyze workflow.yml connections.jsonl -v
+egress-filter analyze --log connections.jsonl -v workflow.yml
 
 # Dump parsed rules as JSON
 egress-filter validate workflow.yml --dump-rules

@@ -3,7 +3,7 @@
 
 Usage:
     egress-filter validate <workflow.yml> [--strict] [--dump-rules]
-    egress-filter analyze <workflow.yml> <connections.jsonl>
+    egress-filter analyze --log <connections.jsonl> <workflow.yml>
     egress-filter permissions <connections.jsonl>
 
 Exit codes:
