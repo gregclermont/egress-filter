@@ -142,7 +142,7 @@ normal-host.com
 
 **Restrictions:**
 
-- Only `host` and `wildcard_host` rules support passthrough. IP, CIDR, URL, path, and DNS-only rules with `passthrough` are silently skipped.
+- Only `host` and `wildcard_host` rules support passthrough. IP, CIDR, URL, path, and DNS-only rules with `passthrough` are rejected at validation time and silently dropped at runtime.
 - Passthrough only applies at the TLS stage (`tls_clienthello`). Since TLS is not decrypted, URL path matching and HTTP method filtering are not available for passthrough connections.
 - A passthrough-only rule (without a matching allow rule) does not allow the connection — the connection must be allowed first.
 
