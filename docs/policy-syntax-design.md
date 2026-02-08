@@ -149,6 +149,18 @@ Design document for the egress filter allowlist/blocklist syntax.
     - **Error if no URL context**: path-only rules invalid in default context or after `[]` reset
     - The implicit default header has no URL base; `[]` resets to this state
 
+26. **TLS passthrough via `passthrough` keyword** - Skip MITM for specific hosts:
+    - `github.com passthrough` - per-rule passthrough
+    - `[passthrough]` - header context for multiple rules
+    - `[passthrough cgroup=@docker]` - header context with attributes
+    - Two-phase evaluation: connection must match an allow rule first, then passthrough rules are checked independently
+    - Passthrough-only rules (without a matching allow rule) do not allow the connection
+    - Only valid on `host` and `wildcard_host` rule types — IP, CIDR, URL, path, and dns: rules with passthrough are silently rejected (logged at DEBUG)
+    - Rationale: passthrough operates at the TLS layer (SNI only), so it can only match hostnames. URL/path rules require MITM to inspect, which contradicts passthrough's purpose
+    - In `tls_clienthello`, `data.ignore_connection = True` tells mitmproxy to skip interception — `request()` never fires
+    - Connection is logged with `passthrough: true` for observability since `request()` won't log it
+    - Use cases: certificate pinning, embedded trust stores (Java without keytool), sensitive traffic
+
 ## Future Considerations
 
 ### VS Code extension for syntax highlighting
