@@ -27,6 +27,7 @@ src/
 │   └── post.js          # Authenticated shutdown, iptables cleanup, upload logs
 ├── bpf/
 │   └── conn_tracker.bpf.c  # BPF: kprobes for PID tracking, cgroup hooks for IPv6/raw socket blocking
+├── runc_wrapper.py      # Standalone runc wrapper: injects mitmproxy CA cert into container rootfs
 ├── proxy/               # Python proxy package
 │   ├── main.py          # Async orchestration: BPF setup, policy load, mitmproxy + nfqueue tasks
 │   ├── bpf.py           # BPF loading (tinybpf), PID lookup, dns_cache dict for nfqueue→mitmproxy handoff
@@ -38,7 +39,7 @@ src/
 │   ├── purl.py          # Registry URL → PURL parser (npm, PyPI, Cargo)
 │   ├── socket_dev.py    # Socket.dev API client: package security checks, caching, fail-open
 │   ├── handlers/
-│   │   ├── mitmproxy.py # Addon: TLS/HTTP/TCP/DNS hooks, policy enforcement, container passthrough, Socket.dev
+│   │   ├── mitmproxy.py # Addon: TLS/HTTP/TCP/DNS hooks, policy enforcement, Socket.dev
 │   │   └── nfqueue.py   # UDP: DNS detection → mark for redirect, non-DNS → policy check + fast-path
 │   └── policy/
 │       ├── types.py     # Rule, AttrValue, DefaultContext, HeaderContext
@@ -66,9 +67,10 @@ tests/                   # Policy unit tests (pytest + hypothesis)
 2. **BPF cgroup hooks** block IPv6 (`connect6`/`sendmsg6`) and raw/packet sockets (`sock_create`) to prevent proxy bypass
 3. **iptables** redirects TCP → mitmproxy :8080, sends UDP through nfqueue for DNS detection
 4. **nfqueue** (mangle, pre-NAT): DNS packets get mark 2 → NAT redirects to mitmproxy :8053; non-DNS UDP gets policy-checked, allowed packets get mark 4 → conntrack fast-path
-5. **mitmproxy** handles HTTP/HTTPS/TCP/DNS: looks up PID from BPF map, enforces policy, logs to JSONL. Container processes get TLS passthrough (no MITM). DNS responses populate an IP→hostname cache for later TCP correlation.
+5. **mitmproxy** handles HTTP/HTTPS/TCP/DNS: looks up PID from BPF map, enforces policy, logs to JSONL. DNS responses populate an IP→hostname cache for later TCP correlation.
 6. **Control socket** (`/tmp/egress-filter-control.sock`) authenticates callers via `SO_PEERCRED` + process ancestry + `GITHUB_ACTION_REPOSITORY` match. Used by post.js for shutdown.
 7. **Startup hardening**: sudo disabled (sudoers truncated), user namespaces blocked (`unprivileged_userns_clone=0`), proxy runs in systemd scope for cgroup isolation
+8. **Container TLS MITM**: `runc_wrapper.py` intercepts `runc create/run` to inject the mitmproxy CA cert into container rootfs (copies cert, appends to system CA bundles, injects env vars like `NODE_EXTRA_CA_CERTS`). Installed by `proxy.sh` as `/usr/bin/runc` (original moved to `runc.real`). Fails open on injection errors. Warns when pre-set env vars are skipped.
 8. **Socket.dev integration** (opt-in via `socket-security: true`): After policy allows an HTTP request, `purl.py` checks if the URL is a package registry download (npm, PyPI, Cargo) and converts it to a PURL. `socket_dev.py` queries the Socket.dev API and blocks packages with critical/high severity alerts. Fail-open on API errors. Results cached in-memory.
 
 ## Running Tests
