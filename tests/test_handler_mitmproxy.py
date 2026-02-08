@@ -9,37 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from proxy.policy.enforcer import Decision, ProcessInfo, Verdict
-
-
-# ---------------------------------------------------------------------------
-# Mock helpers
-# ---------------------------------------------------------------------------
-
-class MockBPFState:
-    """Minimal BPFState mock with configurable PID lookup."""
-
-    def __init__(self, pid=1234):
-        self._pid = pid
-        self.dns_cache = {}
-
-    def lookup_pid(self, dst_ip, src_port, dst_port, protocol=6):
-        return self._pid
-
-
-def _make_decision(allowed, rule_idx=0):
-    """Create a real Decision object."""
-    if allowed:
-        return Decision(
-            verdict=Verdict.ALLOW,
-            reason=f"Matched rule {rule_idx}",
-            matched_rule=rule_idx,
-        )
-    return Decision(
-        verdict=Verdict.BLOCK,
-        reason="No matching rule",
-        matched_rule=None,
-    )
+from conftest import MockBPFState, make_decision as _make_decision
+from proxy.policy.enforcer import ProcessInfo
 
 
 # -- Flow factories (SimpleNamespace-based, matching dump tool output) --
