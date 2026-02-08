@@ -72,6 +72,7 @@ class ProcessInfo:
     cgroup: str | None = None
     step: str | None = None
     action: str | None = None
+    image: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "ProcessInfo":
@@ -82,6 +83,7 @@ class ProcessInfo:
             cgroup=d.get("cgroup"),
             step=d.get("step"),
             action=d.get("action"),
+            image=d.get("image"),
         )
 
     def to_dict(self) -> dict:
@@ -97,6 +99,8 @@ class ProcessInfo:
             result["step"] = self.step
         if self.action:
             result["action"] = self.action
+        if self.image:
+            result["image"] = self.image
         return result
 
 
