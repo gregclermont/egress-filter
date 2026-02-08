@@ -140,12 +140,21 @@ start_proxy() {
     chmod 644 /tmp/mitmproxy-ca-cert.pem
 
     # Set CA env vars for subsequent steps (wide CI tool support)
+    # NODE_EXTRA_CA_CERTS is additive — point to standalone cert.
+    # Others replace the default bundle — point to system bundle (which now includes mitmproxy CA).
     # GITHUB_ENV is only available in GHA step context
     if [ -n "$GITHUB_ENV" ]; then
         echo "NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
-        echo "REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
-        echo "AWS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
-        echo "HEX_CACERTS_PATH=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+        echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+        echo "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+        echo "AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+        echo "HEX_CACERTS_PATH=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+    fi
+
+    # Install runc wrapper for container CA injection (enables TLS MITM for containers)
+    if [ -x /usr/bin/runc ] && [ ! -f /usr/bin/runc.real ]; then
+        cp /usr/bin/runc /usr/bin/runc.real
+        install -m 755 "$REPO_ROOT/src/runc_wrapper.py" /usr/bin/runc
     fi
 
     # Sudo disable/restore is now handled by the Python proxy (control.py)
@@ -159,6 +168,11 @@ stop_proxy() {
     # Otherwise traffic is still redirected to port 8080 after proxy dies,
     # which breaks runner communication with GitHub (jobs appear stuck).
     "$SCRIPT_DIR"/iptables.sh cleanup 2>/dev/null || true
+
+    # Restore original runc
+    if [ -f /usr/bin/runc.real ]; then
+        mv /usr/bin/runc.real /usr/bin/runc
+    fi
 
     # Signal supervisor to shut down (it forwards SIGTERM to proxy)
     if [ -f "$SUPERVISOR_PIDFILE" ]; then

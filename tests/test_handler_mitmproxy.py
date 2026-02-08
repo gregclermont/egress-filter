@@ -231,8 +231,8 @@ def _make_addon(bpf, enforcer, proc_dict=None, is_container=False, socket_dev=No
 class TestTlsClienthello:
     """Tests for tls_clienthello hook."""
 
-    def test_container_sni_allowed_passthrough(self, bpf, enforcer):
-        """Container + SNI + allowed -> log, ignore_connection=True."""
+    def test_container_sni_allowed_mitm(self, bpf, enforcer):
+        """Container + SNI + allowed -> MITM (same as non-container), no log yet."""
         enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, is_container=True)
         addon, log_conn, logger, _ = next(gen)
@@ -240,15 +240,14 @@ class TestTlsClienthello:
         data = make_tls_clienthello_data(sni="example.com")
         addon.tls_clienthello(data)
 
-        # Should passthrough (ignore MITM)
-        assert data.ignore_connection is True
-        # Should log the connection
-        log_conn.assert_called_once()
-        call_kw = log_conn.call_args.kwargs
-        assert call_kw["type"] == "https"
-        assert call_kw["host"] == "example.com"
-        assert call_kw["policy"] == "allow"
-        assert call_kw["pid"] == 1234
+        # Should NOT passthrough — containers get MITM now (runc wrapper injects CA)
+        assert data.ignore_connection is False
+        # Should NOT log at this stage (deferred to request())
+        log_conn.assert_not_called()
+        # Enforcer called with can_mitm=True
+        enforcer.check_https.assert_called_once()
+        call_kw = enforcer.check_https.call_args.kwargs
+        assert call_kw["can_mitm"] is True
 
     def test_container_sni_blocked(self, bpf, enforcer):
         """Container + SNI + blocked -> log, client.error set."""
@@ -309,18 +308,18 @@ class TestTlsClienthello:
         log_conn.assert_not_called()
         assert data.ignore_connection is False
 
-    def test_container_no_sni_enforces(self, bpf, enforcer):
-        """Container + no SNI -> enforces (can't decrypt), passthrough."""
-        enforcer.check_https.return_value = _make_decision(True)
+    def test_container_no_sni_defers(self, bpf, enforcer):
+        """Container + no SNI -> defers to request() (same as non-container)."""
         gen = _make_addon(bpf, enforcer, is_container=True)
         addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni=None)
         addon.tls_clienthello(data)
 
-        # Should enforce since it's a container (can't MITM)
-        enforcer.check_https.assert_called_once()
-        assert data.ignore_connection is True
+        # No enforcement at TLS stage — defers to request() for MITM
+        enforcer.check_https.assert_not_called()
+        log_conn.assert_not_called()
+        assert data.ignore_connection is False
 
     def test_pid_not_found(self, enforcer):
         """PID not found -> still enforces with empty proc_dict (not a container)."""
@@ -334,10 +333,10 @@ class TestTlsClienthello:
         # sni is present, so should_enforce_now is True -> enforces
         enforcer.check_https.assert_called_once()
 
-    def test_log_includes_proc_and_connection_info(self, bpf, enforcer):
-        """Log entry includes proc info fields, pid, and src_port."""
-        enforcer.check_https.return_value = _make_decision(True)
-        gen = _make_addon(bpf, enforcer, is_container=True,
+    def test_blocked_log_includes_proc_and_connection_info(self, bpf, enforcer):
+        """Blocked log entry includes proc info fields, pid, and src_port."""
+        enforcer.check_https.return_value = _make_decision(False)
+        gen = _make_addon(bpf, enforcer, is_container=False,
                           proc_dict={"exe": "/usr/bin/curl"})
         addon, log_conn, _, _ = next(gen)
 
@@ -346,11 +345,11 @@ class TestTlsClienthello:
 
         kw = log_conn.call_args.kwargs
         assert kw["exe"] == "/usr/bin/curl"
-        assert kw["cgroup"] == CONTAINER_CGROUP
         assert kw["pid"] == 1234
         assert kw["src_port"] == 12345
         assert kw["dst_ip"] == "93.184.216.34"
         assert kw["dst_port"] == 443
+        assert kw["policy"] == "deny"
 
 
 # ---------------------------------------------------------------------------
@@ -673,8 +672,9 @@ class TestDnsResponse:
 class TestTlsFailedClient:
     """Tests for tls_failed_client hook."""
 
-    def test_logs_tls_rejection(self, bpf, enforcer):
-        """Logs with error=tls_client_rejected_ca."""
+    def test_logs_tls_rejection_with_policy(self, bpf, enforcer):
+        """Logs with error=tls_client_rejected_ca and policy verdict."""
+        enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer)
         addon, log_conn, _, _ = next(gen)
 
@@ -682,14 +682,29 @@ class TestTlsFailedClient:
                              src_port=12345)
         addon.tls_failed_client(data)
 
+        enforcer.check_https.assert_called_once()
         log_conn.assert_called_once()
         kw = log_conn.call_args.kwargs
         assert kw["type"] == "https"
         assert kw["host"] == "strict.com"
         assert kw["error"] == "tls_client_rejected_ca"
+        assert kw["policy"] == "allow"
         assert kw["dst_ip"] == "10.0.0.1"
         assert kw["pid"] == 1234
         assert kw["src_port"] == 12345
+
+    def test_tls_rejection_blocked_domain(self, bpf, enforcer):
+        """TLS failure for a blocked domain logs policy=deny."""
+        enforcer.check_https.return_value = _make_decision(False)
+        gen = _make_addon(bpf, enforcer)
+        addon, log_conn, _, _ = next(gen)
+
+        data = make_tls_data(sni="evil.com", dst_ip="1.2.3.4", dst_port=443)
+        addon.tls_failed_client(data)
+
+        kw = log_conn.call_args.kwargs
+        assert kw["policy"] == "deny"
+        assert kw["error"] == "tls_client_rejected_ca"
 
 
 # ---------------------------------------------------------------------------

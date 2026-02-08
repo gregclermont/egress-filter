@@ -77,6 +77,14 @@ jobs:
             grep '"type":"https"' /tmp/connections.jsonl || echo "No HTTPS events found"
             exit 1
           fi
+          echo ""
+          echo "=== Checking for policy verdict ==="
+          if grep '"error":"tls_client_rejected_ca"' /tmp/connections.jsonl | grep -q '"policy"'; then
+            echo "SUCCESS: TLS failure event includes policy verdict"
+          else
+            echo "FAILURE: TLS failure event missing policy verdict"
+            exit 1
+          fi
 
       - name: Show proxy logs
         if: always()
