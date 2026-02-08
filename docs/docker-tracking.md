@@ -102,6 +102,18 @@ Since all components match, the BPF map lookup succeeds.
 | Bridge | Yes | Yes | nfqueue in PREROUTING + REDIRECT to proxy |
 | Host | Yes | Yes | Works automatically via existing rules |
 
+## TLS MITM for Containers
+
+Container HTTPS traffic is fully MITM'd, enabling URL/path matching, method filtering, and Socket.dev package scanning. This is achieved by injecting the mitmproxy CA certificate into the container rootfs at creation time.
+
+`src/runc_wrapper.py` intercepts `runc create/run` by replacing `/usr/bin/runc` (original moved to `runc.real`). On each container creation it:
+
+1. Copies the CA cert to `/tmp/mitmproxy-ca-cert.pem` in the rootfs
+2. Appends the cert to system CA bundles (Debian, RHEL, Alpine paths)
+3. Injects env vars into the OCI config (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `HEX_CACERTS_PATH`)
+
+The wrapper fails open: if injection fails, runc still runs normally. If a container image pre-sets CA-related env vars, the wrapper does not override them but logs a warning with the image name (queried from Docker API).
+
 ## Implementation Details
 
 ### Files
@@ -109,6 +121,7 @@ Since all components match, the BPF map lookup succeeds.
 - `src/bpf/conn_tracker.bpf.c`: `kprobe/tcp_connect` for TCP, `kprobe/udp_sendmsg` for UDP, cgroup hooks for IPv6 blocking
 - `src/proxy/bpf.py`: Attaches BPF programs to kprobes and root cgroup
 - `src/setup/iptables.sh`: PREROUTING rules for docker0
+- `src/runc_wrapper.py`: Wraps runc to inject CA cert into container rootfs
 - `tests/connection_tests/`: Python test framework with Docker tests
 
 ## IPv6 Blocking
@@ -124,3 +137,5 @@ Applications receive `EPERM` (Operation not permitted) when attempting IPv6 conn
 1. **Container process metadata**: While we capture the correct PID, the `step` field won't be populated for container processes since they don't inherit GitHub Actions environment variables.
 
 2. **Docker's internal DNS**: Containers use Docker's embedded DNS at 127.0.0.11 by default. When the container queries this, Docker forwards to the actual resolver. We intercept this forwarded query, which means we see the correct destination but attribute it to the process inside the container (via kprobe), not Docker's daemon.
+
+3. **CA injection is best-effort**: Runtimes that don't use the system CA store or the injected env vars (e.g., Java without keytool import, certificate pinning) will see TLS failures. Containers that pre-set CA-related env vars won't have them overridden.
