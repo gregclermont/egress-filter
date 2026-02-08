@@ -605,5 +605,30 @@ POST https://github.com/{owner}/{repo}/git-upload-pack
         assert "{repo}" not in result
 
 
+class TestUnknownAttributes:
+    """Defense-in-depth: match_attrs rejects unknown attribute keys."""
+
+    def test_unknown_key_returns_false(self):
+        from proxy.policy.matcher import match_attrs, ConnectionEvent
+        from proxy.policy.types import Rule
+
+        rule = Rule(
+            type="host",
+            target="github.com",
+            port=[443],
+            protocol="tcp",
+            methods=None,
+            url_base=None,
+            attrs={"typo": "foo"},
+        )
+        event = ConnectionEvent(
+            type="https",
+            dst_ip="140.82.121.4",
+            dst_port=443,
+            host="github.com",
+        )
+        assert not match_attrs(rule, event)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

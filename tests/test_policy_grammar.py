@@ -73,7 +73,7 @@ method_attr     = method ("|" method)*
 method          = "GET" / "HEAD" / "POST" / "PUT" / "DELETE" / "PATCH" / "OPTIONS" / "*"
 
 kv_attr         = kv_key "=" kv_value
-kv_key          = arg_indexed / ~"[a-z]+"
+kv_key          = arg_indexed / "image" / "action" / "step" / "cgroup" / "exe" / "arg"
 arg_indexed     = "arg[" ~"[0-9]+" "]"
 kv_value        = backtick_value / quoted_value / unquoted_value
 backtick_value  = "`" ~"[^`]*" "`"
@@ -336,6 +336,10 @@ INVALID_RULES = [
     "github..com",
     "-github.com",
     "github-.com",
+    # Unknown attribute keys
+    "github.com typo=foo",
+    "github.com exee=/usr/bin/curl",
+    "github.com unknown=value",
 ]
 
 
