@@ -8,7 +8,7 @@ from .. import logging as proxy_logging
 from ..bpf import BPFState
 from ..policy import PolicyEnforcer, ProcessInfo
 from ..purl import parse_registry_url
-from ..proc import get_proc_info, is_container_process
+from ..proc import get_proc_info
 from . import log_errors
 
 
@@ -89,7 +89,7 @@ class MitmproxyAddon:
 
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
         proc_dict = get_proc_info(pid)
-        is_container = pid and is_container_process(pid)
+        is_container = "docker-" in proc_dict.get("cgroup", "")
 
         # If we have SNI, enforce now
         # If no SNI but container (can't decrypt), enforce now with IP/DNS-cache

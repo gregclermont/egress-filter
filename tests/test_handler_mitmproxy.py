@@ -161,6 +161,7 @@ class MockHeaders:
 
 
 PROC_DICT = {"exe": "/usr/bin/curl", "cgroup": "/system.slice/runner.service"}
+CONTAINER_CGROUP = "/system.slice/docker-" + "a" * 64 + ".scope"
 
 
 @pytest.fixture
@@ -184,7 +185,6 @@ def bpf():
 def addon(bpf, enforcer):
     """Create MitmproxyAddon with mocked dependencies."""
     with patch("proxy.handlers.mitmproxy.get_proc_info", return_value=dict(PROC_DICT)), \
-         patch("proxy.handlers.mitmproxy.is_container_process", return_value=False), \
          patch("proxy.handlers.mitmproxy.proxy_logging") as mock_logging:
         mock_logging.log_connection = MagicMock()
         mock_logging.logger = MagicMock()
@@ -201,13 +201,18 @@ def _make_addon(bpf, enforcer, proc_dict=None, is_container=False, socket_dev=No
                 github_token=None, oidc_token_url=None, oidc_token=None):
     """Helper: create addon with specific proc/container config.
 
-    Returns (addon, log_connection_mock, logger_mock).
+    When is_container=True, injects a Docker cgroup into proc_dict so the
+    handler detects it as a container process via the cgroup string.
+
+    Returns (addon, log_connection_mock, logger_mock, get_proc_info_mock).
     """
     if proc_dict is None:
         proc_dict = dict(PROC_DICT)
 
+    if is_container and "docker-" not in proc_dict.get("cgroup", ""):
+        proc_dict = dict(proc_dict, cgroup=CONTAINER_CGROUP)
+
     with patch("proxy.handlers.mitmproxy.get_proc_info", return_value=proc_dict) as gpi, \
-         patch("proxy.handlers.mitmproxy.is_container_process", return_value=is_container) as icp, \
          patch("proxy.handlers.mitmproxy.proxy_logging") as mock_logging:
         mock_logging.log_connection = MagicMock()
         mock_logging.logger = MagicMock()
@@ -216,7 +221,7 @@ def _make_addon(bpf, enforcer, proc_dict=None, is_container=False, socket_dev=No
         a = MitmproxyAddon(bpf, enforcer, socket_dev=socket_dev,
                            github_token=github_token, oidc_token_url=oidc_token_url,
                            oidc_token=oidc_token)
-        yield a, mock_logging.log_connection, mock_logging.logger, gpi, icp
+        yield a, mock_logging.log_connection, mock_logging.logger, gpi
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +235,7 @@ class TestTlsClienthello:
         """Container + SNI + allowed -> log, ignore_connection=True."""
         enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, is_container=True)
-        addon, log_conn, logger, _, _ = next(gen)
+        addon, log_conn, logger, _ = next(gen)
 
         data = make_tls_clienthello_data(sni="example.com")
         addon.tls_clienthello(data)
@@ -249,7 +254,7 @@ class TestTlsClienthello:
         """Container + SNI + blocked -> log, client.error set."""
         enforcer.check_https.return_value = _make_decision(False)
         gen = _make_addon(bpf, enforcer, is_container=True)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni="evil.com")
         addon.tls_clienthello(data)
@@ -264,7 +269,7 @@ class TestTlsClienthello:
         """Non-container + SNI + allowed -> no log (defers to request()), can_mitm=True."""
         enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, is_container=False)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni="example.com")
         addon.tls_clienthello(data)
@@ -282,7 +287,7 @@ class TestTlsClienthello:
         """Non-container + SNI + blocked -> log, client.error set."""
         enforcer.check_https.return_value = _make_decision(False)
         gen = _make_addon(bpf, enforcer, is_container=False)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni="evil.com")
         addon.tls_clienthello(data)
@@ -294,7 +299,7 @@ class TestTlsClienthello:
     def test_noncontainer_no_sni_defers(self, bpf, enforcer):
         """Non-container + no SNI -> no enforcement (defers to request())."""
         gen = _make_addon(bpf, enforcer, is_container=False)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni=None)
         addon.tls_clienthello(data)
@@ -308,7 +313,7 @@ class TestTlsClienthello:
         """Container + no SNI -> enforces (can't decrypt), passthrough."""
         enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, is_container=True)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni=None)
         addon.tls_clienthello(data)
@@ -318,16 +323,14 @@ class TestTlsClienthello:
         assert data.ignore_connection is True
 
     def test_pid_not_found(self, enforcer):
-        """PID not found -> still enforces with empty proc_dict."""
+        """PID not found -> still enforces with empty proc_dict (not a container)."""
         bpf = MockBPFState(pid=None)
         gen = _make_addon(bpf, enforcer, proc_dict={}, is_container=False)
-        addon, log_conn, _, _, icp = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni="example.com")
         addon.tls_clienthello(data)
 
-        # is_container_process should not be called when pid is None
-        icp.assert_not_called()
         # sni is present, so should_enforce_now is True -> enforces
         enforcer.check_https.assert_called_once()
 
@@ -335,15 +338,15 @@ class TestTlsClienthello:
         """Log entry includes proc info fields, pid, and src_port."""
         enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, is_container=True,
-                          proc_dict={"exe": "/usr/bin/curl", "cgroup": "/test"})
-        addon, log_conn, _, _, _ = next(gen)
+                          proc_dict={"exe": "/usr/bin/curl"})
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni="example.com", src_port=12345)
         addon.tls_clienthello(data)
 
         kw = log_conn.call_args.kwargs
         assert kw["exe"] == "/usr/bin/curl"
-        assert kw["cgroup"] == "/test"
+        assert kw["cgroup"] == CONTAINER_CGROUP
         assert kw["pid"] == 1234
         assert kw["src_port"] == 12345
         assert kw["dst_ip"] == "93.184.216.34"
@@ -361,7 +364,7 @@ class TestRequest:
         """HTTP allowed -> log with type=http, no response set."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(url="http://example.com/path", method="GET")
         addon.request(flow)
@@ -378,7 +381,7 @@ class TestRequest:
         """HTTP blocked -> log with policy=deny, 403 response."""
         enforcer.check_http.return_value = _make_decision(False)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(url="http://evil.com/", method="POST")
         addon.request(flow)
@@ -392,7 +395,7 @@ class TestRequest:
         """HTTPS (MITMed) -> log with type=https."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(url="https://example.com/secure", method="GET",
                               dst_port=443)
@@ -405,7 +408,7 @@ class TestRequest:
         """Enforcer called with correct dst_ip, dst_port, url, method, ProcessInfo."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, proc_dict={"exe": "/usr/bin/wget"})
-        addon, _, _, _, _ = next(gen)
+        addon, _, _, _ = next(gen)
 
         flow = make_http_flow(url="http://example.com/api", method="POST",
                               dst_ip="10.0.0.1", dst_port=8080)
@@ -424,7 +427,7 @@ class TestRequest:
         """Blocked HTTP request should log exactly once."""
         enforcer.check_http.return_value = _make_decision(False)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(url="http://evil.com/")
         addon.request(flow)
@@ -443,7 +446,7 @@ class TestTcpStart:
         """Allowed TCP -> log, not killed."""
         enforcer.check_tcp.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_tcp_flow(dst_ip="10.0.0.1", dst_port=8080)
         addon.tcp_start(flow)
@@ -458,7 +461,7 @@ class TestTcpStart:
         """Blocked TCP -> log, flow.kill() called."""
         enforcer.check_tcp.return_value = _make_decision(False)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_tcp_flow()
         addon.tcp_start(flow)
@@ -479,7 +482,7 @@ class TestDnsRequest:
         """Cache hit + allowed -> log, stash in _pending_dns."""
         enforcer.check_dns.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         # Populate dns_cache (as nfqueue would)
         bpf.dns_cache[(54321, 0x1234)] = (1234, "8.8.8.8", 53)
@@ -507,7 +510,7 @@ class TestDnsRequest:
         """Cache hit + blocked -> log, REFUSED response, NOT stashed."""
         enforcer.check_dns.return_value = _make_decision(False)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         bpf.dns_cache[(54321, 0x1234)] = (1234, "8.8.8.8", 53)
 
@@ -529,7 +532,7 @@ class TestDnsRequest:
     def test_cache_miss(self, bpf, enforcer):
         """Cache miss -> logger.error, no enforcement."""
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, logger, _, _ = next(gen)
+        addon, log_conn, logger, _ = next(gen)
 
         # No dns_cache entry
         flow = make_dns_flow(query_name="unknown.com", txid=0xAAAA,
@@ -548,7 +551,7 @@ class TestDnsRequest:
         """Uses original 4-tuple from nfqueue cache (pre-NAT dst_ip/dst_port)."""
         enforcer.check_dns.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         # nfqueue cached original destination (before NAT redirect to 127.0.0.1:8053)
         bpf.dns_cache[(54321, 0x1234)] = (1234, "168.63.129.16", 53)
@@ -573,7 +576,7 @@ class TestDnsResponse:
     def test_a_record_records_ips(self, bpf, enforcer):
         """A record answers -> record_dns_response called with IPs and min TTL."""
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         # Stash pending context (as dns_request would)
         addon._pending_dns["flow-1"] = dict(
@@ -603,7 +606,7 @@ class TestDnsResponse:
     def test_no_response_noop(self, bpf, enforcer):
         """No response -> no-op."""
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = SimpleNamespace(
             id="flow-1",
@@ -618,7 +621,7 @@ class TestDnsResponse:
     def test_no_pending_context_still_records(self, bpf, enforcer):
         """No pending context -> still records IPs, but no log event."""
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         answers = [make_dns_answer(ip="1.2.3.4", ttl=60)]
         flow = make_dns_flow_with_response("test.com", answers, flow_id="no-pending")
@@ -632,7 +635,7 @@ class TestDnsResponse:
     def test_min_ttl_used(self, bpf, enforcer):
         """Multiple TTLs -> minimum is used."""
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         addon._pending_dns["flow-1"] = dict(
             dst_ip="8.8.8.8", dst_port=53, name="multi.com",
@@ -655,7 +658,7 @@ class TestDnsResponse:
     def test_no_answers_no_record(self, bpf, enforcer):
         """Empty answers -> no record_dns_response call."""
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_dns_flow_with_response("empty.com", answers=[], flow_id="flow-1")
         addon.dns_response(flow)
@@ -673,7 +676,7 @@ class TestTlsFailedClient:
     def test_logs_tls_rejection(self, bpf, enforcer):
         """Logs with error=tls_client_rejected_ca."""
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         data = make_tls_data(sni="strict.com", dst_ip="10.0.0.1", dst_port=443,
                              src_port=12345)
@@ -704,7 +707,7 @@ class TestSocketDevIntegration:
         socket_dev.check.return_value = MagicMock(blocked=True, reasons=["malware"])
 
         gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://registry.npmjs.org/evil-pkg/-/evil-pkg-1.0.0.tgz",
@@ -733,7 +736,7 @@ class TestSocketDevIntegration:
         socket_dev.check.return_value = MagicMock(blocked=False, reasons=[])
 
         gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
@@ -753,7 +756,7 @@ class TestSocketDevIntegration:
         socket_dev = MagicMock()
 
         gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(url="https://example.com/api/data", method="GET")
         addon.request(flow)
@@ -769,7 +772,7 @@ class TestSocketDevIntegration:
         socket_dev.check.return_value = None
 
         gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
@@ -787,7 +790,7 @@ class TestSocketDevIntegration:
         enforcer.check_http.return_value = _make_decision(True)
 
         gen = _make_addon(bpf, enforcer, socket_dev=None)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
@@ -805,7 +808,7 @@ class TestSocketDevIntegration:
         socket_dev = MagicMock()
 
         gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://registry.npmjs.org/express/-/express-4.18.2.tgz",
@@ -827,7 +830,7 @@ class TestSocketDevIntegration:
         socket_dev.check.return_value = MagicMock(blocked=False, reasons=[])
 
         gen = _make_addon(bpf, enforcer, socket_dev=socket_dev)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://files.pythonhosted.org/packages/ab/cd/requests-2.31.0.tar.gz",
@@ -855,7 +858,7 @@ class TestGitHubTokenTagging:
         """api.github.com + Bearer token -> github_token: True."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo/issues",
@@ -871,7 +874,7 @@ class TestGitHubTokenTagging:
         """api.github.com + 'token <T>' format -> tagged."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo/pulls",
@@ -886,7 +889,7 @@ class TestGitHubTokenTagging:
         """uploads.github.com with matching token -> tagged."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://uploads.github.com/repos/o/r/releases/1/assets?name=f.zip",
@@ -901,7 +904,7 @@ class TestGitHubTokenTagging:
         """Request matching OIDC URL + token -> github_token: True."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, oidc_token_url=OIDC_URL, oidc_token=OIDC_TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url=f"{OIDC_URL}?api-version=7.1",
@@ -916,7 +919,7 @@ class TestGitHubTokenTagging:
         """Auth scheme is case-insensitive per RFC 7235."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo/issues",
@@ -931,7 +934,7 @@ class TestGitHubTokenTagging:
         """'TOKEN <value>' is also valid per RFC 7235."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo/pulls",
@@ -946,7 +949,7 @@ class TestGitHubTokenTagging:
         """example.com with matching auth -> NOT tagged."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://example.com/api",
@@ -961,7 +964,7 @@ class TestGitHubTokenTagging:
         """api.github.com with different token -> NOT tagged."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo",
@@ -976,7 +979,7 @@ class TestGitHubTokenTagging:
         """api.github.com without auth header -> NOT tagged."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo",
@@ -990,7 +993,7 @@ class TestGitHubTokenTagging:
         """Addon without github_token param -> no detection."""
         enforcer.check_http.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo",
@@ -1005,7 +1008,7 @@ class TestGitHubTokenTagging:
         """Token detected even when policy blocks."""
         enforcer.check_http.return_value = _make_decision(False)
         gen = _make_addon(bpf, enforcer, github_token=TOKEN)
-        addon, log_conn, _, _, _ = next(gen)
+        addon, log_conn, _, _ = next(gen)
 
         flow = make_http_flow(
             url="https://api.github.com/repos/owner/repo",
