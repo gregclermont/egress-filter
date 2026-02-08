@@ -152,6 +152,7 @@ class PolicyVisitor(NodeVisitor):
 
     def __init__(self, defaults: DefaultContext | None = None):
         self.rules = []
+        self.warnings = []
         self._defaults = defaults or SECURE_DEFAULTS
         self.ctx = HeaderContext(
             port=list(self._defaults.port)
@@ -405,6 +406,9 @@ class PolicyVisitor(NodeVisitor):
             url_base = self.ctx.url_base
             if url_base is None:
                 # Path rule without URL context - skip
+                self.warnings.append(
+                    "Path rule requires a URL header context (e.g., [https://example.com])"
+                )
                 return None
 
         # Determine passthrough from rule-level flag or header context
@@ -412,6 +416,9 @@ class PolicyVisitor(NodeVisitor):
 
         # Validate: passthrough only applies to host/wildcard_host rules
         if is_passthrough and rule_type not in ("host", "wildcard_host"):
+            self.warnings.append(
+                f"passthrough is only supported on hostname and wildcard rules, not {rule_type}"
+            )
             logger.debug(
                 "Skipping passthrough on unsupported rule type %r: %s",
                 rule_type,
@@ -862,8 +869,9 @@ def parse_policy(
 
         try:
             tree = GRAMMAR.parse(line)
-            # Reset rules list for this line (context is preserved across lines)
+            # Reset rules/warnings for this line (context is preserved across lines)
             visitor.rules = []
+            visitor.warnings = []
             visitor.visit(tree)
             # Collect rules from this line
             all_rules.extend(visitor.rules)
@@ -932,7 +940,10 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
         try:
             tree = GRAMMAR.parse(line)
             visitor.rules = []
+            visitor.warnings = []
             visitor.visit(tree)
+            for warning in visitor.warnings:
+                errors.append((line_num, line_stripped, warning))
         except ParseError as e:
             errors.append((line_num, line_stripped, str(e)))
 
