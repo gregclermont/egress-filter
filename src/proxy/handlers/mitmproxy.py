@@ -68,14 +68,14 @@ class MitmproxyAddon:
 
     @log_errors
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
-        """Handle TLS ClientHello - passthrough for container processes.
+        """Handle TLS ClientHello - enforce policy or defer to request().
 
-        Container processes don't have access to mitmproxy's CA cert,
-        so we skip MITM and just log the connection with SNI hostname.
+        If we have SNI, enforce the policy now at the hostname level.
+        The connection is allowed through to MITM so that request() can
+        evaluate the full URL with path and method.
 
-        For non-container processes without SNI, we defer the policy decision
-        to the request() hook where we'll have access to the Host header after
-        TLS decryption.
+        If no SNI, defer the policy decision to request() where we'll
+        have access to the Host header after TLS decryption.
         """
         src_port = (
             data.context.client.peername[1] if data.context.client.peername else 0
@@ -87,23 +87,16 @@ class MitmproxyAddon:
         )
         sni = data.client_hello.sni
 
-        pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
-        proc_dict = get_proc_info(pid)
-        is_container = "docker-" in proc_dict.get("cgroup", "")
+        if sni:
+            pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+            proc_dict = get_proc_info(pid)
 
-        # If we have SNI, enforce now
-        # If no SNI but container (can't decrypt), enforce now with IP/DNS-cache
-        # If no SNI and non-container (can decrypt), defer to request() hook
-        # where we'll have access to the Host header
-        should_enforce_now = sni or is_container
-
-        if should_enforce_now:
             decision = self.enforcer.check_https(
                 dst_ip=dst_ip,
                 dst_port=dst_port,
                 sni=sni,
                 proc=ProcessInfo.from_dict(proc_dict),
-                can_mitm=not is_container,
+                can_mitm=True,
             )
 
             if decision.blocked:
@@ -119,22 +112,7 @@ class MitmproxyAddon:
                 )
                 # Kill the connection
                 data.context.client.error = "Blocked by egress policy"
-                return
-
-            if is_container:
-                # Log and skip MITM - pass through encrypted traffic unmodified
-                proxy_logging.log_connection(
-                    type="https",
-                    dst_ip=dst_ip,
-                    dst_port=dst_port,
-                    host=sni,
-                    policy=decision.policy,
-                    **proc_dict,
-                    src_port=src_port,
-                    pid=pid,
-                )
-                data.ignore_connection = True
-        # else: No SNI, can decrypt - defer to request() hook
+        # else: No SNI - defer to request() hook
 
     @log_errors
     def request(self, flow: http.HTTPFlow) -> None:
@@ -397,11 +375,11 @@ class MitmproxyAddon:
     def tls_failed_client(self, data: tls.TlsData) -> None:
         """Handle TLS handshake failure with client.
 
-        This fires when a client rejects our CA cert. Container processes
-        should never reach this point (their traffic is passed through via
-        ignore_connection in tls_clienthello), so any TLS failure here
-        indicates a non-container process rejecting the CA, which is
-        unexpected and worth logging.
+        This fires when a client rejects our CA cert. Common causes:
+        - Container process whose runtime doesn't use the system CA store
+          or the injected env vars (e.g., Java without keytool import)
+        - Host process with a custom/embedded trust store
+        - Certificate pinning
         """
         src_port = data.context.client.peername[1] if data.context.client.peername else 0
         dst_ip, dst_port = (
@@ -414,11 +392,20 @@ class MitmproxyAddon:
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
         proc_dict = get_proc_info(pid)
 
+        decision = self.enforcer.check_https(
+            dst_ip=dst_ip,
+            dst_port=dst_port,
+            sni=sni,
+            proc=ProcessInfo.from_dict(proc_dict),
+            can_mitm=False,
+        )
+
         proxy_logging.log_connection(
             type="https",
             dst_ip=dst_ip,
             dst_port=dst_port,
             host=sni,
+            policy=decision.policy,
             error="tls_client_rejected_ca",
             **proc_dict,
             src_port=src_port,
