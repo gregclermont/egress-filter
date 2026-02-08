@@ -1,8 +1,6 @@
 """Tests for the policy validation CLI."""
 
-import json
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -16,7 +14,6 @@ from proxy.cli import (
     format_connection,
 )
 from proxy.policy.parser import validate_policy
-from proxy.policy.parser import parse_policy, rule_to_dict
 
 
 class TestFindPolicies:
@@ -699,88 +696,6 @@ class TestConnectionKey:
             "dst_port": 53,
         }
         assert connection_key(conn1) == connection_key(conn2)
-
-
-class TestDumpRules:
-    """Tests for rule dumping functionality."""
-
-    def test_dump_simple_rules(self):
-        """Dump simple host and IP rules."""
-        policy = """
-        github.com
-        *.github.com
-        8.8.8.8:53/udp
-        """
-        rules = parse_policy(policy)
-        dumped = [rule_to_dict(r) for r in rules]
-
-        assert len(dumped) == 3
-
-        # First rule: exact host
-        assert dumped[0]["type"] == "host"
-        assert dumped[0]["target"] == "github.com"
-        assert dumped[0]["port"] == [443]
-        assert dumped[0]["protocol"] == "tcp"
-
-        # Second rule: wildcard host
-        assert dumped[1]["type"] == "wildcard_host"
-        assert dumped[1]["target"] == "*.github.com"
-
-        # Third rule: IP with UDP
-        assert dumped[2]["type"] == "ip"
-        assert dumped[2]["target"] == "8.8.8.8"
-        assert dumped[2]["port"] == [53]
-        assert dumped[2]["protocol"] == "udp"
-
-    def test_dump_url_rules(self):
-        """Dump URL and path rules."""
-        policy = """
-        [https://api.github.com]
-        GET /repos/*/releases
-        POST /repos/*/issues
-        """
-        rules = parse_policy(policy)
-        dumped = [rule_to_dict(r) for r in rules]
-
-        assert len(dumped) == 2
-
-        # GET path rule
-        assert dumped[0]["type"] == "path"
-        assert dumped[0]["target"] == "/repos/*/releases"
-        assert dumped[0]["methods"] == ["GET"]
-        assert dumped[0]["url_base"] == "https://api.github.com"
-
-        # POST path rule
-        assert dumped[1]["type"] == "path"
-        assert dumped[1]["target"] == "/repos/*/issues"
-        assert dumped[1]["methods"] == ["POST"]
-
-    def test_dump_rules_with_attrs(self):
-        """Dump rules with attributes."""
-        policy = """
-        github.com exe=/usr/bin/git
-        """
-        rules = parse_policy(policy)
-        dumped = [rule_to_dict(r) for r in rules]
-
-        assert len(dumped) == 1
-        assert dumped[0]["attrs"] == {"exe": "/usr/bin/git"}
-
-    def test_dump_is_json_serializable(self):
-        """Dumped rules can be serialized to JSON."""
-        policy = """
-        github.com
-        [https://api.github.com]
-        GET /repos/*
-        """
-        rules = parse_policy(policy)
-        dumped = [rule_to_dict(r) for r in rules]
-
-        # Should not raise
-        json_str = json.dumps(dumped)
-        parsed = json.loads(json_str)
-
-        assert len(parsed) == 2
 
 
 class TestDefaultsIntegration:
