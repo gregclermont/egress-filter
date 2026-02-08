@@ -112,6 +112,19 @@ class MitmproxyAddon:
                 )
                 # Kill the connection
                 data.context.client.error = "Blocked by egress policy"
+            elif decision.passthrough:
+                proxy_logging.log_connection(
+                    type="https",
+                    dst_ip=dst_ip,
+                    dst_port=dst_port,
+                    host=sni,
+                    policy=decision.policy,
+                    passthrough=True,
+                    **proc_dict,
+                    src_port=src_port,
+                    pid=pid,
+                )
+                data.ignore_connection = True
         # else: No SNI - defer to request() hook
 
     @log_errors

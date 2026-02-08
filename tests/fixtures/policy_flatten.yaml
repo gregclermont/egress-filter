@@ -1140,3 +1140,150 @@ tests:
         methods: null
         url_base: null
         attrs: {}
+
+  # =============================================================================
+  # Passthrough rules (TLS passthrough, skip MITM)
+  # =============================================================================
+
+  - name: Per-rule passthrough on hostname
+    policy: |
+      github.com passthrough
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        passthrough: true
+
+  - name: Per-rule passthrough on wildcard with attrs
+    policy: |
+      *.docker.io passthrough cgroup=@docker
+    rules:
+      - type: wildcard_host
+        target: "*.docker.io"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: "@docker"
+        passthrough: true
+
+  - name: Passthrough header context with hostname rules
+    policy: |
+      [passthrough]
+      github.com
+      *.docker.io
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        passthrough: true
+      - type: wildcard_host
+        target: "*.docker.io"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        passthrough: true
+
+  - name: Passthrough header with attrs
+    policy: |
+      [passthrough cgroup=@docker]
+      github.com
+      *.docker.io
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: "@docker"
+        passthrough: true
+      - type: wildcard_host
+        target: "*.docker.io"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: "@docker"
+        passthrough: true
+
+  - name: Header reset clears passthrough
+    policy: |
+      [passthrough]
+      github.com
+      []
+      gitlab.com
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        passthrough: true
+      - type: host
+        target: gitlab.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Passthrough rejected on IP rule (skipped)
+    policy: |
+      8.8.8.8 passthrough
+    rules: []
+
+  - name: Passthrough rejected on URL under passthrough header (skipped)
+    policy: |
+      [passthrough]
+      https://example.com/*
+    rules: []
+
+  - name: Mixed passthrough and normal rules
+    policy: |
+      github.com
+      gitlab.com passthrough
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+      - type: host
+        target: gitlab.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        passthrough: true
+
+  - name: Per-rule passthrough with port
+    policy: |
+      github.com:443 passthrough
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        passthrough: true

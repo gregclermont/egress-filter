@@ -37,7 +37,8 @@ newline         = "\n" / "\r\n"
 ws              = " " / "\t"
 
 header          = ws* "[" header_content? "]" inline_comment? ws*
-header_content  = url_base_header / method_header / port_proto_header / kv_only_header
+header_content  = passthrough_header / url_base_header / method_header / port_proto_header / kv_only_header
+passthrough_header = "passthrough" kv_attrs?
 url_base_header = url_base kv_attrs?
 method_header   = method_attr kv_attrs?
 port_proto_header = port_proto_attr kv_attrs?
@@ -56,7 +57,8 @@ path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
 path_rule       = (method_attr ws+)? "/" path_rest kv_attrs?
 
-network_rule    = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? kv_attrs?
+network_rule    = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? kv_attrs?
+passthrough_flag = ws+ "passthrough"
 
 dns_host_rule   = "dns:" (wildcard_host / exact_host)
 
@@ -212,14 +214,27 @@ class PolicyVisitor(NodeVisitor):
                             self.ctx.port = attr["port"]
                         if "protocol" in attr:
                             self.ctx.protocol = attr["protocol"]
+                        if "passthrough" in attr:
+                            self.ctx.passthrough = True
                         # Handle kv_attrs in headers (exe=, cgroup=, etc.)
                         for key in list(attr.keys()):
-                            if key not in ("url_base", "methods", "port", "protocol"):
+                            if key not in ("url_base", "methods", "port", "protocol", "passthrough"):
                                 self.ctx.attrs[key] = attr[key]
         return None
 
     def visit_header_content(self, node, visited_children):
         return visited_children[0]
+
+    def visit_passthrough_header(self, node, visited_children):
+        # "passthrough" kv_attrs?
+        _, kv_attrs = visited_children
+        result = {"passthrough": True}
+        if not _is_empty(kv_attrs):
+            flat_kv = _flatten([kv_attrs])
+            for item in flat_kv:
+                if isinstance(item, dict):
+                    result.update(item)
+        return result
 
     def visit_method_header(self, node, visited_children):
         # method_attr kv_attrs?
@@ -392,6 +407,18 @@ class PolicyVisitor(NodeVisitor):
                 # Path rule without URL context - skip
                 return None
 
+        # Determine passthrough from rule-level flag or header context
+        is_passthrough = rule_info.get("passthrough", False) or self.ctx.passthrough
+
+        # Validate: passthrough only applies to host/wildcard_host rules
+        if is_passthrough and rule_type not in ("host", "wildcard_host"):
+            logger.debug(
+                "Skipping passthrough on unsupported rule type %r: %s",
+                rule_type,
+                target,
+            )
+            return None
+
         rule = Rule(
             type=rule_type,
             target=target,
@@ -400,6 +427,7 @@ class PolicyVisitor(NodeVisitor):
             methods=methods,
             url_base=url_base,
             attrs=attrs,
+            passthrough=is_passthrough,
         )
         self.rules.append(rule)
         return rule
@@ -489,9 +517,12 @@ class PolicyVisitor(NodeVisitor):
             "attrs": attrs,
         }
 
+    def visit_passthrough_flag(self, node, visited_children):
+        return {"passthrough": True}
+
     def visit_network_rule(self, node, visited_children):
-        # network_rule = (cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs?
-        rule_data, port_proto, kv_attrs = visited_children
+        # network_rule = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? kv_attrs?
+        rule_data, port_proto, passthrough_flag, kv_attrs = visited_children
 
         # Extract base rule info
         rule_info = None
@@ -513,6 +544,13 @@ class PolicyVisitor(NodeVisitor):
                         rule_info["port"] = item["port"]
                     if "protocol" in item:
                         rule_info["protocol"] = item["protocol"]
+
+        # Apply passthrough flag
+        if not _is_empty(passthrough_flag):
+            flat_pt = _flatten([passthrough_flag])
+            for item in flat_pt:
+                if isinstance(item, dict) and "passthrough" in item:
+                    rule_info["passthrough"] = True
 
         # Apply kv attrs
         attrs = {}
@@ -857,7 +895,7 @@ def rule_to_dict(rule: Rule) -> dict:
         else:
             attrs_dict[key] = value
 
-    return {
+    result = {
         "type": rule.type,
         "target": rule.target,
         "port": rule.port,
@@ -866,6 +904,9 @@ def rule_to_dict(rule: Rule) -> dict:
         "url_base": rule.url_base,
         "attrs": attrs_dict,
     }
+    if rule.passthrough:
+        result["passthrough"] = True
+    return result
 
 
 def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:

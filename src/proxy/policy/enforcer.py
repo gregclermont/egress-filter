@@ -39,6 +39,7 @@ class Decision:
     reason: str
     matched_rule: int | None = None
     hostname: str | None = None
+    passthrough: bool = False
 
     @property
     def allowed(self) -> bool:
@@ -209,9 +210,15 @@ class PolicyEnforcer:
                 allowed, rule_idx = self.matcher.match(event)
 
             if allowed:
-                return self._make_decision(
+                decision = self._make_decision(
                     True, rule_idx, f"Matched rule {rule_idx}", hostname=sni
                 )
+                # Phase 2: check passthrough rules
+                if can_mitm:
+                    is_passthrough, _ = self.matcher.match_passthrough(event)
+                    if is_passthrough:
+                        decision.passthrough = True
+                return decision
             else:
                 return self._make_decision(
                     False,

@@ -26,6 +26,7 @@ class Rule:
     methods: list[str] | None  # HTTP methods for URL/path rules, None for others
     url_base: str | None  # Base URL for path rules, None for others
     attrs: dict[str, str | AttrValue] = field(default_factory=dict)
+    passthrough: bool = False
 
 
 @dataclass
@@ -66,6 +67,7 @@ class HeaderContext:
     methods: list[str] | None = None  # None means use defaults from DefaultContext
     url_base: str | None = None
     attrs: dict[str, str | AttrValue] = field(default_factory=dict)
+    passthrough: bool = False
     _defaults: DefaultContext = field(default_factory=lambda: SECURE_DEFAULTS)
 
     def reset(self) -> None:
@@ -79,3 +81,4 @@ class HeaderContext:
         self.methods = None  # Will use _defaults.methods when needed
         self.url_base = None
         self.attrs = dict(self._defaults.attrs)
+        self.passthrough = False

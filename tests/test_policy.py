@@ -93,6 +93,10 @@ def test_policy_flatten(test_case):
         assert actual["attrs"] == expected["attrs"], (
             f"Rule {i}: attrs mismatch: got {actual['attrs']}, expected {expected['attrs']}"
         )
+        if "passthrough" in expected:
+            assert actual.get("passthrough", False) == expected["passthrough"], (
+                f"Rule {i}: passthrough mismatch: got {actual.get('passthrough', False)}, expected {expected['passthrough']}"
+            )
 
 
 # =============================================================================
@@ -473,6 +477,15 @@ def test_policy_enforcer(scenario):
             f"Expected: {expected_verdict}, Got: {actual_verdict}\n"
             f"Reason: {decision.reason}"
         )
+
+        # Check passthrough flag if specified in fixture
+        if "passthrough" in check:
+            expected_passthrough = check["passthrough"]
+            assert decision.passthrough == expected_passthrough, (
+                f"Scenario '{scenario['name']}', check {i} ({check_type}):\n"
+                f"Check: {check}\n"
+                f"Expected passthrough: {expected_passthrough}, Got: {decision.passthrough}"
+            )
 
 
 # =============================================================================

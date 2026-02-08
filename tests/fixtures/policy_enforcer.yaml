@@ -914,3 +914,95 @@ tests:
         dst_ip: 93.184.216.34
         dst_port: 443
         verdict: allow
+
+  # =============================================================================
+  # Passthrough (TLS passthrough, skip MITM)
+  # =============================================================================
+
+  - name: Passthrough rule sets decision.passthrough when allowed and can_mitm
+    policy: |
+      github.com
+      github.com passthrough
+    checks:
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        passthrough: true
+
+  - name: Passthrough without can_mitm does not set passthrough
+    policy: |
+      github.com
+      github.com passthrough
+    checks:
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        verdict: allow
+        passthrough: false
+
+  - name: Allowed but no passthrough rule means passthrough is false
+    policy: |
+      github.com
+    checks:
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        passthrough: false
+
+  - name: Passthrough-only rule without allow rule means blocked
+    policy: |
+      example.com passthrough
+    checks:
+      - type: https
+        sni: example.com
+        dst_ip: 93.184.216.34
+        dst_port: 443
+        can_mitm: true
+        verdict: block
+
+  - name: Passthrough with scoped cgroup attr matches
+    policy: |
+      github.com
+      github.com passthrough cgroup=@docker
+    checks:
+      # Docker process - passthrough applies
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        proc:
+          cgroup: /docker/abc123
+        verdict: allow
+        passthrough: true
+
+      # Host process - passthrough does not apply (cgroup doesn't match)
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        proc:
+          cgroup: /user.slice/user-1000.slice
+        verdict: allow
+        passthrough: false
+
+  - name: Passthrough wildcard rule
+    policy: |
+      *.docker.io
+      *.docker.io passthrough
+    checks:
+      - type: https
+        sni: registry-1.docker.io
+        dst_ip: 52.72.232.1
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        passthrough: true
