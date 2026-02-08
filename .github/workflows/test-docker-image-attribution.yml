@@ -20,13 +20,13 @@ jobs:
           audit: true
 
       - name: Run docker container (docker run)
-        run: docker run --rm python:3.12-alpine python -c "import urllib.request; urllib.request.urlopen('http://example.com')"
+        run: docker run --rm python:3.12-alpine python -c "import urllib.request; urllib.request.urlopen('https://example.com')"
 
       - name: Run docker action (uses docker://)
         uses: docker://python:3.12-alpine
         with:
           entrypoint: python
-          args: -c "import urllib.request; urllib.request.urlopen('http://example.com')"
+          args: -c "import urllib.request; urllib.request.urlopen('https://example.com')"
 
       - name: Show proxy logs
         if: always()
@@ -41,5 +41,5 @@ jobs:
           for line in open('/tmp/connections.jsonl'):
               conn = json.loads(line)
               if conn.get('image'):
-                  print(json.dumps({k: conn[k] for k in ['type','dst_ip','dst_port','image','exe','policy'] if k in conn}, indent=2))
+                  print(json.dumps({k: conn[k] for k in ['type','dst_ip','dst_port','url','host','image','exe','policy'] if k in conn}, indent=2))
           " || echo "No connections with image field found"
