@@ -54,7 +54,7 @@ The system operates at multiple layers to prevent bypass:
 
 2. **Transparent proxy** — iptables redirects TCP traffic to mitmproxy (port 8080) and DNS to its DNS mode (port 8053). UDP packets pass through netfilter queue for DNS detection.
 
-3. **PID lookup** — The proxy queries the BPF map to find which process initiated each connection, then walks `/proc` to extract the executable path, command line, cgroup, and GitHub Actions context (step, action repository).
+3. **PID lookup** — The proxy queries the BPF map to find which process initiated each connection, then walks `/proc` to extract the executable path, command line, cgroup, and GitHub Actions context (step, action repository). For Docker containers, it queries the Docker socket to resolve the container image name.
 
 4. **Policy enforcement** — Each connection is checked against the allowlist. Non-matching connections are blocked (or logged in audit mode).
 
@@ -168,6 +168,7 @@ Rules can be restricted to specific processes:
 | `arg=` | Match any command line argument | `example.com arg=--config=/etc/app.conf` |
 | `arg[N]=` | Match specific argument by index | `example.com arg[0]=node` |
 | `cgroup=` | Linux cgroup path (or `@docker`, `@host`) | `168.63.129.16 cgroup=/azure.slice/*` |
+| `image=` | Docker container image | `registry.example.com image=node:*` |
 
 Multiple constraints combine with AND logic—all must match.
 
@@ -206,6 +207,7 @@ Fields:
 | `cgroup` | Linux cgroup path | When available |
 | `step` | GitHub step (`{job}.{action_id}`) | When available |
 | `action` | GitHub Action repository | JavaScript actions only |
+| `image` | Docker container image | Docker containers only |
 | `url` | Full URL | `http`, `https` (MITM) |
 | `method` | HTTP method | `http`, `https` (MITM) |
 | `host` | Hostname (SNI) | `https` (TLS-layer) |
@@ -284,7 +286,7 @@ The `enable-sudo` sub-action can re-enable it later if needed.
 
 ## Limitations
 
-- **`action=` requires JavaScript actions** — Docker actions, composite actions, and `run:` steps don't have `GITHUB_ACTION_REPOSITORY` in their environment. Use `step=` or `exe=` instead.
+- **`action=` requires JavaScript actions** — Docker actions, composite actions, and `run:` steps don't have `GITHUB_ACTION_REPOSITORY` in their environment. Use `image=` for Docker containers, or `step=`/`exe=` for other cases.
 - **Detached daemons lose GitHub context** — Background processes that daemonize lose their parent relationship to Runner.Worker. Use `exe=` to scope their traffic.
 - **No WebSocket inspection** — WebSocket connections are logged but not inspected after the upgrade handshake.
 
