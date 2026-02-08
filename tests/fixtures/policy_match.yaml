@@ -138,6 +138,13 @@ tests:
           dst_port: 443
           host: api.tailscale.com
         verdict: block
+      # Does not match different base domain
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: derp1.evil.com
+        verdict: block
 
   - name: Subdomain + label wildcard match
     policy: |
@@ -169,6 +176,13 @@ tests:
           dst_ip: 1.2.3.4
           dst_port: 443
           host: foo.api.tailscale.com
+        verdict: block
+      # Does not match different base domain
+      - event:
+          type: https
+          dst_ip: 1.2.3.4
+          dst_port: 443
+          host: foo.derp1.evil.com
         verdict: block
 
   - name: Suffix wildcard pattern
