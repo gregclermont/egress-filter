@@ -156,7 +156,33 @@ policy: |
 
   # Placeholders for current repository (from GITHUB_REPOSITORY)
   https://github.com/{owner}/{repo}/*
+
+  # TLS passthrough (skip MITM for cert pinning, etc.)
+  pinned.example.com passthrough
 ```
+
+### TLS Passthrough
+
+Some services use certificate pinning or embedded trust stores that reject the MITM proxy's CA certificate. The `passthrough` keyword skips TLS interception for matching connections while still enforcing the allow policy:
+
+```yaml
+policy: |
+  # Allow and MITM normally
+  github.com
+
+  # Allow and skip TLS interception
+  pinned.example.com passthrough
+
+  # Passthrough scoped to Docker containers
+  *.docker.io passthrough cgroup=@docker
+
+  # Header context for multiple passthrough rules
+  [passthrough cgroup=@docker]
+  registry.example.com
+  auth.example.com
+```
+
+Passthrough is evaluated as a separate phase — a connection must first match an allow rule, then passthrough rules are checked independently. This means you need both an allow rule and a passthrough rule (or use the same hostname for both). Only hostname and wildcard rules support passthrough; IP, CIDR, URL, and DNS-only rules do not.
 
 ### Process Scope Constraints
 
@@ -214,6 +240,7 @@ Fields:
 | `method` | HTTP method | `http`, `https` (MITM) |
 | `host` | Hostname (SNI) | `https` (TLS-layer) |
 | `name` | DNS query name | `dns` |
+| `passthrough` | TLS passthrough (MITM skipped) | When `passthrough` rule matched |
 | `error` | Connection error type | On failure (e.g., `tls_client_rejected_ca`) |
 | `security_block` | Socket.dev blocked this package | When `socket-security` blocks |
 | `purl` | Package URL (e.g., `pkg:npm/evil@1.0`) | When `socket-security` blocks |
@@ -289,7 +316,7 @@ The `enable-sudo` sub-action can re-enable it later if needed.
 ## Limitations
 
 - **`action=` requires JavaScript actions** — Docker actions, composite actions, and `run:` steps don't have `GITHUB_ACTION_REPOSITORY` in their environment. Use `image=` for Docker containers, or `step=`/`exe=` for other cases.
-- **Container CA injection is best-effort** — The runc wrapper injects the proxy CA cert into containers via system CA bundles and environment variables. Runtimes that don't use the system store or the injected env vars (e.g., Java without keytool import, certificate pinning) will see TLS failures. If a container image pre-sets CA-related env vars (e.g., `NODE_EXTRA_CA_CERTS`), the wrapper won't override them and will log a warning.
+- **Container CA injection is best-effort** — The runc wrapper injects the proxy CA cert into containers via system CA bundles and environment variables. Runtimes that don't use the system store or the injected env vars (e.g., Java without keytool import, certificate pinning) will see TLS failures. If a container image pre-sets CA-related env vars (e.g., `NODE_EXTRA_CA_CERTS`), the wrapper won't override them and will log a warning. Use the `passthrough` keyword to skip MITM for hosts that reject the proxy CA.
 - **Detached daemons lose GitHub context** — Background processes that daemonize lose their parent relationship to Runner.Worker. Use `exe=` to scope their traffic.
 - **No WebSocket inspection** — WebSocket connections are logged but not inspected after the upgrade handshake.
 

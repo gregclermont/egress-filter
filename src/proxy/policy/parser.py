@@ -37,7 +37,8 @@ newline         = "\n" / "\r\n"
 ws              = " " / "\t"
 
 header          = ws* "[" header_content? "]" inline_comment? ws*
-header_content  = url_base_header / method_header / port_proto_header / kv_only_header
+header_content  = passthrough_header / url_base_header / method_header / port_proto_header / kv_only_header
+passthrough_header = "passthrough" kv_attrs?
 url_base_header = url_base kv_attrs?
 method_header   = method_attr kv_attrs?
 port_proto_header = port_proto_attr kv_attrs?
@@ -56,7 +57,8 @@ path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
 path_rule       = (method_attr ws+)? "/" path_rest kv_attrs?
 
-network_rule    = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? kv_attrs?
+network_rule    = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? kv_attrs?
+passthrough_flag = ws+ "passthrough"
 
 dns_host_rule   = "dns:" (wildcard_host / exact_host)
 
@@ -150,6 +152,7 @@ class PolicyVisitor(NodeVisitor):
 
     def __init__(self, defaults: DefaultContext | None = None):
         self.rules = []
+        self.warnings = []
         self._defaults = defaults or SECURE_DEFAULTS
         self.ctx = HeaderContext(
             port=list(self._defaults.port)
@@ -212,14 +215,27 @@ class PolicyVisitor(NodeVisitor):
                             self.ctx.port = attr["port"]
                         if "protocol" in attr:
                             self.ctx.protocol = attr["protocol"]
+                        if "passthrough" in attr:
+                            self.ctx.passthrough = True
                         # Handle kv_attrs in headers (exe=, cgroup=, etc.)
                         for key in list(attr.keys()):
-                            if key not in ("url_base", "methods", "port", "protocol"):
+                            if key not in ("url_base", "methods", "port", "protocol", "passthrough"):
                                 self.ctx.attrs[key] = attr[key]
         return None
 
     def visit_header_content(self, node, visited_children):
         return visited_children[0]
+
+    def visit_passthrough_header(self, node, visited_children):
+        # "passthrough" kv_attrs?
+        _, kv_attrs = visited_children
+        result = {"passthrough": True}
+        if not _is_empty(kv_attrs):
+            flat_kv = _flatten([kv_attrs])
+            for item in flat_kv:
+                if isinstance(item, dict):
+                    result.update(item)
+        return result
 
     def visit_method_header(self, node, visited_children):
         # method_attr kv_attrs?
@@ -390,7 +406,25 @@ class PolicyVisitor(NodeVisitor):
             url_base = self.ctx.url_base
             if url_base is None:
                 # Path rule without URL context - skip
+                self.warnings.append(
+                    "Path rule requires a URL header context (e.g., [https://example.com])"
+                )
                 return None
+
+        # Determine passthrough from rule-level flag or header context
+        is_passthrough = rule_info.get("passthrough", False) or self.ctx.passthrough
+
+        # Validate: passthrough only applies to host/wildcard_host rules
+        if is_passthrough and rule_type not in ("host", "wildcard_host"):
+            self.warnings.append(
+                f"passthrough is only supported on hostname and wildcard rules, not {rule_type}"
+            )
+            logger.debug(
+                "Skipping passthrough on unsupported rule type %r: %s",
+                rule_type,
+                target,
+            )
+            return None
 
         rule = Rule(
             type=rule_type,
@@ -400,6 +434,7 @@ class PolicyVisitor(NodeVisitor):
             methods=methods,
             url_base=url_base,
             attrs=attrs,
+            passthrough=is_passthrough,
         )
         self.rules.append(rule)
         return rule
@@ -489,9 +524,12 @@ class PolicyVisitor(NodeVisitor):
             "attrs": attrs,
         }
 
+    def visit_passthrough_flag(self, node, visited_children):
+        return {"passthrough": True}
+
     def visit_network_rule(self, node, visited_children):
-        # network_rule = (cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs?
-        rule_data, port_proto, kv_attrs = visited_children
+        # network_rule = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? kv_attrs?
+        rule_data, port_proto, passthrough_flag, kv_attrs = visited_children
 
         # Extract base rule info
         rule_info = None
@@ -513,6 +551,13 @@ class PolicyVisitor(NodeVisitor):
                         rule_info["port"] = item["port"]
                     if "protocol" in item:
                         rule_info["protocol"] = item["protocol"]
+
+        # Apply passthrough flag
+        if not _is_empty(passthrough_flag):
+            flat_pt = _flatten([passthrough_flag])
+            for item in flat_pt:
+                if isinstance(item, dict) and "passthrough" in item:
+                    rule_info["passthrough"] = True
 
         # Apply kv attrs
         attrs = {}
@@ -824,8 +869,9 @@ def parse_policy(
 
         try:
             tree = GRAMMAR.parse(line)
-            # Reset rules list for this line (context is preserved across lines)
+            # Reset rules/warnings for this line (context is preserved across lines)
             visitor.rules = []
+            visitor.warnings = []
             visitor.visit(tree)
             # Collect rules from this line
             all_rules.extend(visitor.rules)
@@ -857,7 +903,7 @@ def rule_to_dict(rule: Rule) -> dict:
         else:
             attrs_dict[key] = value
 
-    return {
+    result = {
         "type": rule.type,
         "target": rule.target,
         "port": rule.port,
@@ -866,6 +912,9 @@ def rule_to_dict(rule: Rule) -> dict:
         "url_base": rule.url_base,
         "attrs": attrs_dict,
     }
+    if rule.passthrough:
+        result["passthrough"] = True
+    return result
 
 
 def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
@@ -880,6 +929,7 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
     """
     errors = []
     visitor = PolicyVisitor()
+    all_rules: list[Rule] = []
 
     for line_num, line in enumerate(policy_text.splitlines(), start=1):
         line_stripped = line.strip()
@@ -891,8 +941,57 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
         try:
             tree = GRAMMAR.parse(line)
             visitor.rules = []
+            visitor.warnings = []
             visitor.visit(tree)
+            all_rules.extend(visitor.rules)
+            for warning in visitor.warnings:
+                errors.append((line_num, line_stripped, warning))
         except ParseError as e:
             errors.append((line_num, line_stripped, str(e)))
 
+    # Cross-rule validation: warn if passthrough overlaps with URL/path rules
+    errors.extend(_check_passthrough_url_overlap(all_rules))
+
     return errors
+
+
+def _extract_url_rule_hostname(rule: Rule) -> str | None:
+    """Extract the hostname from a URL or path rule's target."""
+    if rule.type == "url":
+        return urlparse(rule.target).hostname
+    elif rule.type == "path" and rule.url_base:
+        return urlparse(rule.url_base).hostname
+    return None
+
+
+def _check_passthrough_url_overlap(
+    rules: list[Rule],
+) -> list[tuple[int, str, str]]:
+    """Warn when passthrough rules overlap with URL/path allow rules.
+
+    Passthrough skips MITM, so URL path/method filtering won't apply.
+    """
+    from .matcher import match_hostname
+
+    passthrough_rules = [r for r in rules if r.passthrough]
+    url_path_rules = [r for r in rules if r.type in ("url", "path") and not r.passthrough]
+
+    if not passthrough_rules or not url_path_rules:
+        return []
+
+    warnings = []
+    for pt_rule in passthrough_rules:
+        is_wildcard = pt_rule.type == "wildcard_host"
+        for url_rule in url_path_rules:
+            url_hostname = _extract_url_rule_hostname(url_rule)
+            if url_hostname and match_hostname(
+                pt_rule.target, url_hostname, is_wildcard=is_wildcard
+            ):
+                warnings.append((
+                    0,
+                    f"{pt_rule.target} passthrough",
+                    f"passthrough rule '{pt_rule.target}' overlaps with URL/path rule "
+                    f"'{url_rule.target}' — URL path and method filtering will not apply "
+                    f"because passthrough skips TLS interception",
+                ))
+    return warnings

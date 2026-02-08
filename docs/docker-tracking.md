@@ -114,6 +114,13 @@ Container HTTPS traffic is fully MITM'd, enabling URL/path matching, method filt
 
 The wrapper fails open: if injection fails, runc still runs normally. If a container image pre-sets CA-related env vars, the wrapper does not override them but logs a warning with the image name (queried from Docker API).
 
+For containers that reject the proxy CA (certificate pinning, embedded trust stores), use the `passthrough` keyword to skip TLS interception:
+
+```yaml
+# Skip MITM for pinned containers
+*.docker.io passthrough cgroup=@docker
+```
+
 ## Implementation Details
 
 ### Files
@@ -138,4 +145,4 @@ Applications receive `EPERM` (Operation not permitted) when attempting IPv6 conn
 
 2. **Docker's internal DNS**: Containers use Docker's embedded DNS at 127.0.0.11 by default. When the container queries this, Docker forwards to the actual resolver. We intercept this forwarded query, which means we see the correct destination but attribute it to the process inside the container (via kprobe), not Docker's daemon.
 
-3. **CA injection is best-effort**: Runtimes that don't use the system CA store or the injected env vars (e.g., Java without keytool import, certificate pinning) will see TLS failures. Containers that pre-set CA-related env vars won't have them overridden.
+3. **CA injection is best-effort**: Runtimes that don't use the system CA store or the injected env vars (e.g., Java without keytool import, certificate pinning) will see TLS failures. Containers that pre-set CA-related env vars won't have them overridden. Use `passthrough` to skip MITM for affected hosts.

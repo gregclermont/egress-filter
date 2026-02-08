@@ -105,6 +105,47 @@ dns:example.com
 dns:*.internal.corp
 ```
 
+### TLS Passthrough
+
+The `passthrough` keyword skips TLS MITM interception for specific hostnames. Use this for services with certificate pinning, embedded trust stores, or sensitive traffic where you don't want the proxy to decrypt TLS:
+
+```yaml
+# Per-rule passthrough
+pinned.example.com passthrough
+
+# Passthrough with scope constraints
+*.docker.io passthrough cgroup=@docker
+
+# Passthrough with explicit port
+registry.example.com:443 passthrough
+
+# Header context for multiple passthrough rules
+[passthrough]
+pinned-service.example.com
+another-pinned.example.com
+
+# Passthrough header with attributes
+[passthrough cgroup=@docker]
+registry.example.com
+auth.example.com
+
+# Reset back to normal rules
+[]
+normal-host.com
+```
+
+**How it works:**
+
+1. A connection must first match an allow rule (hostname, wildcard, IP, etc.)
+2. Passthrough rules are evaluated as a separate phase — if the allowed connection also matches a passthrough rule, TLS interception is skipped
+3. The connection is still logged (with `passthrough: true`) but the proxy does not decrypt it
+
+**Restrictions:**
+
+- Only `host` and `wildcard_host` rules support passthrough. IP, CIDR, URL, path, and DNS-only rules with `passthrough` are rejected at validation time and silently dropped at runtime.
+- Passthrough only applies at the TLS stage (`tls_clienthello`). Since TLS is not decrypted, URL path matching and HTTP method filtering are not available for passthrough connections.
+- A passthrough-only rule (without a matching allow rule) does not allow the connection — the connection must be allowed first.
+
 ### Placeholders
 
 Policy text supports `{owner}` and `{repo}` placeholders, substituted from the `GITHUB_REPOSITORY` environment variable at runtime:

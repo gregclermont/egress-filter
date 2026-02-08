@@ -153,16 +153,15 @@ class TestValidatePolicy:
         errors = validate_policy(policy)
         assert len(errors) == 0
 
-    def test_preserves_header_context(self):
-        """Headers affect subsequent rules (context preserved)."""
-        # Path rule without URL context should be invalid
+    def test_path_without_url_context(self):
+        """Path rule without URL header context is reported as error."""
         policy = """
         /path/to/something
         """
         errors = validate_policy(policy)
-        # Path rule without URL header context generates no rule (skipped)
-        # but doesn't generate a parse error - it parses but produces no rule
-        # This is lenient behavior per design doc
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "URL header context" in message
 
     def test_header_then_path_rule(self):
         """Path rule with URL header context is valid."""
@@ -172,6 +171,80 @@ class TestValidatePolicy:
         """
         errors = validate_policy(policy)
         assert len(errors) == 0
+
+    def test_passthrough_on_ip_returns_error(self):
+        """Passthrough on IP rule is reported as error."""
+        errors = validate_policy("8.8.8.8 passthrough")
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "passthrough" in message
+        assert "ip" in message
+
+    def test_passthrough_on_cidr_returns_error(self):
+        """Passthrough on CIDR under header is reported as error."""
+        errors = validate_policy("[passthrough]\n10.0.0.0/8")
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "passthrough" in message
+        assert "cidr" in message
+
+    def test_passthrough_on_dns_returns_error(self):
+        """Passthrough on dns: rule is reported as error."""
+        errors = validate_policy("dns:example.com passthrough")
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "passthrough" in message
+
+    def test_passthrough_header_mixed_valid_invalid(self):
+        """Passthrough header with mix of valid hosts and invalid CIDR."""
+        policy = "[passthrough]\ngithub.com\n10.0.0.0/8\n*.docker.io"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        line_num, line, message = errors[0]
+        assert line_num == 3
+        assert "10.0.0.0/8" in line
+
+    def test_passthrough_on_hostname_is_valid(self):
+        """Passthrough on hostname rule is valid."""
+        errors = validate_policy("github.com passthrough")
+        assert len(errors) == 0
+
+    def test_passthrough_on_wildcard_is_valid(self):
+        """Passthrough on wildcard rule is valid."""
+        errors = validate_policy("*.docker.io passthrough")
+        assert len(errors) == 0
+
+    def test_passthrough_overlaps_url_rule(self):
+        """Passthrough on hostname that has URL/path rules warns about overlap."""
+        policy = "https://example.com/api/*\nexample.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "overlaps" in message
+        assert "example.com" in message
+        assert "URL path" in message
+
+    def test_passthrough_wildcard_overlaps_url_rule(self):
+        """Wildcard passthrough overlapping URL rule hostname warns."""
+        policy = "https://api.example.com/v1/*\n*.example.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "overlaps" in message
+
+    def test_passthrough_no_overlap_no_warning(self):
+        """Passthrough on different hostname than URL rules produces no warning."""
+        policy = "https://example.com/api/*\nother.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 0
+
+    def test_passthrough_overlaps_path_rule(self):
+        """Passthrough overlapping a path rule under URL header warns."""
+        policy = "[https://example.com]\n/api/*\n[]\nexample.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "overlaps" in message
 
 
 class TestAnalyzeConnections:
