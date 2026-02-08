@@ -929,6 +929,7 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
     """
     errors = []
     visitor = PolicyVisitor()
+    all_rules: list[Rule] = []
 
     for line_num, line in enumerate(policy_text.splitlines(), start=1):
         line_stripped = line.strip()
@@ -942,9 +943,55 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
             visitor.rules = []
             visitor.warnings = []
             visitor.visit(tree)
+            all_rules.extend(visitor.rules)
             for warning in visitor.warnings:
                 errors.append((line_num, line_stripped, warning))
         except ParseError as e:
             errors.append((line_num, line_stripped, str(e)))
 
+    # Cross-rule validation: warn if passthrough overlaps with URL/path rules
+    errors.extend(_check_passthrough_url_overlap(all_rules))
+
     return errors
+
+
+def _extract_url_rule_hostname(rule: Rule) -> str | None:
+    """Extract the hostname from a URL or path rule's target."""
+    if rule.type == "url":
+        return urlparse(rule.target).hostname
+    elif rule.type == "path" and rule.url_base:
+        return urlparse(rule.url_base).hostname
+    return None
+
+
+def _check_passthrough_url_overlap(
+    rules: list[Rule],
+) -> list[tuple[int, str, str]]:
+    """Warn when passthrough rules overlap with URL/path allow rules.
+
+    Passthrough skips MITM, so URL path/method filtering won't apply.
+    """
+    from .matcher import match_hostname
+
+    passthrough_rules = [r for r in rules if r.passthrough]
+    url_path_rules = [r for r in rules if r.type in ("url", "path") and not r.passthrough]
+
+    if not passthrough_rules or not url_path_rules:
+        return []
+
+    warnings = []
+    for pt_rule in passthrough_rules:
+        is_wildcard = pt_rule.type == "wildcard_host"
+        for url_rule in url_path_rules:
+            url_hostname = _extract_url_rule_hostname(url_rule)
+            if url_hostname and match_hostname(
+                pt_rule.target, url_hostname, is_wildcard=is_wildcard
+            ):
+                warnings.append((
+                    0,
+                    f"{pt_rule.target} passthrough",
+                    f"passthrough rule '{pt_rule.target}' overlaps with URL/path rule "
+                    f"'{url_rule.target}' — URL path and method filtering will not apply "
+                    f"because passthrough skips TLS interception",
+                ))
+    return warnings

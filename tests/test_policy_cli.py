@@ -214,6 +214,38 @@ class TestValidatePolicy:
         errors = validate_policy("*.docker.io passthrough")
         assert len(errors) == 0
 
+    def test_passthrough_overlaps_url_rule(self):
+        """Passthrough on hostname that has URL/path rules warns about overlap."""
+        policy = "https://example.com/api/*\nexample.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "overlaps" in message
+        assert "example.com" in message
+        assert "URL path" in message
+
+    def test_passthrough_wildcard_overlaps_url_rule(self):
+        """Wildcard passthrough overlapping URL rule hostname warns."""
+        policy = "https://api.example.com/v1/*\n*.example.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "overlaps" in message
+
+    def test_passthrough_no_overlap_no_warning(self):
+        """Passthrough on different hostname than URL rules produces no warning."""
+        policy = "https://example.com/api/*\nother.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 0
+
+    def test_passthrough_overlaps_path_rule(self):
+        """Passthrough overlapping a path rule under URL header warns."""
+        policy = "[https://example.com]\n/api/*\n[]\nexample.com passthrough"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "overlaps" in message
+
 
 class TestAnalyzeConnections:
     """Tests for connection log analysis."""
