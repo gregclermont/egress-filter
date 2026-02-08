@@ -173,6 +173,23 @@ example.com arg[0]=node
 example.com arg[1]=server.js
 ```
 
+### `image=` - Docker Container Image
+
+Restricts access to processes running in a specific Docker container image. Supports wildcards:
+
+```yaml
+# Exact image match
+registry.example.com image=python:3.12-alpine
+
+# Wildcard tag
+registry.example.com image=node:*
+
+# Wildcard with registry prefix
+*.github.com image=ghcr.io/myorg/*
+```
+
+This works for both `docker run` containers and `docker://` action steps. The image name is resolved by querying the Docker daemon's API via its Unix socket, so it reflects the image name as Docker sees it.
+
 ### `cgroup=` - Control Group
 
 Restricts access by Linux cgroup path. Supports wildcards and shortcuts:
@@ -301,6 +318,7 @@ Each entry in `connections.jsonl` includes:
 - `cgroup`: Linux cgroup path
 - `step`: GitHub step identifier (if available)
 - `action`: GitHub action repository (if available)
+- `image`: Docker container image (if available)
 - `policy`: Whether it was allowed or denied
 
 ### Installing the CLI

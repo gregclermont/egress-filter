@@ -33,7 +33,7 @@ src/
 │   ├── control.py       # Unix socket server: authenticated shutdown/sudo commands via SO_PEERCRED
 │   ├── sudo.py          # Disable/enable sudo by truncating /etc/sudoers.d/runner
 │   ├── logging.py       # Operational log + JSONL connection event log
-│   ├── proc.py          # /proc readers: exe, cmdline, cgroup, environ, ancestry, trusted GitHub env
+│   ├── proc.py          # /proc readers: exe, cmdline, cgroup, environ, ancestry, trusted GitHub env, Docker image lookup
 │   ├── utils.py         # ip_to_int (little-endian for BPF), protocol constants
 │   ├── purl.py          # Registry URL → PURL parser (npm, PyPI, Cargo)
 │   ├── socket_dev.py    # Socket.dev API client: package security checks, caching, fail-open
@@ -115,7 +115,7 @@ Rules are parsed line-by-line with a PEG grammar. Headers (`[...]`) set context 
 
 Rule types: hostname (`github.com`), wildcard (`*.github.com`), IP (`1.2.3.4`), CIDR (`10.0.0.0/8`), URL (`https://github.com/owner/repo/*`), path (`/api/*` under a URL-base header), DNS-only (`dns:example.com`).
 
-Attributes: `exe=`, `cgroup=`, `step=`, `action=`, `arg=`, `arg[N]=`. Port: `:443`, `:80|443`, `:*`. Protocol: `/tcp`, `/udp`. Methods: `GET|POST`.
+Attributes: `exe=`, `cgroup=`, `step=`, `action=`, `image=`, `arg=`, `arg[N]=`. Port: `:443`, `:80|443`, `:*`. Protocol: `/tcp`, `/udp`. Methods: `GET|POST`.
 
 The `for_runner` factory prepends infrastructure defaults and injects `cgroup=/system.slice/hosted-compute-agent.service` on all rules.
 

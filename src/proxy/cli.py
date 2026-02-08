@@ -203,6 +203,7 @@ def analyze_connections(
             cgroup=conn.get("cgroup"),
             step=conn.get("step"),
             action=conn.get("action"),
+            image=conn.get("image"),
         )
 
         # Use the same enforcer methods as the live proxy
@@ -294,11 +295,14 @@ def print_analysis_results(results: dict, verbose: bool = False) -> int:
             # Show process info if available
             exe = conn.get("exe", "")
             step = conn.get("step", "")
+            image = conn.get("image", "")
             context_parts = []
             if exe:
                 context_parts.append(f"exe={exe}")
             if step:
                 context_parts.append(f"step={step}")
+            if image:
+                context_parts.append(f"image={image}")
             context = f"  [{', '.join(context_parts)}]" if context_parts else ""
 
             print(f"  {formatted}{count_str}{context}")
@@ -328,11 +332,14 @@ def print_analysis_results(results: dict, verbose: bool = False) -> int:
             # Show process info if available
             exe = conn.get("exe", "")
             step = conn.get("step", "")
+            image = conn.get("image", "")
             context_parts = [f"error={error}"]
             if exe:
                 context_parts.append(f"exe={exe}")
             if step:
                 context_parts.append(f"step={step}")
+            if image:
+                context_parts.append(f"image={image}")
             context = f"  [{', '.join(context_parts)}]"
 
             print(f"  {formatted}{count_str}{context}")

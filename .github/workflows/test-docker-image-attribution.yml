@@ -1,0 +1,45 @@
+name: Test Docker image attribution
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          audit: true
+
+      - name: Run docker container (docker run)
+        run: docker run --rm python:3.12-alpine python -c "import urllib.request; urllib.request.urlopen('http://example.com')"
+
+      - name: Run docker action (uses docker://)
+        uses: docker://python:3.12-alpine
+        with:
+          entrypoint: python
+          args: -c "import urllib.request; urllib.request.urlopen('http://example.com')"
+
+      - name: Show proxy logs
+        if: always()
+        run: cat /tmp/proxy.log || echo "No proxy log found"
+
+      - name: Check connection log for image field
+        if: always()
+        run: |
+          echo "=== Container connections ==="
+          python3 -c "
+          import json, sys
+          for line in open('/tmp/connections.jsonl'):
+              conn = json.loads(line)
+              if conn.get('image'):
+                  print(json.dumps({k: conn[k] for k in ['type','dst_ip','dst_port','image','exe','policy'] if k in conn}, indent=2))
+          " || echo "No connections with image field found"

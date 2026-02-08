@@ -22,7 +22,9 @@ def run_tests(test_suite: list) -> list:
     """Run a test suite and return results."""
     results = []
 
-    for marker, conn_type, target, expect_logged, description in test_suite:
+    for test_entry in test_suite:
+        marker, conn_type, target, expect_logged, description = test_entry[:5]
+        expect_image = test_entry[5] if len(test_entry) > 5 else None
         # Run make_connection.py as subprocess
         # The marker appears early in cmdline for easy grep
         try:
@@ -61,6 +63,8 @@ def run_tests(test_suite: list) -> list:
 
         result["expect_logged"] = expect_logged
         result["description"] = description
+        if expect_image:
+            result["expect_image"] = expect_image
         results.append(result)
 
     return results

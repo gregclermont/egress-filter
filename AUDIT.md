@@ -29,7 +29,7 @@ Comprehensive list of areas to audit, organized by category.
   `proxy.sh:136-139` — the CA cert is appended to the system cert store and copied to `/tmp`. After the proxy shuts down, the CA private key remains in `/root/.mitmproxy/`. If a later step runs as root (or sudo is re-enabled), it could extract the key and MITM connections using the still-trusted cert.
 
 - [ ] **S9. Container process detection relies solely on cgroup string matching**
-  `proc.py:98-103` — `is_container_process` checks for `docker-` or `/docker/` in cgroup path. A process could manipulate its cgroup path (if it has permissions) or use a non-Docker container runtime that doesn't match these patterns. False negative → no TLS passthrough → connection failure. False positive → TLS passthrough → bypasses URL/path-level inspection.
+  `mitmproxy.py:92` checks for `docker-` in the cgroup path from `proc_dict`. `proc.py:166-171` — `is_container_process` also checks for `docker-` or `/docker/` in cgroup path. A process could manipulate its cgroup path (if it has permissions) or use a non-Docker container runtime that doesn't match these patterns. False negative → no TLS passthrough → connection failure. False positive → TLS passthrough → bypasses URL/path-level inspection.
 
 - [ ] **S10. Raw socket blocking doesn't cover all bypass vectors**
   `conn_tracker.bpf.c:86-100` — blocks `AF_PACKET` and `SOCK_RAW`. What about `IPPROTO_RAW` with `SOCK_DGRAM`? What about `io_uring` or other kernel interfaces that could send packets without going through the socket syscall?

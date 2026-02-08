@@ -31,12 +31,13 @@ HOST_TESTS = [
 ]
 
 # Tests that run in docker bridge mode
+# 6th element (optional): expect_image pattern to verify container image attribution
 BRIDGE_TESTS = [
-    ("B001", "http", "http://example.com/", True, "HTTP from bridge container"),
-    ("B002", "https", "https://example.com/", True, "HTTPS from bridge container"),
-    ("B003", "dns", "example.com", True, "DNS from bridge container"),
-    ("B004", "udp", "8.8.8.8:9999", True, "UDP from bridge container"),
-    ("B005", "tcp", "github.com:22", True, "TCP from bridge container"),
+    ("B001", "http", "http://example.com/", True, "HTTP from bridge container", "python:3.12-alpine"),
+    ("B002", "https", "https://example.com/", True, "HTTPS from bridge container", "python:3.12-alpine"),
+    ("B003", "dns", "example.com", True, "DNS from bridge container", "python:3.12-alpine"),
+    ("B004", "udp", "8.8.8.8:9999", True, "UDP from bridge container", "python:3.12-alpine"),
+    ("B005", "tcp", "github.com:22", True, "TCP from bridge container", "python:3.12-alpine"),
 ]
 
 # Tests that run in docker host mode

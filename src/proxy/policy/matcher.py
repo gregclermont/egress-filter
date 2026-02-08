@@ -28,6 +28,7 @@ class ConnectionEvent:
     cgroup: str | None = None
     step: str | None = None
     action: str | None = None  # GitHub Action repository (e.g., "actions/checkout")
+    image: str | None = None  # Docker container image (e.g., "node:18-alpine")
 
     @classmethod
     def from_dict(cls, data: dict) -> "ConnectionEvent":
@@ -45,6 +46,7 @@ class ConnectionEvent:
             cgroup=data.get("cgroup"),
             step=data.get("step"),
             action=data.get("action"),
+            image=data.get("image"),
         )
 
 
@@ -337,6 +339,14 @@ def match_attrs(rule: Rule, event: ConnectionEvent) -> bool:
                 return False
             pattern = value.value if isinstance(value, AttrValue) else value
             if not match_cgroup(pattern, event.cgroup):
+                return False
+            continue
+
+        # Handle image (Docker container image)
+        if key == "image":
+            if event.image is None:
+                return False
+            if not match_attr_value(value, event.image):
                 return False
             continue
 

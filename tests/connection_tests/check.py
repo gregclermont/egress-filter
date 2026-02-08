@@ -85,6 +85,15 @@ def check_connection(conn: dict, expected: dict, src_ip_pattern: str | None) -> 
         if not re.match(src_ip_pattern, src_ip):
             return False, f"src_ip '{src_ip}' doesn't match pattern '{src_ip_pattern}'"
 
+    # Check container image if expected
+    expect_image = expected.get("expect_image")
+    if expect_image:
+        actual_image = conn.get("image")
+        if actual_image is None:
+            return False, f"Expected image='{expect_image}' but no image field in log"
+        if actual_image != expect_image:
+            return False, f"Expected image='{expect_image}' but got '{actual_image}'"
+
     return True, "OK"
 
 

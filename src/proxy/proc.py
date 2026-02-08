@@ -1,9 +1,77 @@
 """Process information utilities for reading /proc filesystem."""
 
+import http.client
+import json
 import os
+import re
+import socket
 from pathlib import Path
 
 from proxy.policy.gha import RUNNER_CGROUP, RUNNER_WORKER_EXE
+
+
+# =============================================================================
+# Docker container image lookup
+# =============================================================================
+
+_CONTAINER_ID_RE = re.compile(r"docker-([0-9a-f]{64})\.scope")
+
+# Cache: container_id -> image name (or None on lookup failure).
+# Container images don't change, so cache indefinitely.
+_container_image_cache: dict[str, str | None] = {}
+
+DOCKER_SOCKET = "/var/run/docker.sock"
+
+
+def parse_container_id(cgroup: str) -> str | None:
+    """Extract 64-char hex container ID from a cgroup path.
+
+    On GitHub-hosted Ubuntu 24.04 (cgroup v2), the format is:
+        /system.slice/docker-<64hex>.scope
+    """
+    m = _CONTAINER_ID_RE.search(cgroup)
+    return m.group(1) if m else None
+
+
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection that connects over a Unix domain socket."""
+
+    def __init__(self, socket_path: str, timeout: float = 2.0):
+        # host is required by HTTPConnection but unused for Unix sockets
+        super().__init__("localhost", timeout=timeout)
+        self._socket_path = socket_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._socket_path)
+
+
+def lookup_container_image(container_id: str) -> str | None:
+    """Query Docker socket API for a container's image name.
+
+    Returns the image name (e.g. "node:18-alpine") or None on any error.
+    Results are cached (including None for failures).
+    """
+    if container_id in _container_image_cache:
+        return _container_image_cache[container_id]
+
+    image = None
+    try:
+        conn = _UnixHTTPConnection(DOCKER_SOCKET)
+        try:
+            conn.request("GET", f"/containers/{container_id}/json")
+            resp = conn.getresponse()
+            if resp.status == 200:
+                data = json.loads(resp.read())
+                image = data.get("Config", {}).get("Image")
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    _container_image_cache[container_id] = image
+    return image
 
 
 # =============================================================================
@@ -195,6 +263,14 @@ def get_proc_info(pid: int | None) -> dict:
     cgroup = get_cgroup_path(pid)
     if cgroup:
         result["cgroup"] = cgroup
+
+    # Docker container image lookup (cgroup v2 only: docker-<64hex>.scope)
+    if cgroup and "docker-" in cgroup:
+        cid = parse_container_id(cgroup)
+        if cid:
+            image = lookup_container_image(cid)
+            if image:
+                result["image"] = image
 
     # Get GitHub env vars from trusted ancestry (single read)
     trusted_env = get_trusted_github_env(pid)
