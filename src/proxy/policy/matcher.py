@@ -350,6 +350,11 @@ def match_attrs(rule: Rule, event: ConnectionEvent) -> bool:
                 return False
             continue
 
+        # Unknown attribute key — fail closed (defense in depth).
+        # The grammar rejects unknown keys at parse time, but if one
+        # somehow reaches here, refuse to match.
+        return False
+
     return True
 
 
