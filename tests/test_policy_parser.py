@@ -388,5 +388,181 @@ class TestRuleToDict:
         assert len(parsed) == 2
 
 
+# =============================================================================
+# validate_policy Tests
+# =============================================================================
+
+from proxy.policy.parser import (
+    _check_passthrough_url_overlap,
+    _extract_url_rule_hostname,
+    flatten_policy,
+    validate_policy,
+)
+
+
+class TestValidatePolicy:
+    """Tests for validate_policy function."""
+
+    def test_valid_policy_no_errors(self):
+        errors = validate_policy("github.com\n*.github.com")
+        assert errors == []
+
+    def test_invalid_line_returns_error(self):
+        errors = validate_policy("not a valid rule!!!")
+        assert len(errors) == 1
+        line_num, text, msg = errors[0]
+        assert line_num == 1
+        assert text == "not a valid rule!!!"
+
+    def test_mixed_valid_invalid(self):
+        policy = "github.com\n!!invalid!!\nexample.com"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        assert errors[0][0] == 2  # line 2
+
+    def test_skips_comments_and_blanks(self):
+        policy = "# comment\n\ngithub.com\n  # another comment"
+        errors = validate_policy(policy)
+        assert errors == []
+
+    def test_comment_after_valid_rule_first_line(self):
+        """Policy starting with a comment line followed by a valid rule."""
+        policy = "# comment\ngithub.com"
+        errors = validate_policy(policy)
+        assert errors == []
+
+    def test_passthrough_on_url_rule_warns(self):
+        """passthrough on a URL rule type generates a warning."""
+        policy = "[passthrough]\nhttps://example.com/api/*"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        assert "passthrough" in errors[0][2].lower()
+
+    def test_passthrough_overlap_with_url_rule(self):
+        """Passthrough on a hostname that also has URL rules warns."""
+        policy = "github.com\nGET https://github.com/api/*\ngithub.com passthrough"
+        errors = validate_policy(policy)
+        assert any("passthrough" in e[2] and "overlap" in e[2] for e in errors)
+
+    def test_passthrough_no_overlap_no_warning(self):
+        """Passthrough on a hostname without URL rules is fine."""
+        policy = "github.com\ngithub.com passthrough"
+        errors = validate_policy(policy)
+        assert errors == []
+
+    def test_multiple_invalid_lines(self):
+        policy = "!!invalid1!!\n!!invalid2!!\n!!invalid3!!"
+        errors = validate_policy(policy)
+        assert len(errors) == 3
+        assert errors[0][0] == 1
+        assert errors[1][0] == 2
+        assert errors[2][0] == 3
+
+    def test_comment_then_invalid_line(self):
+        policy = "# comment\n!!invalid!!"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+
+    def test_blank_then_invalid_line(self):
+        policy = "\n!!invalid!!"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+
+    def test_error_message_contains_parse_info(self):
+        errors = validate_policy("!!invalid!!")
+        assert len(errors) == 1
+        _, _, msg = errors[0]
+        assert msg != "None"
+        assert len(msg) > 0
+
+
+class TestExtractUrlRuleHostname:
+    """Tests for _extract_url_rule_hostname."""
+
+    def test_url_rule(self):
+        from proxy.policy.types import Rule
+        rule = Rule(type="url", target="https://example.com/api/*",
+                    port=[443], protocol="tcp", methods=["GET"], url_base=None, attrs={})
+        assert _extract_url_rule_hostname(rule) == "example.com"
+
+    def test_path_rule_with_url_base(self):
+        from proxy.policy.types import Rule
+        rule = Rule(type="path", target="/api/*",
+                    port=[443], protocol="tcp", methods=["GET"],
+                    url_base="https://api.github.com", attrs={})
+        assert _extract_url_rule_hostname(rule) == "api.github.com"
+
+    def test_path_rule_without_url_base(self):
+        from proxy.policy.types import Rule
+        rule = Rule(type="path", target="/api/*",
+                    port=[443], protocol="tcp", methods=["GET"],
+                    url_base=None, attrs={})
+        assert _extract_url_rule_hostname(rule) is None
+
+    def test_host_rule_returns_none(self):
+        from proxy.policy.types import Rule
+        rule = Rule(type="host", target="example.com",
+                    port=[443], protocol="tcp", methods=None, url_base=None, attrs={})
+        assert _extract_url_rule_hostname(rule) is None
+
+
+class TestCheckPassthroughUrlOverlap:
+    """Tests for _check_passthrough_url_overlap."""
+
+    def test_no_passthrough_rules(self):
+        rules = parse_policy("github.com\nGET https://github.com/api/*")
+        warnings = _check_passthrough_url_overlap(rules)
+        assert warnings == []
+
+    def test_no_url_rules(self):
+        rules = parse_policy("github.com\ngithub.com passthrough")
+        warnings = _check_passthrough_url_overlap(rules)
+        assert warnings == []
+
+    def test_overlap_detected(self):
+        rules = parse_policy("github.com\nGET https://github.com/api/*\ngithub.com passthrough")
+        warnings = _check_passthrough_url_overlap(rules)
+        assert len(warnings) == 1
+        assert warnings[0][0] == 0  # line_num is 0 for cross-rule warnings
+        assert "overlap" in warnings[0][2]
+
+    def test_no_overlap_different_host(self):
+        rules = parse_policy("example.com\nGET https://github.com/api/*\nexample.com passthrough")
+        warnings = _check_passthrough_url_overlap(rules)
+        assert warnings == []
+
+    def test_wildcard_passthrough_overlaps_url(self):
+        rules = parse_policy("*.github.com\nGET https://api.github.com/repos/*\n*.github.com passthrough")
+        warnings = _check_passthrough_url_overlap(rules)
+        assert len(warnings) == 1
+
+    def test_passthrough_overlaps_path_rule(self):
+        rules = parse_policy(
+            "[https://api.github.com]\n"
+            "GET /repos/*\n"
+            "[]\n"
+            "api.github.com\n"
+            "api.github.com passthrough"
+        )
+        warnings = _check_passthrough_url_overlap(rules)
+        assert len(warnings) == 1
+
+
+class TestFlattenPolicy:
+    """Tests for flatten_policy convenience function."""
+
+    def test_basic_flatten(self):
+        result = list(flatten_policy("github.com"))
+        assert len(result) == 1
+        assert result[0]["type"] == "host"
+        assert result[0]["target"] == "github.com"
+
+    def test_multiple_rules(self):
+        result = list(flatten_policy("github.com\n*.github.com"))
+        assert len(result) == 2
+        assert result[0]["type"] == "host"
+        assert result[1]["type"] == "wildcard_host"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

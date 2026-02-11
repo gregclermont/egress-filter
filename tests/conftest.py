@@ -5,6 +5,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Skip handler tests when proxy extra dependencies (mitmproxy, etc.) are missing.
+collect_ignore_glob = []
+try:
+    import mitmproxy  # noqa: F401
+except ImportError:
+    collect_ignore_glob.append("test_handler_*.py")
+
 from proxy.policy.enforcer import Decision, Verdict
 
 
