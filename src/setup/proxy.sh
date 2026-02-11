@@ -60,8 +60,9 @@ install_deps() {
     uv sync --quiet --extra proxy
 }
 
-PIDFILE="/tmp/proxy.pid"
-SUPERVISOR_PIDFILE="/tmp/supervisor.pid"
+TEMP_DIR="${RUNNER_TEMP:-/tmp}"
+PIDFILE="$TEMP_DIR/proxy.pid"
+SUPERVISOR_PIDFILE="$TEMP_DIR/supervisor.pid"
 SCOPE_NAME="egress-filter-proxy"
 
 start_proxy() {
@@ -106,7 +107,7 @@ start_proxy() {
         counter=$((counter+1))
         if ! kill -0 $supervisor_pid 2>/dev/null; then
             echo "Supervisor died! Output:"
-            cat /tmp/proxy-stdout.log || true
+            cat "$TEMP_DIR/proxy-stdout.log" || true
             exit 1
         fi
         if [ $counter -gt 100 ]; then
@@ -162,7 +163,7 @@ start_proxy() {
 }
 
 stop_proxy() {
-    echo "=== stop_proxy ===" | tee -a /tmp/proxy.log
+    echo "=== stop_proxy ===" | tee -a "$TEMP_DIR/proxy.log"
 
     # IMPORTANT: Clean iptables FIRST, before anything else.
     # Otherwise traffic is still redirected to port 8080 after proxy dies,
@@ -184,7 +185,7 @@ stop_proxy() {
     # Scope stop force-kills anything remaining
     systemctl stop "$SCOPE_NAME.scope" 2>/dev/null || true
 
-    echo "Proxy stopped" | tee -a /tmp/proxy.log
+    echo "Proxy stopped" | tee -a "$TEMP_DIR/proxy.log"
 }
 
 case "${1:-}" in

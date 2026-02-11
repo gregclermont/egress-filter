@@ -1,6 +1,6 @@
 const net = require('net');
 
-const SOCKET_PATH = '/tmp/egress-filter-control.sock';
+const SOCKET_PATH = (process.env.RUNNER_TEMP || '/tmp') + '/egress-filter-control.sock';
 
 async function run() {
   return new Promise((resolve, reject) => {

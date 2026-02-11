@@ -8,7 +8,8 @@ set -e
 
 SCRIPT_DIR="$(dirname "$0")"
 REPO_ROOT="${EGRESS_FILTER_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-PIDFILE="/tmp/proxy.pid"
+TEMP_DIR="${RUNNER_TEMP:-/tmp}"
+PIDFILE="$TEMP_DIR/proxy.pid"
 
 RESTART_COUNT=0
 MAX_RESTARTS=1
@@ -16,7 +17,7 @@ CLEAN_SHUTDOWN=0
 PROXY_PID=""
 
 log() {
-    echo "[supervisor] $1" >> /tmp/proxy-stdout.log
+    echo "[supervisor] $1" >> "$TEMP_DIR/proxy-stdout.log"
 }
 
 handle_sigterm() {
@@ -31,7 +32,8 @@ start_proxy() {
     log "Starting proxy (attempt $((RESTART_COUNT + 1)))"
 
     # Start proxy as child - inherits our cgroup
-    env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
+    env PROXY_LOG_FILE="$TEMP_DIR/proxy.log" VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
+        RUNNER_TEMP="$TEMP_DIR" \
         EGRESS_POLICY_FILE="${EGRESS_POLICY_FILE:-}" EGRESS_AUDIT_MODE="${EGRESS_AUDIT_MODE:-0}" \
         GITHUB_ACTION_REPOSITORY="${GITHUB_ACTION_REPOSITORY:-}" \
         GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}" \
@@ -40,7 +42,7 @@ start_proxy() {
         GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
         ACTIONS_ID_TOKEN_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL:-}" \
         ACTIONS_ID_TOKEN_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" \
-        "$REPO_ROOT"/.venv/bin/python -m proxy.main >> /tmp/proxy-stdout.log 2>&1 &
+        "$REPO_ROOT"/.venv/bin/python -m proxy.main >> "$TEMP_DIR/proxy-stdout.log" 2>&1 &
     PROXY_PID=$!
     echo "$PROXY_PID" > "$PIDFILE"
     log "Proxy started with PID $PROXY_PID"

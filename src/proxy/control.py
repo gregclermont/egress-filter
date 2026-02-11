@@ -4,7 +4,7 @@ Control socket for authenticated commands.
 The post-hook needs to signal the proxy to shutdown, but after disabling sudo,
 it can't use normal mechanisms. This Unix socket provides authenticated commands:
 
-1. Client connects to /tmp/egress-filter-control.sock
+1. Client connects to $RUNNER_TEMP/egress-filter-control.sock
 2. Proxy gets peer PID via SO_PEERCRED
 3. Proxy verifies the caller:
    - Runner.Worker must be in process ancestry
@@ -35,7 +35,7 @@ from .proc import (
 )
 from .sudo import disable_sudo, enable_sudo
 
-CONTROL_SOCKET_PATH = "/tmp/egress-filter-control.sock"
+CONTROL_SOCKET_PATH = os.environ.get("RUNNER_TEMP", "/tmp") + "/egress-filter-control.sock"
 
 
 def get_peer_pid(sock: socket.socket) -> int | None:
