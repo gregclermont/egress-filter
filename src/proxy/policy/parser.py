@@ -115,19 +115,16 @@ def _get_text(node_or_list):
         return node_or_list
     if isinstance(node_or_list, list):
         return "".join(_get_text(x) for x in node_or_list if x)
-    return ""
+    raise TypeError(f"Unexpected type in parse tree: {type(node_or_list).__name__}")
 
 
 def _is_empty(visited):
     """Check if visited children represent an empty/optional match."""
-    if visited is None:
-        return True
+    assert visited is not None, "unexpected None in parse tree"
     if isinstance(visited, Node):
         return visited.text == ""
     if isinstance(visited, list):
         return len(visited) == 0 or all(_is_empty(x) for x in visited)
-    if isinstance(visited, str):
-        return visited == ""
     return False
 
 
@@ -135,9 +132,10 @@ def _flatten(lst):
     """Flatten nested lists, filtering out empty nodes."""
     result = []
     for item in lst:
+        assert item is not None, "unexpected None in parse tree"
         if isinstance(item, list):
             result.extend(_flatten(item))
-        elif item is not None and not _is_empty(item):
+        elif not _is_empty(item):
             result.append(item)
     return result
 
@@ -848,7 +846,6 @@ def parse_policy(
     after parsing (context is inlined into the rule).
 
     Invalid lines are silently skipped (lenient parsing per design doc).
-    Skipped lines are logged at DEBUG level.
 
     Args:
         policy_text: The policy text to parse.
@@ -860,13 +857,7 @@ def parse_policy(
     visitor = PolicyVisitor(defaults=defaults)
     all_rules: list[Rule] = []
 
-    for line_num, line in enumerate(policy_text.splitlines(), start=1):
-        line_stripped = line.strip()
-
-        # Skip empty lines and comments
-        if not line_stripped or line_stripped.startswith("#"):
-            continue
-
+    for line in policy_text.splitlines():
         try:
             tree = GRAMMAR.parse(line)
             # Reset rules/warnings for this line (context is preserved across lines)
@@ -875,11 +866,9 @@ def parse_policy(
             visitor.visit(tree)
             # Collect rules from this line
             all_rules.extend(visitor.rules)
-        except ParseError as e:
-            # Invalid line - skip (lenient parsing) but log for debugging
-            logger.debug(
-                "Skipping invalid policy line %d: %r (%s)", line_num, line_stripped, e
-            )
+        except ParseError:
+            # Invalid line - skip (lenient parsing)
+            pass
 
     return all_rules
 
@@ -933,10 +922,6 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
 
     for line_num, line in enumerate(policy_text.splitlines(), start=1):
         line_stripped = line.strip()
-
-        # Skip empty lines and comments
-        if not line_stripped or line_stripped.startswith("#"):
-            continue
 
         try:
             tree = GRAMMAR.parse(line)
