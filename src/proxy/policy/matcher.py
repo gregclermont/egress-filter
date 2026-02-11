@@ -188,9 +188,6 @@ def match_url_path(pattern_path: str, actual_path: str) -> bool:
         return False
 
     for i, pattern_seg in enumerate(pattern_parts):
-        if i >= len(actual_parts):
-            return False
-
         actual_seg = actual_parts[i]
 
         if pattern_seg == "*":
@@ -508,11 +505,7 @@ def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
         # Construct expected path
         base_path = base_parsed.path.rstrip("/") if base_parsed.path else ""
         rule_path = rule.target
-        # Combine base path and rule path
-        if base_path and rule_path.startswith("/"):
-            full_pattern_path = base_path + rule_path
-        else:
-            full_pattern_path = base_path + rule_path
+        full_pattern_path = base_path + rule_path
 
         # Normalize double slashes
         full_pattern_path = re.sub(r"//+", "/", full_pattern_path)
@@ -558,12 +551,11 @@ def match_rule_hostname_only(rule: Rule, event: ConnectionEvent) -> bool:
     # Extract hostname from rule target
     if rule.type == "url":
         rule_hostname = urlparse(rule.target).hostname
-    elif rule.type == "path":
+    else:
+        assert rule.type == "path"
         if not rule.url_base:
             return False
         rule_hostname = urlparse(rule.url_base).hostname
-    else:
-        return False
 
     if not rule_hostname:
         return False
