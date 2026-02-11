@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 1
 
       - name: Generate test connections
-        run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl --skip-docker
+        run: python3 tests/connection_tests/run.py --connections-log=${{ runner.temp }}/connections.jsonl --skip-docker
 
   test-cli:
     name: Test CLI

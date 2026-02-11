@@ -65,7 +65,7 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log 2>/dev/null | tail -100 || echo "No proxy.log"
+        run: cat ${{ runner.temp }}/proxy.log 2>/dev/null | tail -100 || echo "No proxy.log"
 
   # Test that sudo is disabled by default (no allow-sudo)
   test-default-sudo-disabled:
@@ -89,4 +89,4 @@ jobs:
         if: always()
         run: |
           echo "=== Proxy log ==="
-          cat /tmp/proxy.log 2>/dev/null | tail -50 || echo "No proxy.log"
+          cat ${{ runner.temp }}/proxy.log 2>/dev/null | tail -50 || echo "No proxy.log"

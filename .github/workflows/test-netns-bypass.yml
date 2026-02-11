@@ -138,4 +138,4 @@ jobs:
         if: always()
         run: |
           echo "=== Proxy log ==="
-          cat /tmp/proxy.log || echo "No proxy log"
+          cat ${{ runner.temp }}/proxy.log || echo "No proxy log"

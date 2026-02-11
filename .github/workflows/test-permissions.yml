@@ -258,17 +258,17 @@ jobs:
       - name: "Analyze: run --permissions on connection log"
         run: |
           echo "=== Connection log entries with github_token ==="
-          grep -c '"github_token":true' /tmp/connections.jsonl || echo "0 entries"
+          grep -c '"github_token":true' ${{ runner.temp }}/connections.jsonl || echo "0 entries"
           echo ""
 
           echo "=== Permissions analysis ==="
-          PYTHONPATH=src python -m proxy.cli permissions /tmp/connections.jsonl | tee /tmp/permissions.yml
+          PYTHONPATH=src python -m proxy.cli permissions ${{ runner.temp }}/connections.jsonl | tee ${{ runner.temp }}/permissions.yml
           echo ""
 
       - name: "Verify: expected permissions detected"
         run: |
           set -e
-          perms=/tmp/permissions.yml
+          perms=${{ runner.temp }}/permissions.yml
 
           check_scope() {
             local scope=$1 access=$2
@@ -298,7 +298,7 @@ jobs:
             cat "$perms"
             echo ""
             echo "=== github_token connections ==="
-            grep '"github_token":true' /tmp/connections.jsonl | python3 -c "
+            grep '"github_token":true' ${{ runner.temp }}/connections.jsonl | python3 -c "
           import sys, json
           for line in sys.stdin:
               c = json.loads(line)
@@ -336,4 +336,4 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log || echo "No proxy log found"
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"

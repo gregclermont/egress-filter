@@ -64,22 +64,22 @@ jobs:
       - name: Verify TLS failure was logged
         run: |
           echo "=== Connection log ==="
-          cat /tmp/connections.jsonl || echo "No connection log found"
+          cat ${{ runner.temp }}/connections.jsonl || echo "No connection log found"
           echo ""
           echo "=== Checking for TLS failure event ==="
-          if grep -q '"error":"tls_client_rejected_ca"' /tmp/connections.jsonl; then
+          if grep -q '"error":"tls_client_rejected_ca"' ${{ runner.temp }}/connections.jsonl; then
             echo "SUCCESS: TLS failure event found in log"
-            grep '"error":"tls_client_rejected_ca"' /tmp/connections.jsonl
+            grep '"error":"tls_client_rejected_ca"' ${{ runner.temp }}/connections.jsonl
           else
             echo "FAILURE: TLS failure event NOT found in log"
             echo ""
             echo "Debug: Checking for any HTTPS events..."
-            grep '"type":"https"' /tmp/connections.jsonl || echo "No HTTPS events found"
+            grep '"type":"https"' ${{ runner.temp }}/connections.jsonl || echo "No HTTPS events found"
             exit 1
           fi
           echo ""
           echo "=== Checking for policy verdict ==="
-          if grep '"error":"tls_client_rejected_ca"' /tmp/connections.jsonl | grep -q '"policy"'; then
+          if grep '"error":"tls_client_rejected_ca"' ${{ runner.temp }}/connections.jsonl | grep -q '"policy"'; then
             echo "SUCCESS: TLS failure event includes policy verdict"
           else
             echo "FAILURE: TLS failure event missing policy verdict"
@@ -88,4 +88,4 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log || echo "No proxy log found"
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"

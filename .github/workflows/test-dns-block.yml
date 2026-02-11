@@ -22,7 +22,7 @@ jobs:
 
       - name: Try to resolve blocked domain
         run: |
-          INITIAL_PID=$(cat /tmp/proxy.pid)
+          INITIAL_PID=$(cat ${{ runner.temp }}/proxy.pid)
           echo "Initial proxy PID: $INITIAL_PID"
           ps aux | grep -E "python|supervisor" | grep -v grep || true
 
@@ -33,7 +33,7 @@ jobs:
           echo ""
           echo "Immediate check after dig..."
           ps aux | grep -E "python|supervisor" | grep -v grep || true
-          cat /tmp/proxy.pid
+          cat ${{ runner.temp }}/proxy.pid
 
           echo ""
           echo "Waiting 3 seconds..."
@@ -42,7 +42,7 @@ jobs:
           echo ""
           echo "Check proxy state after wait..."
           ps aux | grep -E "python|supervisor" | grep -v grep || true
-          CURRENT_PID=$(cat /tmp/proxy.pid)
+          CURRENT_PID=$(cat ${{ runner.temp }}/proxy.pid)
           echo "Current PID in file: $CURRENT_PID"
 
           if [ "$CURRENT_PID" != "$INITIAL_PID" ]; then
@@ -61,7 +61,7 @@ jobs:
         if: always()
         run: |
           echo "=== Supervisor log ==="
-          cat /tmp/proxy-stdout.log || true
+          cat ${{ runner.temp }}/proxy-stdout.log || true
           echo ""
           echo "=== Proxy log (last 100 lines) ==="
-          tail -100 /tmp/proxy.log || true
+          tail -100 ${{ runner.temp }}/proxy.log || true

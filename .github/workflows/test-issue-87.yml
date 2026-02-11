@@ -39,7 +39,7 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log || echo "No proxy log found"
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"
 
   # Test 2: Hostname + URL rule — should definitely work
   hostname-plus-url:
@@ -71,7 +71,7 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log || echo "No proxy log found"
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"
 
   # Test 3: Hostname-only rule — baseline
   hostname-only:
@@ -102,4 +102,4 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log || echo "No proxy log found"
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"
