@@ -1,0 +1,117 @@
+name: "Test issue #141: Go HTTPS destination attribution"
+
+on:
+  push:
+    branches: [issue-141]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Dump proxy-related env before egress-filter
+        run: |
+          echo "=== Runner context ==="
+          echo "ImageOS=${ImageOS:-}"
+          echo "RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-}"
+          echo ""
+          echo "=== Proxy env (before) ==="
+          env | sort | grep -Ei '(^|_)(http|https|all|no)_proxy=' || echo "No proxy env vars set"
+
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@issue-141
+        with:
+          audit: true
+          upload-log: 'true'
+          policy: |
+            [step=test.fetch]
+            ghcr.io
+
+      - name: Dump proxy-related env after egress-filter
+        run: |
+          echo "=== Proxy env (after) ==="
+          env | sort | grep -Ei '(^|_)(http|https|all|no)_proxy=' || echo "No proxy env vars set"
+          echo ""
+          echo "=== Go env (proxy-related) ==="
+          go env GOPROXY
+
+      - name: Fetch from ghcr with Go
+        id: fetch
+        run: |
+          go version
+
+          cat > /tmp/fetch.go << 'GO_EOF'
+          package main
+
+          import (
+              "fmt"
+              "net/http"
+              "os"
+              "time"
+          )
+
+          func main() {
+              target := "https://ghcr.io/v2/"
+              req, err := http.NewRequest("GET", target, nil)
+              if err != nil {
+                  fmt.Fprintf(os.Stderr, "request creation failed: %v\n", err)
+                  os.Exit(1)
+              }
+
+              proxyURL, err := http.ProxyFromEnvironment(req)
+              fmt.Printf("HTTP_PROXY=%q\n", os.Getenv("HTTP_PROXY"))
+              fmt.Printf("HTTPS_PROXY=%q\n", os.Getenv("HTTPS_PROXY"))
+              fmt.Printf("ALL_PROXY=%q\n", os.Getenv("ALL_PROXY"))
+              if err != nil {
+                  fmt.Printf("ProxyFromEnvironment error: %v\n", err)
+              } else if proxyURL == nil {
+                  fmt.Println("ProxyFromEnvironment: <nil>")
+              } else {
+                  fmt.Printf("ProxyFromEnvironment: %s\n", proxyURL.String())
+              }
+
+              client := &http.Client{Timeout: 20 * time.Second}
+              resp, err := client.Do(req)
+              if err != nil {
+                  fmt.Fprintf(os.Stderr, "GET failed: %v\n", err)
+                  os.Exit(1)
+              }
+              defer resp.Body.Close()
+
+              fmt.Printf("GET %s -> %s\n", target, resp.Status)
+          }
+          GO_EOF
+
+          go run /tmp/fetch.go
+
+      - name: Compare with curl
+        run: |
+          echo "=== curl proxy env ==="
+          env | sort | grep -Ei '(^|_)(http|https|all|no)_proxy=' || true
+          echo ""
+          echo "=== curl https://ghcr.io/v2/ ==="
+          curl -sS -I --max-time 20 https://ghcr.io/v2/ | head -20
+
+      - name: Show connection log (focused)
+        if: always()
+        run: |
+          LOG="${{ runner.temp }}/connections.jsonl"
+          echo "=== Raw connection log path ==="
+          echo "$LOG"
+          echo ""
+          echo "=== Last 80 lines ==="
+          tail -80 "$LOG" || echo "No connection log found"
+          echo ""
+          echo "=== ghcr.io rows ==="
+          jq -c 'select((.url // "" | contains("ghcr.io")) or (.host // "" | contains("ghcr.io")))' "$LOG" || true
+
+      - name: Show proxy logs
+        if: always()
+        run: |
+          echo "=== proxy.log ==="
+          cat "${{ runner.temp }}/proxy.log" || echo "No proxy log found"
