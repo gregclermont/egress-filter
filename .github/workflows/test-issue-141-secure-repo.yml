@@ -1,0 +1,65 @@
+name: "Test issue #141: secure-repo pin tests"
+
+on:
+  push:
+    branches: [issue-141]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@issue-141
+        with:
+          audit: true
+          upload-log: 'true'
+          policy: |
+            [step=test.go_test]
+            ghcr.io
+
+      - name: Checkout secure-repo
+        uses: actions/checkout@v6
+        with:
+          repository: step-security/secure-repo
+          path: secure-repo
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.17'
+
+      - name: Dump proxy-related env
+        run: |
+          echo "=== Proxy env ==="
+          env | sort | grep -Ei '(^|_)(http|https|all|no)_proxy=' || echo "No proxy env vars set"
+
+      - name: Run secure-repo pin tests
+        id: go_test
+        run: |
+          cd secure-repo
+          go version
+          go test ./remediation/workflow/pin -run 'Test_isImmutableAction|TestPinActions' -count=1 -v
+
+      - name: Show secure-repo ghcr-related connection rows
+        if: always()
+        run: |
+          LOG="${{ runner.temp }}/connections.jsonl"
+          echo "=== ghcr.io URL/host rows ==="
+          jq -c 'select((.url // "" | contains("ghcr.io")) or (.host // "" | contains("ghcr.io")))' "$LOG" || true
+          echo ""
+          echo "=== test.go_test https rows ==="
+          jq -c 'select(.step == "test.go_test" and .type == "https") | {ts,type,url,host,dst_ip,dst_port,policy,exe,pid,src_port}' "$LOG" || true
+          echo ""
+          echo "=== test.go_test dns rows ==="
+          jq -c 'select(.step == "test.go_test" and (.type == "dns" or .type == "dns_response")) | {ts,type,name,answers,dst_ip,dst_port,policy,exe,pid,src_port}' "$LOG" || true
+
+      - name: Show proxy logs
+        if: always()
+        run: cat "${{ runner.temp }}/proxy.log" || echo "No proxy log found"
