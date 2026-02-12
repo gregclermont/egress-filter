@@ -7,11 +7,19 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import json
+
+import yaml
+
 from proxy.cli import (
+    _repo_from_git_remote,
+    _warn_unsubstituted_placeholders,
     analyze_connections,
+    build_combined_policy,
     connection_key,
     find_policies_in_workflow,
     format_connection,
+    main,
 )
 from proxy.policy.parser import validate_policy
 
@@ -779,6 +787,355 @@ class TestDefaultsIntegration:
 
         assert len(results["allowed"]) == 1
         assert len(results["blocked"]) == 0
+
+
+class TestAnalyzeMissingPolicy:
+    """Tests for analyze with no policy defined in the workflow."""
+
+    def _make_workflow(self, tmp_path, policy=None):
+        """Create a workflow file, optionally with an egress-filter policy."""
+        step = {"uses": "owner/egress-filter@v1"}
+        if policy is not None:
+            step["with"] = {"policy": policy}
+        workflow = {"jobs": {"build": {"steps": [step]}}}
+        wf_path = tmp_path / "workflow.yml"
+        wf_path.write_text(yaml.dump(workflow))
+        return wf_path
+
+    def _make_log(self, tmp_path, connections):
+        """Create a JSONL log file."""
+        log_path = tmp_path / "connections.jsonl"
+        log_path.write_text(
+            "\n".join(json.dumps(c) for c in connections) + "\n"
+        )
+        return log_path
+
+    def test_analyze_no_policy_uses_defaults(self, tmp_path, capsys, monkeypatch):
+        """Analyze with no policy should use defaults instead of exiting early."""
+        wf_path = self._make_workflow(tmp_path)
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "evil.com",
+            },
+        ]
+        log_path = self._make_log(tmp_path, connections)
+
+        monkeypatch.setattr(
+            sys, "argv", ["egress-filter", "analyze", str(wf_path), str(log_path)]
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        # Should block the connection (defaults don't allow evil.com)
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "using defaults only" in captured.err
+
+    def test_analyze_no_policy_quiet(self, tmp_path, capsys, monkeypatch):
+        """Analyze with no policy in quiet mode should not print the warning."""
+        wf_path = self._make_workflow(tmp_path)
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "evil.com",
+            },
+        ]
+        log_path = self._make_log(tmp_path, connections)
+
+        monkeypatch.setattr(
+            sys, "argv", ["egress-filter", "analyze", "-q", str(wf_path), str(log_path)]
+        )
+        with pytest.raises(SystemExit):
+            main()
+
+        captured = capsys.readouterr()
+        assert "using defaults only" not in captured.err
+
+    def test_analyze_no_policy_allows_default_hosts(self, tmp_path, capsys, monkeypatch):
+        """Analyze with no policy should allow connections in the defaults."""
+        from proxy.policy.defaults import get_defaults
+
+        # Find a host that the defaults allow — use the DNS endpoint
+        wf_path = self._make_workflow(tmp_path)
+        connections = [
+            {
+                "type": "dns",
+                "dst_ip": "127.0.0.53",
+                "dst_port": 53,
+                "host": "example.com",
+                "exe": "/usr/bin/systemd-resolved",
+                "cgroup": "/system.slice/systemd-resolved.service",
+            },
+        ]
+        log_path = self._make_log(tmp_path, connections)
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["egress-filter", "analyze", "--no-runner-cgroup", str(wf_path), str(log_path)],
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        # DNS to local resolver is in defaults, should be allowed
+        assert exc_info.value.code == 0
+
+
+class TestPlaceholderWarning:
+    """Tests for unsubstituted placeholder warnings."""
+
+    def test_warn_owner_placeholder(self, capsys):
+        """Detects {owner} placeholder."""
+        result = _warn_unsubstituted_placeholders("https://github.com/{owner}/repo")
+        assert result is True
+        assert "{owner}" in capsys.readouterr().err
+
+    def test_warn_repo_placeholder(self, capsys):
+        """Detects {repo} placeholder."""
+        result = _warn_unsubstituted_placeholders("https://github.com/owner/{repo}")
+        assert result is True
+        assert "{repo}" in capsys.readouterr().err
+
+    def test_warn_both_placeholders(self, capsys):
+        """Detects both placeholders together."""
+        result = _warn_unsubstituted_placeholders("https://github.com/{owner}/{repo}")
+        assert result is True
+        captured = capsys.readouterr().err
+        assert "{owner}" in captured
+        assert "{repo}" in captured
+        assert "--repo OWNER/REPO" in captured
+
+    def test_no_warning_without_placeholders(self, capsys):
+        """No warning when no placeholders present."""
+        result = _warn_unsubstituted_placeholders("github.com\nexample.com")
+        assert result is False
+        assert capsys.readouterr().err == ""
+
+    def test_no_warning_after_substitution(self, capsys):
+        """No warning after placeholders are properly substituted."""
+        policy = build_combined_policy(
+            [("test", "https://github.com/{owner}/{repo}/*")],
+            include_defaults=False,
+            repo="myorg/myrepo",
+        )
+        result = _warn_unsubstituted_placeholders(policy)
+        assert result is False
+
+    def test_validate_placeholder_warning(self, tmp_path, capsys, monkeypatch):
+        """Validate warns about unsubstituted placeholders when no repo is available."""
+        workflow = {
+            "jobs": {
+                "build": {
+                    "steps": [
+                        {
+                            "uses": "owner/egress-filter@v1",
+                            "with": {
+                                "policy": "https://github.com/{owner}/{repo}/*"
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        wf_path = tmp_path / "workflow.yml"
+        wf_path.write_text(yaml.dump(workflow))
+
+        monkeypatch.setattr("proxy.cli._repo_from_git_remote", lambda: None)
+        monkeypatch.setattr(
+            sys, "argv", ["egress-filter", "validate", str(wf_path)]
+        )
+        with pytest.raises(SystemExit):
+            main()
+
+        captured = capsys.readouterr().err
+        assert "{owner}" in captured
+        assert "--repo OWNER/REPO" in captured
+
+    def test_validate_no_warning_with_repo_flag(self, tmp_path, capsys, monkeypatch):
+        """Validate with --repo should not warn about placeholders."""
+        workflow = {
+            "jobs": {
+                "build": {
+                    "steps": [
+                        {
+                            "uses": "owner/egress-filter@v1",
+                            "with": {
+                                "policy": "https://github.com/{owner}/{repo}/*"
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        wf_path = tmp_path / "workflow.yml"
+        wf_path.write_text(yaml.dump(workflow))
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["egress-filter", "validate", "--repo", "myorg/myrepo", str(wf_path)],
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr().err
+        assert "placeholder" not in captured
+
+    def test_analyze_placeholder_warning(self, tmp_path, capsys, monkeypatch):
+        """Analyze warns about unsubstituted placeholders when no repo is available."""
+        workflow = {
+            "jobs": {
+                "build": {
+                    "steps": [
+                        {
+                            "uses": "owner/egress-filter@v1",
+                            "with": {
+                                "policy": "https://github.com/{owner}/{repo}/*"
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        wf_path = tmp_path / "workflow.yml"
+        wf_path.write_text(yaml.dump(workflow))
+        log_path = tmp_path / "connections.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {"type": "https", "dst_ip": "1.2.3.4", "dst_port": 443, "host": "github.com"}
+            )
+            + "\n"
+        )
+
+        monkeypatch.setattr("proxy.cli._repo_from_git_remote", lambda: None)
+        monkeypatch.setattr(
+            sys, "argv",
+            ["egress-filter", "analyze", str(wf_path), str(log_path)],
+        )
+        with pytest.raises(SystemExit):
+            main()
+
+        captured = capsys.readouterr().err
+        assert "{owner}" in captured
+        assert "--repo OWNER/REPO" in captured
+
+
+class TestRepoFromGitRemote:
+    """Tests for auto-detecting OWNER/REPO from git remotes."""
+
+    def test_https_url(self, monkeypatch):
+        """Parses HTTPS remote URL."""
+        monkeypatch.setattr(
+            "proxy.cli.subprocess.run",
+            lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "https://github.com/myorg/myrepo.git\n"})(),
+        )
+        assert _repo_from_git_remote() == "myorg/myrepo"
+
+    def test_https_url_without_dot_git(self, monkeypatch):
+        """Parses HTTPS remote URL without .git suffix."""
+        monkeypatch.setattr(
+            "proxy.cli.subprocess.run",
+            lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "https://github.com/myorg/myrepo\n"})(),
+        )
+        assert _repo_from_git_remote() == "myorg/myrepo"
+
+    def test_ssh_url(self, monkeypatch):
+        """Parses SSH remote URL."""
+        monkeypatch.setattr(
+            "proxy.cli.subprocess.run",
+            lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "git@github.com:myorg/myrepo.git\n"})(),
+        )
+        assert _repo_from_git_remote() == "myorg/myrepo"
+
+    def test_non_github_url(self, monkeypatch):
+        """Returns None for non-GitHub remotes."""
+        monkeypatch.setattr(
+            "proxy.cli.subprocess.run",
+            lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "https://gitlab.com/myorg/myrepo.git\n"})(),
+        )
+        assert _repo_from_git_remote() is None
+
+    def test_git_not_found(self, monkeypatch):
+        """Returns None when git is not installed."""
+        def raise_fnf(*a, **kw):
+            raise FileNotFoundError()
+        monkeypatch.setattr("proxy.cli.subprocess.run", raise_fnf)
+        assert _repo_from_git_remote() is None
+
+    def test_no_remote(self, monkeypatch):
+        """Returns None when git command fails."""
+        monkeypatch.setattr(
+            "proxy.cli.subprocess.run",
+            lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": ""})(),
+        )
+        assert _repo_from_git_remote() is None
+
+    def test_auto_detect_substitutes_placeholders(self, tmp_path, capsys, monkeypatch):
+        """Auto-detected repo is used to substitute placeholders."""
+        workflow = {
+            "jobs": {
+                "build": {
+                    "steps": [
+                        {
+                            "uses": "owner/egress-filter@v1",
+                            "with": {
+                                "policy": "https://github.com/{owner}/{repo}/*"
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        wf_path = tmp_path / "workflow.yml"
+        wf_path.write_text(yaml.dump(workflow))
+
+        monkeypatch.setattr("proxy.cli._repo_from_git_remote", lambda: "myorg/myrepo")
+        monkeypatch.setattr(
+            sys, "argv", ["egress-filter", "validate", str(wf_path)]
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr().err
+        assert "placeholder" not in captured
+
+    def test_flag_overrides_auto_detect(self, tmp_path, capsys, monkeypatch):
+        """--repo flag takes precedence over auto-detected value."""
+        workflow = {
+            "jobs": {
+                "build": {
+                    "steps": [
+                        {
+                            "uses": "owner/egress-filter@v1",
+                            "with": {
+                                "policy": "https://github.com/{owner}/{repo}/*"
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        wf_path = tmp_path / "workflow.yml"
+        wf_path.write_text(yaml.dump(workflow))
+
+        monkeypatch.setattr("proxy.cli._repo_from_git_remote", lambda: "wrong/wrong")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["egress-filter", "validate", "--repo", "myorg/myrepo", "--dump-rules", "--no-defaults", "--no-runner-cgroup", str(wf_path)],
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        # Verify the flag value was used, not the auto-detected one
+        stdout = capsys.readouterr().out
+        assert "myorg/myrepo" in stdout
+        assert "wrong/wrong" not in stdout
 
 
 if __name__ == "__main__":
