@@ -14,6 +14,8 @@ Exit codes:
 
 import argparse
 import json
+import re
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -376,6 +378,57 @@ def load_connections_log(log_path: Path) -> list[dict]:
     return connections
 
 
+def _repo_from_git_remote() -> str | None:
+    """Try to detect OWNER/REPO from the git remote URL.
+
+    Checks the 'origin' remote and extracts the owner/repo from common
+    GitHub URL formats (HTTPS and SSH).
+
+    Returns:
+        "owner/repo" string, or None if detection fails.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        url = result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    # Match github.com SSH or HTTPS URLs
+    match = re.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$", url)
+    if match:
+        return f"{match.group(1)}/{match.group(2)}"
+    return None
+
+
+def _warn_unsubstituted_placeholders(policy_text: str) -> bool:
+    """Check for unsubstituted {owner}/{repo} placeholders and print a warning.
+
+    Returns True if placeholders were found.
+    """
+    has_owner = "{owner}" in policy_text
+    has_repo = "{repo}" in policy_text
+    if has_owner or has_repo:
+        placeholders = []
+        if has_owner:
+            placeholders.append("{owner}")
+        if has_repo:
+            placeholders.append("{repo}")
+        print(
+            f"Policy contains {' and '.join(placeholders)} placeholder(s) "
+            f"that have not been substituted. Use --repo OWNER/REPO to substitute them.",
+            file=sys.stderr,
+        )
+        return True
+    return False
+
+
 def build_combined_policy(
     policies: list[tuple[str, str]],
     include_defaults: bool = True,
@@ -457,6 +510,8 @@ def _cmd_validate(args) -> None:
             repo=args.repo,
         )
 
+        _warn_unsubstituted_placeholders(combined_policy)
+
         # Report syntax errors to stderr
         errors = validate_policy(combined_policy)
         if errors:
@@ -479,6 +534,10 @@ def _cmd_validate(args) -> None:
 
     # Parse --repo for placeholder substitution
     owner, repo_name = parse_github_repository(args.repo) if args.repo else (None, None)
+
+    if not args.repo:
+        all_policy_text = "\n".join(text for _, text in policies)
+        _warn_unsubstituted_placeholders(all_policy_text)
 
     for location, policy_text in policies:
         # Substitute placeholders before validation
@@ -539,12 +598,11 @@ def _cmd_analyze(args) -> None:
     workflow = _load_workflow(args.workflow)
     policies = find_policies_in_workflow(workflow)
 
-    if not policies:
-        if not args.quiet:
-            print(
-                f"No egress-filter policies found in {args.workflow}", file=sys.stderr
-            )
-        sys.exit(0)
+    if not policies and not args.quiet:
+        print(
+            f"No egress-filter policies found in {args.workflow}, using defaults only",
+            file=sys.stderr,
+        )
 
     if not args.log.exists():
         print(f"Error: Log file not found: {args.log}", file=sys.stderr)
@@ -556,6 +614,8 @@ def _cmd_analyze(args) -> None:
         presets=args.include_preset,
         repo=args.repo,
     )
+
+    _warn_unsubstituted_placeholders(combined_policy)
 
     # Report syntax errors to stderr
     errors = validate_policy(combined_policy)
@@ -642,7 +702,7 @@ def main():
     policy_parent.add_argument(
         "--repo",
         metavar="OWNER/REPO",
-        help="Substitute {owner} and {repo} placeholders in policy",
+        help="Substitute {owner} and {repo} placeholders in policy (auto-detected from git remote if not specified)",
     )
 
     # validate
@@ -686,6 +746,11 @@ def main():
     p_permissions.set_defaults(func=_cmd_permissions)
 
     args = parser.parse_args()
+
+    # Auto-detect repo from git remote if not explicitly provided
+    if hasattr(args, "repo") and not args.repo:
+        args.repo = _repo_from_git_remote()
+
     args.func(args)
 
 
