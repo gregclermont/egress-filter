@@ -315,6 +315,29 @@ class TestMatchDnsNameAgainstRule:
         event = _event(type="dns", dst_ip="1.1.1.1", dst_port=53, name="registry.npmjs.org")
         assert match_dns_name_against_rule(rule, event.name, event)
 
+    def test_url_rule_dns_wildcard_match(self):
+        rule = _rule(
+            type="url",
+            target="https://productionresultssa*.blob.core.windows.net/*",
+            methods=["GET"],
+        )
+        event = _event(
+            type="dns",
+            dst_ip="1.1.1.1",
+            dst_port=53,
+            name="productionresultssa123.blob.core.windows.net",
+        )
+        assert match_dns_name_against_rule(rule, event.name, event)
+
+    def test_url_rule_dns_wildcard_no_match(self):
+        rule = _rule(
+            type="url",
+            target="https://productionresultssa*.blob.core.windows.net/*",
+            methods=["GET"],
+        )
+        event = _event(type="dns", dst_ip="1.1.1.1", dst_port=53, name="release-assets.githubusercontent.com")
+        assert not match_dns_name_against_rule(rule, event.name, event)
+
     def test_url_rule_dns_no_match(self):
         rule = _rule(type="url", target="https://registry.npmjs.org/express/*", methods=["GET"])
         event = _event(type="dns", dst_ip="1.1.1.1", dst_port=53, name="pypi.org")
@@ -373,6 +396,32 @@ class TestMatchRuleUrlPath:
     def test_path_rule_host_mismatch_blocks(self):
         rule = _rule(type="path", target="/api/*", url_base="https://api.example.com", methods=["GET"])
         event = _event(type="http", url="https://other.example.com/api/data", method="GET")
+        assert not match_rule(rule, event)
+
+    def test_url_rule_wildcard_host_match(self):
+        rule = _rule(
+            type="url",
+            target="https://productionresultssa*.blob.core.windows.net/*",
+            methods=["GET"],
+        )
+        event = _event(
+            type="http",
+            url="https://productionresultssa123.blob.core.windows.net/results/run.json",
+            method="GET",
+        )
+        assert match_rule(rule, event)
+
+    def test_url_rule_wildcard_host_no_match(self):
+        rule = _rule(
+            type="url",
+            target="https://productionresultssa*.blob.core.windows.net/*",
+            methods=["GET"],
+        )
+        event = _event(
+            type="http",
+            url="https://release-assets.githubusercontent.com/results/run.json",
+            method="GET",
+        )
         assert not match_rule(rule, event)
 
 
@@ -454,6 +503,24 @@ class TestMatchRuleHostnameOnly:
     def test_url_rule_sni_mismatch(self):
         rule = _rule(type="url", target="https://example.com/api/*", methods=["GET"])
         event = _event(type="https", host="other.com")
+        assert not match_rule_hostname_only(rule, event)
+
+    def test_url_rule_wildcard_sni_match(self):
+        rule = _rule(
+            type="url",
+            target="https://productionresultssa*.blob.core.windows.net/*",
+            methods=["GET"],
+        )
+        event = _event(type="https", host="productionresultssa456.blob.core.windows.net")
+        assert match_rule_hostname_only(rule, event)
+
+    def test_url_rule_wildcard_sni_no_match(self):
+        rule = _rule(
+            type="url",
+            target="https://productionresultssa*.blob.core.windows.net/*",
+            methods=["GET"],
+        )
+        event = _event(type="https", host="github.com")
         assert not match_rule_hostname_only(rule, event)
 
     def test_host_rule_type_rejected(self):

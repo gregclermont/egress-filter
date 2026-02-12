@@ -65,14 +65,14 @@ Design document for the egress filter allowlist/blocklist syntax.
     - All other attributes (port, protocol, etc.) are optional filters
     - No IPv6 support - blocked at kernel level by design (avoids `[::1]:443` parsing complexity)
 
-11. **Wildcard matching for hostnames** - `*.` prefix only:
+11. **Wildcard matching for hostnames (and URL hosts)** - first-label only:
     - `*.github.com` - valid (matches any subdomain(s))
-    - `*a.github.com` - invalid
-    - `a*.github.com` - invalid
+    - `derp*.tailscale.com` - valid (fnmatch pattern in first label)
+    - `*.derp*.example.com` - valid (subdomain wildcard + first-label pattern)
+    - `api.derp*.example.com` - invalid (wildcard in second label)
     - `github.*` - invalid
-    - `git*hub.com` - invalid
-    - The ONLY valid form is `*.` followed by domain (entire first label is wildcard)
-    - Wildcards NOT allowed in hostname part of URLs: `https://*.github.com/foo` - invalid
+    - `git*hub.com` - valid (pattern wildcard in first label)
+    - URL hosts use the same wildcard constraints, e.g. `https://*.github.com/foo` and `https://productionresultssa*.blob.core.windows.net/*`
 
 12. **Explicit hostname matching** - No implicit subdomain inclusion:
     - `github.com` matches only `github.com` exactly

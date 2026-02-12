@@ -151,6 +151,9 @@ policy: |
   # URL with path (GET/HEAD only by default)
   https://api.github.com/repos/*/releases
 
+  # URL hostname wildcard (same wildcard rules as hostname rules)
+  https://productionresultssa*.blob.core.windows.net/*
+
   # URL with method
   POST https://api.github.com/repos/*/issues
 

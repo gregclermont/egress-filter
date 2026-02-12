@@ -438,12 +438,18 @@ tests:
         url_base: null
         attrs: {}
 
-  - name: Wildcard in URL hostname rejected
+  - name: Wildcard in URL hostname supported
     policy: |
       https://*.github.com/foo
       https://api.github.com/*
     rules:
-      # Wildcard in hostname rejected, wildcard in path OK
+      - type: url
+        target: https://*.github.com/foo
+        port: [443]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
       - type: url
         target: https://api.github.com/*
         port: [443]

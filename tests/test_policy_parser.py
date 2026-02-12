@@ -536,6 +536,14 @@ class TestCheckPassthroughUrlOverlap:
         warnings = _check_passthrough_url_overlap(rules)
         assert len(warnings) == 1
 
+    def test_exact_passthrough_overlaps_wildcard_url(self):
+        rules = parse_policy(
+            "https://productionresultssa*.blob.core.windows.net/*\n"
+            "productionresultssa123.blob.core.windows.net passthrough"
+        )
+        warnings = _check_passthrough_url_overlap(rules)
+        assert len(warnings) == 1
+
     def test_passthrough_overlaps_path_rule(self):
         rules = parse_policy(
             "[https://api.github.com]\n"

@@ -28,12 +28,13 @@ ws              = " " / "\t"
 
 header          = ws* "[" header_attrs? "]" inline_comment? ws*
 header_attrs    = url_base / method_attr / port_proto_attr
-url_base        = scheme "://" hostname url_port? url_path?
+url_base        = scheme "://" url_host url_port? url_path?
 port_proto_attr = port_attr proto_attr?
 
 rule            = ws* (url_rule / path_rule / cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs? inline_comment? ws*
 
-url_rule        = (method_attr ws+)? scheme "://" hostname url_port? url_path
+url_rule        = (method_attr ws+)? scheme "://" url_host url_port? url_path
+url_host        = ipv4 / wildcard_host / hostname
 scheme          = "https" / "http"
 url_port        = ":" port_value
 url_path        = "/" path_rest
@@ -148,6 +149,8 @@ VALID_RULES = [
     "https://github.com/owner/repo",
     "https://github.com/*/releases",
     "https://github.com/*/*/releases",
+    "https://*.github.com/path",
+    "https://productionresultssa*.blob.core.windows.net/*",
     "http://example.com/api/v1/*",
     "https://cdn.example.com/v1.2.3.zip",
     # URLs with methods
@@ -174,6 +177,7 @@ VALID_RULES = [
     "[https://api.github.com/v1/repos]",
     "[https://example.com:8080]",
     "[https://example.com:8080/api]",
+    "[https://productionresultssa*.blob.core.windows.net]",
     # Path-only rules (valid syntax, semantic validation separate)
     "/repos/*/releases",
     "GET /repos/*/releases",
@@ -315,9 +319,6 @@ INVALID_RULES = [
     # Scheme without host
     "https://",
     "http://",
-    # Wildcard in URL hostname
-    "https://*.github.com/path",
-    "https://*.example.com/*",
     # UDP without port
     "github.com/udp",
     "dns.google/udp",
