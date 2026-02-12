@@ -115,7 +115,7 @@ Output is JSON with the attribute values and types for each hook (`tls_clienthel
 
 Rules are parsed line-by-line with a PEG grammar. Headers (`[...]`) set context (port, protocol, methods, URL base, attributes) for subsequent rules. `[]` resets context. Secure defaults: port 443, TCP, methods GET|HEAD.
 
-Rule types: hostname (`github.com`), wildcard (`*.github.com`), IP (`1.2.3.4`), CIDR (`10.0.0.0/8`), URL (`https://github.com/owner/repo/*`), path (`/api/*` under a URL-base header), DNS-only (`dns:example.com`).
+Rule types: hostname (`github.com`), wildcard (`*.github.com`, `derp*.tailscale.com`), IP (`1.2.3.4`), CIDR (`10.0.0.0/8`), URL (`https://github.com/owner/repo/*`, `https://productionresultssa*.blob.core.windows.net/*`), path (`/api/*` under a URL-base header), DNS-only (`dns:example.com`).
 
 Attributes: `exe=`, `cgroup=`, `step=`, `action=`, `image=`, `arg=`, `arg[N]=`. Port: `:443`, `:80|443`, `:*`. Protocol: `/tcp`, `/udp`. Methods: `GET|POST`.
 

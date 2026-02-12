@@ -159,6 +159,14 @@ def match_hostname(pattern: str, hostname: str, is_wildcard: bool = False) -> bo
             return matched_label == first_label_pattern
 
 
+def match_url_hostname(pattern: str, hostname: str) -> bool:
+    """Match a URL-rule hostname against an event hostname.
+
+    URL hosts support the same wildcard hostname constraints as host rules.
+    """
+    return match_hostname(pattern, hostname, is_wildcard="*" in pattern)
+
+
 def match_url_path(pattern_path: str, actual_path: str) -> bool:
     """Match a URL path against a pattern with wildcards.
 
@@ -405,7 +413,7 @@ def match_dns_name_against_rule(rule: Rule, name: str, event: ConnectionEvent) -
         rule_hostname = parsed.hostname
         if not rule_hostname:
             return False
-        if rule_hostname.lower() != name.lower():
+        if not match_url_hostname(rule_hostname, name):
             return False
     else:
         # IP/CIDR rules don't implicitly allow DNS
@@ -472,7 +480,7 @@ def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
 
         # Match host (case-insensitive)
         if rule_parsed.hostname and event_parsed.hostname:
-            if rule_parsed.hostname.lower() != event_parsed.hostname.lower():
+            if not match_url_hostname(rule_parsed.hostname, event_parsed.hostname):
                 return False
 
         # Match path
@@ -499,7 +507,7 @@ def match_rule(rule: Rule, event: ConnectionEvent) -> bool:
         if base_parsed.scheme != event_parsed.scheme:
             return False
         if base_parsed.hostname and event_parsed.hostname:
-            if base_parsed.hostname.lower() != event_parsed.hostname.lower():
+            if not match_url_hostname(base_parsed.hostname, event_parsed.hostname):
                 return False
 
         # Construct expected path
@@ -560,8 +568,7 @@ def match_rule_hostname_only(rule: Rule, event: ConnectionEvent) -> bool:
     if not rule_hostname:
         return False
 
-    # URL rules don't support hostname wildcards (grammar: url_host = ipv4 / hostname)
-    if rule_hostname.lower() != hostname.lower():
+    if not match_url_hostname(rule_hostname, hostname):
         return False
 
     if not match_attrs(rule, event):

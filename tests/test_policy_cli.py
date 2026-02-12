@@ -229,6 +229,17 @@ class TestValidatePolicy:
         _, _, message = errors[0]
         assert "overlaps" in message
 
+    def test_passthrough_exact_overlaps_wildcard_url_rule(self):
+        """Exact passthrough hostname overlapping wildcard URL hostname warns."""
+        policy = (
+            "https://productionresultssa*.blob.core.windows.net/*\n"
+            "productionresultssa123.blob.core.windows.net passthrough"
+        )
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "overlaps" in message
+
     def test_passthrough_no_overlap_no_warning(self):
         """Passthrough on different hostname than URL rules produces no warning."""
         policy = "https://example.com/api/*\nother.com passthrough"

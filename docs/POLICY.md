@@ -61,10 +61,15 @@ Full URL rules allow matching on scheme, host, and path:
 https://api.github.com/repos/*/releases
 https://api.github.com/repos/myorg/*
 
+# Wildcards in URL hostnames use the same hostname wildcard rules
+https://productionresultssa*.blob.core.windows.net/*
+
 # Method restriction (default: GET|HEAD for URL rules)
 POST https://api.github.com/repos/*/issues
 GET|POST https://example.com/api/*
 ```
+
+URL hostnames support the same wildcard forms as hostname rules (`*.example.com`, `prefix*.example.com`, `*.prefix*.example.com`), with wildcards only in the first label.
 
 ### Headers
 

@@ -49,7 +49,7 @@ port_proto_attr = port_attr proto_attr?
 rule            = ws* (url_rule / path_rule / network_rule) inline_comment? ws*
 
 url_rule        = (method_attr ws+)? scheme "://" url_host url_port? url_path kv_attrs?
-url_host        = ipv4 / hostname
+url_host        = ipv4 / wildcard_host / hostname
 scheme          = "https" / "http"
 url_port        = ":" ~"[0-9]+"
 url_path        = "/" path_rest
@@ -485,6 +485,16 @@ class PolicyVisitor(NodeVisitor):
             "port": port,
             "attrs": attrs,
         }
+
+    def visit_url_host(self, node, visited_children):
+        # url_host = ipv4 / wildcard_host / hostname
+        flat = _flatten(visited_children)
+        for item in flat:
+            if isinstance(item, dict) and "target" in item:
+                return item["target"]
+            if isinstance(item, str):
+                return item
+        return node.text
 
     def visit_path_rule(self, node, visited_children):
         # path_rule = (method_attr ws+)? "/" path_rest kv_attrs?
@@ -966,12 +976,29 @@ def _check_passthrough_url_overlap(
 
     warnings = []
     for pt_rule in passthrough_rules:
-        is_wildcard = pt_rule.type == "wildcard_host"
+        pt_is_wildcard = pt_rule.type == "wildcard_host"
         for url_rule in url_path_rules:
             url_hostname = _extract_url_rule_hostname(url_rule)
-            if url_hostname and match_hostname(
-                pt_rule.target, url_hostname, is_wildcard=is_wildcard
-            ):
+            if not url_hostname:
+                continue
+
+            url_is_wildcard = "*" in url_hostname
+            overlaps = (
+                # Existing direction: passthrough host/wildcard matches URL hostname.
+                match_hostname(
+                    pt_rule.target,
+                    url_hostname,
+                    is_wildcard=pt_is_wildcard,
+                )
+                # Reverse direction: exact passthrough host overlaps wildcard URL hostname.
+                or (not pt_is_wildcard and url_is_wildcard and match_hostname(
+                    url_hostname,
+                    pt_rule.target,
+                    is_wildcard=True,
+                ))
+            )
+
+            if overlaps:
                 warnings.append((
                     0,
                     f"{pt_rule.target} passthrough",
