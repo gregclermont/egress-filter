@@ -1000,21 +1000,21 @@ tests:
 
   - name: Step attribute
     policy: |
-      github.com step=build.my-step
+      github.com step=my-step
     connections:
       - event:
           type: https
           dst_ip: 140.82.121.4
           dst_port: 443
           host: github.com
-          step: build.my-step
+          step: my-step
         verdict: allow
       - event:
           type: https
           dst_ip: 140.82.121.4
           dst_port: 443
           host: github.com
-          step: build.other-step
+          step: other-step
         verdict: block
       - event:
           type: https

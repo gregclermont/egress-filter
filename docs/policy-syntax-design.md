@@ -209,9 +209,9 @@ egress-filter check --stdin < policy.txt
     - `exe=` - Executable path (e.g., `exe=/usr/bin/node`, `exe=*/node`)
     - `arg=` - Match any argument in argv
     - `arg[N]=` - Match specific argument by index (0-based, `arg[0]` is typically the command)
-    - `step=` - GitHub Actions step (matches `GITHUB_ACTION` env var)
+    - `step=` - GitHub Actions step (the `GITHUB_ACTION` env var, without job prefix)
       - If step has `id:` set, use that: `step=my-build`
-      - If no `id:`, we translate action refs: `step=actions/setup-node` → `__actions_setup-node(_\d+)?`
+      - If no `id:`, we translate action refs: `step=__actions_setup-node`
       - `run:` steps without `id:` get `__run`, `__run_2`, etc.
       - Note: explicit `id:` overrides action name - can't match by action ref if `id:` is set
     - `cgroup=` - Process cgroup path, with abstractions like `@docker`, `@host`

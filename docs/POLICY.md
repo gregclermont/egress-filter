@@ -182,14 +182,14 @@ api.tailscale.com action=tailscale/github-action
 
 ### `step=` - GitHub Actions Step
 
-Restricts access to a specific step (job + action identifier):
+Restricts access to a specific step (the `GITHUB_ACTION` identifier):
 
 ```yaml
-example.com step=build.__run_2
-api.example.com step=deploy.__actions_checkout
+example.com step=__run_2
+api.example.com step=__actions_checkout
 ```
 
-The step format is `{GITHUB_JOB}.{GITHUB_ACTION}`. This works for both actions and `run:` steps, but the `GITHUB_ACTION` value for run steps is auto-generated (e.g., `__run_2`).
+The step value is the `GITHUB_ACTION` environment variable. This works for both actions and `run:` steps, but the value for run steps is auto-generated (e.g., `__run_2`).
 
 ### `exe=` - Executable Path
 
@@ -294,7 +294,7 @@ policy: |
   github.com action=actions/checkout
 
   # npm registry for dependency installation
-  registry.npmjs.org step=build.__run_1
+  registry.npmjs.org step=__run_1
 ```
 
 ## Understanding Process Ancestry

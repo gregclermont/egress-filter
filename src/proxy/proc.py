@@ -274,10 +274,9 @@ def get_proc_info(pid: int | None) -> dict:
 
     # Get GitHub env vars from trusted ancestry (single read)
     trusted_env = get_trusted_github_env(pid)
-    job = trusted_env.get("GITHUB_JOB", "")
     action_id = trusted_env.get("GITHUB_ACTION", "")
-    if job and action_id:
-        result["step"] = f"{job}.{action_id}"
+    if action_id:
+        result["step"] = action_id
     action_repo = trusted_env.get("GITHUB_ACTION_REPOSITORY", "")
     if action_repo:
         result["action"] = action_repo
