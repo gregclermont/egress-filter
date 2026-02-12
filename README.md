@@ -113,7 +113,7 @@ The CLI shows which connections would be blocked, with process context:
 ```
 BLOCKED connections (would fail with this policy):
 ------------------------------------------------------------
-  https://registry.npmjs.org  [exe=/usr/bin/node, step=build.__run_1]
+  https://registry.npmjs.org  [exe=/usr/bin/node, step=__run_1]
   tcp://evil.com:443  [exe=/usr/bin/node]
 
 Summary: 12 allowed, 2 blocked (out of 14 unique connections)
@@ -194,7 +194,7 @@ Rules can be restricted to specific processes:
 | Constraint | Description | Example |
 |------------|-------------|---------|
 | `action=` | GitHub Action repository (JavaScript actions only) | `github.com action=actions/checkout` |
-| `step=` | Job and step identifier | `example.com step=build.__run_2` |
+| `step=` | GitHub Actions step identifier | `example.com step=__run_2` |
 | `exe=` | Executable path | `*.tailscale.com exe=/usr/bin/tailscaled` |
 | `arg=` | Match any command line argument | `example.com arg=--config=/etc/app.conf` |
 | `arg[N]=` | Match specific argument by index | `example.com arg[0]=node` |
