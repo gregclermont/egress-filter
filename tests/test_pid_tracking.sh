@@ -7,7 +7,7 @@
 
 set -u
 
-CONNECTIONS_LOG="${CONNECTIONS_FILE:-/tmp/connections.jsonl}"
+CONNECTIONS_LOG="${CONNECTIONS_FILE:-${RUNNER_TEMP:-/tmp}/connections.jsonl}"
 VERBOSE="${VERBOSE:-0}"
 
 # Colors for output

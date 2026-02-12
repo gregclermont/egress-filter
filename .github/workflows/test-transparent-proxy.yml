@@ -48,18 +48,18 @@ jobs:
           fetch-depth: 1
 
       - name: Run connection tracking tests
-        run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl --skip-docker
+        run: python3 tests/connection_tests/run.py --connections-log=${{ runner.temp }}/connections.jsonl --skip-docker
 
       - name: Show proxy logs
         if: always()
         env:
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
         run: |
-          cat /tmp/proxy.log || echo "No proxy log found"
-          if [ "$VERBOSE" = "1" ] && [ -f /tmp/mitmproxy.log ]; then
+          cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"
+          if [ "$VERBOSE" = "1" ] && [ -f ${{ runner.temp }}/mitmproxy.log ]; then
             echo ""
             echo "=== Mitmproxy Log (verbose) ==="
-            cat /tmp/mitmproxy.log
+            cat ${{ runner.temp }}/mitmproxy.log
           fi
 
       - name: Show conntrack marks (UDP fast-path)

@@ -37,13 +37,13 @@ jobs:
         if: always()
         run: |
           echo "=== Looking for port 44444 (our test source port) ==="
-          grep -i "44444" /tmp/connections.jsonl || echo "Not found - raw packet bypassed proxy!"
+          grep -i "44444" ${{ runner.temp }}/connections.jsonl || echo "Not found - raw packet bypassed proxy!"
 
       - name: Show proxy logs
         if: always()
         run: |
           echo "=== Proxy log ==="
-          cat /tmp/proxy.log || echo "No proxy log"
+          cat ${{ runner.temp }}/proxy.log || echo "No proxy log"
 
       # Test if we can use scapy - should now be BLOCKED
       - name: Test scapy bypass (should be blocked)
@@ -88,7 +88,7 @@ jobs:
         if: always()
         run: |
           echo "=== Checking for scapy test (port 55555) ==="
-          grep -i "55555" /tmp/connections.jsonl || echo "Port 55555 not found (expected - raw socket blocked)"
+          grep -i "55555" ${{ runner.temp }}/connections.jsonl || echo "Port 55555 not found (expected - raw socket blocked)"
 
       # Test blocking methods
       - name: Test blocking methods

@@ -10,7 +10,7 @@ import os
 from . import logging as proxy_logging
 
 SUDOERS_FILE = "/etc/sudoers.d/runner"
-SUDOERS_BACKUP = "/tmp/sudoers-runner-backup"
+SUDOERS_BACKUP = os.environ.get("RUNNER_TEMP", "/tmp") + "/sudoers-runner-backup"
 
 
 def disable_sudo() -> tuple[bool, str]:

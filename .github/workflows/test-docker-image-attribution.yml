@@ -30,7 +30,7 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log || echo "No proxy log found"
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"
 
       - name: Check connection log for image field
         if: always()
@@ -38,7 +38,7 @@ jobs:
           echo "=== Container connections ==="
           python3 -c "
           import json, sys
-          for line in open('/tmp/connections.jsonl'):
+          for line in open('${{ runner.temp }}/connections.jsonl'):
               conn = json.loads(line)
               if conn.get('image'):
                   print(json.dumps({k: conn[k] for k in ['type','dst_ip','dst_port','url','host','image','exe','policy'] if k in conn}, indent=2))

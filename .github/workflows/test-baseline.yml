@@ -35,7 +35,7 @@ jobs:
 
       - name: Show proxy logs
         if: always()
-        run: cat /tmp/proxy.log || echo "No proxy log found"
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"
 
       - name: Stop proxy and show BPF map
         if: always()

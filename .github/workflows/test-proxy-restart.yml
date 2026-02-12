@@ -29,7 +29,7 @@ jobs:
           set -x
 
           # Initial state
-          INITIAL_PID=$(cat /tmp/proxy.pid)
+          INITIAL_PID=$(cat ${{ runner.temp }}/proxy.pid)
           echo "Initial proxy PID: $INITIAL_PID"
 
           # Verify it works
@@ -41,7 +41,7 @@ jobs:
 
           # Wait for restart
           for i in {1..30}; do
-            NEW_PID=$(cat /tmp/proxy.pid 2>/dev/null || echo "$INITIAL_PID")
+            NEW_PID=$(cat ${{ runner.temp }}/proxy.pid 2>/dev/null || echo "$INITIAL_PID")
             if [ "$NEW_PID" != "$INITIAL_PID" ]; then
               echo "Proxy restarted with PID $NEW_PID"
               break
@@ -69,7 +69,7 @@ jobs:
         if: always()
         run: |
           echo "=== Supervisor log ==="
-          cat /tmp/proxy-stdout.log || true
+          cat ${{ runner.temp }}/proxy-stdout.log || true
           echo ""
           echo "=== Proxy log (last 50 lines) ==="
-          tail -50 /tmp/proxy.log || true
+          tail -50 ${{ runner.temp }}/proxy.log || true

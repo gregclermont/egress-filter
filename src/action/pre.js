@@ -87,7 +87,8 @@ async function run() {
     const socketSecurity = core.getInput('socket-security') === 'true';
 
     // Write policy to temp file (multiline string)
-    const policyFile = '/tmp/egress-policy.txt';
+    const tmpDir = process.env.RUNNER_TEMP || '/tmp';
+    const policyFile = path.join(tmpDir, 'egress-policy.txt');
     fs.writeFileSync(policyFile, policy);
 
     // Build environment variables to pass through sudo.
@@ -108,6 +109,7 @@ async function run() {
       `GITHUB_TOKEN=${core.getInput('github-token') || ''}`,
       `ACTIONS_ID_TOKEN_REQUEST_URL=${process.env.ACTIONS_ID_TOKEN_REQUEST_URL || ''}`,
       `ACTIONS_ID_TOKEN_REQUEST_TOKEN=${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN || ''}`,
+      `RUNNER_TEMP=${tmpDir}`,
     ];
 
     core.info('Installing dependencies...');

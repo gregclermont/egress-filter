@@ -6,9 +6,10 @@ import os
 from datetime import datetime, timezone
 
 # Configuration from environment
-LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
-CONNECTIONS_FILE = os.environ.get("CONNECTIONS_FILE", "/tmp/connections.jsonl")
-MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", "/tmp/mitmproxy.log")
+_tmp = os.environ.get("RUNNER_TEMP", "/tmp")
+LOG_FILE = os.environ.get("PROXY_LOG_FILE", f"{_tmp}/proxy.log")
+CONNECTIONS_FILE = os.environ.get("CONNECTIONS_FILE", f"{_tmp}/connections.jsonl")
+MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", f"{_tmp}/mitmproxy.log")
 VERBOSE = os.environ.get("VERBOSE", "0") == "1"
 
 # Module-level state (initialized by init_logging)

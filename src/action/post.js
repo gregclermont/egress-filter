@@ -9,7 +9,8 @@ const path = require('path');
 // Compute action root at runtime (2 levels up from dist/post/)
 const getActionPath = () => [__dirname, '..', '..'].reduce((a, b) => path.resolve(a, b));
 
-const CONTROL_SOCKET_PATH = '/tmp/egress-filter-control.sock';
+const tmpDir = process.env.RUNNER_TEMP || '/tmp';
+const CONTROL_SOCKET_PATH = path.join(tmpDir, 'egress-filter-control.sock');
 
 async function saveVenvCache(actionPath) {
   const cacheKey = core.getState('cache-key');
@@ -95,7 +96,7 @@ async function shutdownProxy() {
   });
 }
 
-const CONNECTION_LOG_PATH = '/tmp/connections.jsonl';
+const CONNECTION_LOG_PATH = path.join(tmpDir, 'connections.jsonl');
 
 /**
  * Check if any connections were blocked (policy: 'deny') or had errors
@@ -152,7 +153,7 @@ async function uploadConnectionLog() {
     const { id, size } = await client.uploadArtifact(
       'egress-connections',
       [CONNECTION_LOG_PATH],
-      '/tmp',
+      tmpDir,
       { retentionDays: 30 }
     );
     core.info(`Uploaded artifact (id: ${id}, size: ${size} bytes)`);

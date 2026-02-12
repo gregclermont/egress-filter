@@ -8,6 +8,7 @@ Runs tests on host, in docker bridge mode, and docker host mode.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -87,7 +88,7 @@ def main():
     parser.add_argument(
         "--connections-log",
         type=Path,
-        default=Path("/tmp/connections.jsonl"),
+        default=Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "connections.jsonl",
         help="Path to connections log",
     )
     parser.add_argument(
