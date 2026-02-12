@@ -31,6 +31,8 @@ jobs:
           policy: |
             [step=test.fetch]
             ghcr.io
+            [step=test.fetch_test]
+            ghcr.io
 
       - name: Dump proxy-related env after egress-filter
         run: |
@@ -96,6 +98,60 @@ jobs:
           echo ""
           echo "=== curl https://ghcr.io/v2/ ==="
           curl -sS -I --max-time 20 https://ghcr.io/v2/ | head -20
+
+      - name: Fetch from ghcr with Go test binary
+        id: fetch_test
+        run: |
+          mkdir -p /tmp/issue-141-go-test
+          cd /tmp/issue-141-go-test
+
+          cat > go.mod << 'EOF'
+          module issue141repro
+
+          go 1.24
+          EOF
+
+          cat > pin_test.go << 'EOF'
+          package issue141repro
+
+          import (
+              "fmt"
+              "net/http"
+              "os"
+              "testing"
+              "time"
+          )
+
+          func TestFetch(t *testing.T) {
+              target := "https://ghcr.io/v2/"
+              req, err := http.NewRequest("GET", target, nil)
+              if err != nil {
+                  t.Fatalf("request creation failed: %v", err)
+              }
+              proxyURL, err := http.ProxyFromEnvironment(req)
+              fmt.Printf("TEST HTTP_PROXY=%q\n", os.Getenv("HTTP_PROXY"))
+              fmt.Printf("TEST HTTPS_PROXY=%q\n", os.Getenv("HTTPS_PROXY"))
+              fmt.Printf("TEST ALL_PROXY=%q\n", os.Getenv("ALL_PROXY"))
+              if err != nil {
+                  fmt.Printf("TEST ProxyFromEnvironment error: %v\n", err)
+              } else if proxyURL == nil {
+                  fmt.Println("TEST ProxyFromEnvironment: <nil>")
+              } else {
+                  fmt.Printf("TEST ProxyFromEnvironment: %s\n", proxyURL.String())
+              }
+
+              client := &http.Client{Timeout: 20 * time.Second}
+              resp, err := client.Do(req)
+              if err != nil {
+                  t.Fatalf("GET failed: %v", err)
+              }
+              defer resp.Body.Close()
+
+              fmt.Printf("TEST GET %s -> %s\n", target, resp.Status)
+          }
+          EOF
+
+          go test -run TestFetch -count=1 -v
 
       - name: Show connection log (focused)
         if: always()
