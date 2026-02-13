@@ -100,6 +100,40 @@ class TestAzureWireserverRules:
         assert not allowed
 
 
+class TestAzureImdsRules:
+    """Test Azure IMDS rules for WALinuxAgent."""
+
+    def test_allows_azure_agent_to_imds(self):
+        """Should allow Azure Linux Agent to access IMDS."""
+        matcher = PolicyMatcher(DEFAULT_POLICY)
+        event = ConnectionEvent(
+            type="http",
+            dst_ip="169.254.169.254",
+            dst_port=80,
+            url="http://169.254.169.254/metadata/instance?api-version=2021-02-01",
+            method="GET",
+            exe="/usr/bin/python3.12",
+            cgroup="/azure.slice/walinuxagent.service",
+        )
+        allowed, _ = matcher.match(event)
+        assert allowed
+
+    def test_blocks_non_azure_cgroup_to_imds(self):
+        """Should block non-Azure cgroup processes from IMDS."""
+        matcher = PolicyMatcher(DEFAULT_POLICY)
+        event = ConnectionEvent(
+            type="http",
+            dst_ip="169.254.169.254",
+            dst_port=80,
+            url="http://169.254.169.254/metadata/instance?api-version=2021-02-01",
+            method="GET",
+            exe="/usr/bin/curl",
+            cgroup="/system.slice/hosted-compute-agent.service",
+        )
+        allowed, _ = matcher.match(event)
+        assert not allowed
+
+
 class TestResultsReceiverRules:
     """Test GitHub Actions results receiver rules."""
 

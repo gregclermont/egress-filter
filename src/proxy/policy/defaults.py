@@ -27,9 +27,13 @@ DEFAULT_POLICY = """
 # only domains allowed by other rules can be resolved.
 127.0.0.53:53/udp
 
-# Azure wireserver (metadata/heartbeat for GitHub-hosted runners)
-# The WALinuxAgent runs in the background and must access the wireserver.
-168.63.129.16:80|32526 cgroup=/azure.slice/walinuxagent.service
+# Azure infrastructure (WALinuxAgent on GitHub-hosted runners)
+# The WALinuxAgent runs in the background and must reach the wireserver
+# (metadata/heartbeat) and IMDS (instance metadata).
+[cgroup=/azure.slice/walinuxagent.service]
+168.63.129.16:80|32526
+169.254.169.254:80
+[]
 
 # GitHub Actions results receiver (job status reporting)
 # Various runner processes (Runner.Worker, action node processes) need this.
