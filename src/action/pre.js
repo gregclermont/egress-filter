@@ -85,6 +85,7 @@ async function run() {
     const audit = core.getInput('audit') === 'true';
     const allowSudo = core.getInput('allow-sudo') === 'true';
     const socketSecurity = core.getInput('socket-security') === 'true';
+    const containerCerts = core.getInput('container-certs') !== 'false';
 
     // Write policy to temp file (multiline string)
     const tmpDir = process.env.RUNNER_TEMP || '/tmp';
@@ -106,6 +107,7 @@ async function run() {
       `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,
       `EGRESS_ALLOW_SUDO=${allowSudo ? '1' : '0'}`,
       `EGRESS_SOCKET_SECURITY=${socketSecurity ? '1' : '0'}`,
+      `EGRESS_CONTAINER_CERTS=${containerCerts ? '1' : '0'}`,
       `GITHUB_TOKEN=${core.getInput('github-token') || ''}`,
       `ACTIONS_ID_TOKEN_REQUEST_URL=${process.env.ACTIONS_ID_TOKEN_REQUEST_URL || ''}`,
       `ACTIONS_ID_TOKEN_REQUEST_TOKEN=${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN || ''}`,

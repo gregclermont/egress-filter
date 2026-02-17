@@ -153,7 +153,7 @@ start_proxy() {
     fi
 
     # Install runc wrapper for container CA injection (enables TLS MITM for containers)
-    if [ -x /usr/bin/runc ] && [ ! -f /usr/bin/runc.real ]; then
+    if [ "${EGRESS_CONTAINER_CERTS:-1}" = "1" ] && [ -x /usr/bin/runc ] && [ ! -f /usr/bin/runc.real ]; then
         cp /usr/bin/runc /usr/bin/runc.real
         install -m 755 "$REPO_ROOT/src/runc_wrapper.py" /usr/bin/runc
     fi
