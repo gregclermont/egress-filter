@@ -23,6 +23,10 @@ inputs:
     description: 'GitHub token for API permissions analysis (detected in requests, not used for API calls)'
     required: false
     default: ${{ github.token }}
+  container-certs:
+    description: 'Inject proxy CA certificate into containers (disable if container cert injection causes issues)'
+    required: false
+    default: 'true'
   upload-log:
     description: 'Upload connection log as workflow artifact (default: only when audit mode, blocks, or errors)'
     required: false

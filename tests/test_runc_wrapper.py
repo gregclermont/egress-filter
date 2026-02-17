@@ -155,17 +155,36 @@ def ca_cert_file(tmp_path):
         yield cert
 
 
+def _get_mount(config, destination):
+    """Helper: find a mount entry by destination path."""
+    for m in config.get("mounts", []):
+        if m["destination"] == destination:
+            return m
+    return None
+
+
 class TestInjectCaCert:
-    def test_copies_cert_to_rootfs(self, bundle_dir, ca_cert_file):
+    def test_bind_mounts_cert_into_container(self, bundle_dir, ca_cert_file):
         inject_ca_cert(str(bundle_dir))
 
-        cert_in_container = bundle_dir / "rootfs" / "tmp" / "mitmproxy-ca-cert.pem"
-        assert cert_in_container.exists()
-        assert cert_in_container.read_text() == FAKE_CERT
-        assert oct(cert_in_container.stat().st_mode & 0o777) == oct(0o444)
+        config = json.loads((bundle_dir / "config.json").read_text())
+        mount = _get_mount(config, "/tmp/mitmproxy-ca-cert.pem")
+        assert mount is not None
+        assert mount["type"] == "bind"
+        assert mount["source"] == str(ca_cert_file)
+        assert "ro" in mount["options"]
 
-    def test_appends_to_debian_ca_bundle(self, bundle_dir, ca_cert_file):
-        # Create a Debian-style CA bundle in the rootfs
+    def test_does_not_modify_rootfs(self, bundle_dir, ca_cert_file):
+        """Bind mount approach must never write into the rootfs."""
+        rootfs = bundle_dir / "rootfs"
+        before = set(rootfs.rglob("*"))
+
+        inject_ca_cert(str(bundle_dir))
+
+        after = set(rootfs.rglob("*"))
+        assert before == after, f"Rootfs was modified: new files {after - before}"
+
+    def test_creates_merged_debian_ca_bundle(self, bundle_dir, ca_cert_file):
         ca_dir = bundle_dir / "rootfs" / "etc" / "ssl" / "certs"
         ca_dir.mkdir(parents=True)
         bundle_file = ca_dir / "ca-certificates.crt"
@@ -173,11 +192,24 @@ class TestInjectCaCert:
 
         inject_ca_cert(str(bundle_dir))
 
-        content = bundle_file.read_text()
+        # Original rootfs file is untouched
+        assert bundle_file.read_text() == "EXISTING CERTS\n"
+
+        # Merged file created in bundle dir
+        merged = bundle_dir / ".egress-ca-etc_ssl_certs_ca-certificates.crt"
+        assert merged.exists()
+        content = merged.read_text()
         assert "EXISTING CERTS" in content
         assert "FAKECERT" in content
 
-    def test_appends_to_rhel_ca_bundle(self, bundle_dir, ca_cert_file):
+        # Bind mount configured
+        config = json.loads((bundle_dir / "config.json").read_text())
+        mount = _get_mount(config, "/etc/ssl/certs/ca-certificates.crt")
+        assert mount is not None
+        assert mount["source"] == str(merged)
+        assert "ro" in mount["options"]
+
+    def test_creates_merged_rhel_ca_bundle(self, bundle_dir, ca_cert_file):
         ca_dir = bundle_dir / "rootfs" / "etc" / "pki" / "tls" / "certs"
         ca_dir.mkdir(parents=True)
         bundle_file = ca_dir / "ca-bundle.crt"
@@ -185,12 +217,27 @@ class TestInjectCaCert:
 
         inject_ca_cert(str(bundle_dir))
 
-        content = bundle_file.read_text()
+        # Original rootfs file is untouched
+        assert bundle_file.read_text() == "EXISTING CERTS\n"
+
+        # Merged file exists and has both contents
+        merged = bundle_dir / ".egress-ca-etc_pki_tls_certs_ca-bundle.crt"
+        content = merged.read_text()
         assert "EXISTING CERTS" in content
         assert "FAKECERT" in content
 
+    def test_merged_bundle_permissions(self, bundle_dir, ca_cert_file):
+        ca_dir = bundle_dir / "rootfs" / "etc" / "ssl" / "certs"
+        ca_dir.mkdir(parents=True)
+        (ca_dir / "ca-certificates.crt").write_text("EXISTING CERTS\n")
+
+        inject_ca_cert(str(bundle_dir))
+
+        merged = bundle_dir / ".egress-ca-etc_ssl_certs_ca-certificates.crt"
+        assert oct(merged.stat().st_mode & 0o777) == oct(0o444)
+
     def test_env_vars_use_system_bundle_when_present(self, bundle_dir, ca_cert_file):
-        """Replacing env vars point to system CA bundle (with mitmproxy CA appended)."""
+        """Replacing env vars point to system CA bundle path."""
         ca_dir = bundle_dir / "rootfs" / "etc" / "ssl" / "certs"
         ca_dir.mkdir(parents=True)
         (ca_dir / "ca-certificates.crt").write_text("EXISTING CERTS\n")
@@ -282,30 +329,35 @@ class TestInjectCaCert:
 
         inject_ca_cert(str(bundle_dir))
 
-        cert_in_container = rootfs / "tmp" / "mitmproxy-ca-cert.pem"
-        assert cert_in_container.exists()
+        # Cert mount is present (no rootfs copy to check)
+        config = json.loads((bundle_dir / "config.json").read_text())
+        mount = _get_mount(config, "/tmp/mitmproxy-ca-cert.pem")
+        assert mount is not None
 
     def test_no_ca_bundle_in_rootfs(self, bundle_dir, ca_cert_file):
         """Injection succeeds even if no system CA bundle exists (e.g., distroless)."""
         inject_ca_cert(str(bundle_dir))
 
-        # Cert is still copied to /tmp/
-        cert_in_container = bundle_dir / "rootfs" / "tmp" / "mitmproxy-ca-cert.pem"
-        assert cert_in_container.exists()
+        # Cert bind mount present
+        config = json.loads((bundle_dir / "config.json").read_text())
+        mount = _get_mount(config, "/tmp/mitmproxy-ca-cert.pem")
+        assert mount is not None
 
         # Env vars are still injected
-        config = json.loads((bundle_dir / "config.json").read_text())
         env = config["process"]["env"]
         assert "NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem" in env
 
-    def test_creates_tmp_dir_if_missing(self, bundle_dir, ca_cert_file):
-        # Remove the pre-created tmp dir
-        (bundle_dir / "rootfs" / "tmp").rmdir()
+    def test_preserves_existing_mounts(self, bundle_dir, ca_cert_file):
+        """Pre-existing mounts in config.json are preserved."""
+        config = json.loads((bundle_dir / "config.json").read_text())
+        config["mounts"] = [{"destination": "/dev", "type": "tmpfs", "source": "tmpfs"}]
+        (bundle_dir / "config.json").write_text(json.dumps(config))
 
         inject_ca_cert(str(bundle_dir))
 
-        cert_in_container = bundle_dir / "rootfs" / "tmp" / "mitmproxy-ca-cert.pem"
-        assert cert_in_container.exists()
+        config = json.loads((bundle_dir / "config.json").read_text())
+        assert _get_mount(config, "/dev") is not None
+        assert _get_mount(config, "/tmp/mitmproxy-ca-cert.pem") is not None
 
     def test_config_written_atomically(self, bundle_dir, ca_cert_file):
         """Config is written via rename, so no .tmp file should remain."""
@@ -323,3 +375,25 @@ class TestInjectCaCert:
 
         config = json.loads((bundle_dir / "config.json").read_text())
         assert "NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem" in config["process"]["env"]
+
+    def test_multiple_ca_bundles(self, bundle_dir, ca_cert_file):
+        """Alpine images may have both /etc/ssl/certs/ca-certificates.crt and /etc/ssl/cert.pem."""
+        # Create two bundle paths
+        ca_dir1 = bundle_dir / "rootfs" / "etc" / "ssl" / "certs"
+        ca_dir1.mkdir(parents=True)
+        (ca_dir1 / "ca-certificates.crt").write_text("DEBIAN CERTS\n")
+
+        cert_pem = bundle_dir / "rootfs" / "etc" / "ssl" / "cert.pem"
+        cert_pem.write_text("ALPINE CERTS\n")
+
+        inject_ca_cert(str(bundle_dir))
+
+        config = json.loads((bundle_dir / "config.json").read_text())
+
+        # Both get bind mounts
+        assert _get_mount(config, "/etc/ssl/certs/ca-certificates.crt") is not None
+        assert _get_mount(config, "/etc/ssl/cert.pem") is not None
+
+        # First found is used for env vars (Debian path comes first in CA_BUNDLE_PATHS)
+        env = config["process"]["env"]
+        assert "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" in env

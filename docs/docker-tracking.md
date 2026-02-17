@@ -104,15 +104,25 @@ Since all components match, the BPF map lookup succeeds.
 
 ## TLS MITM for Containers
 
-Container HTTPS traffic is fully MITM'd, enabling URL/path matching, method filtering, and Socket.dev package scanning. This is achieved by injecting the mitmproxy CA certificate into the container rootfs at creation time.
+Container HTTPS traffic is fully MITM'd, enabling URL/path matching, method filtering, and Socket.dev package scanning. This is achieved by injecting the mitmproxy CA certificate into containers at creation time using OCI bind mounts.
 
 `src/runc_wrapper.py` intercepts `runc create/run` by replacing `/usr/bin/runc` (original moved to `runc.real`). On each container creation it:
 
-1. Copies the CA cert to `/tmp/mitmproxy-ca-cert.pem` in the rootfs
-2. Appends the cert to system CA bundles (Debian, RHEL, Alpine paths)
+1. Bind-mounts the CA cert read-only into `/tmp/mitmproxy-ca-cert.pem` in the container
+2. For each system CA bundle found in the container (Debian, RHEL, Alpine paths), creates a merged copy (original + CA cert) on the host and bind-mounts it over the in-container path
 3. Injects env vars into the OCI config (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `HEX_CACERTS_PATH`)
 
+The wrapper uses bind mounts rather than direct rootfs modifications, so injected certs never appear in container image layers. This makes it safe for `docker build` contexts — even if a legacy (non-BuildKit) build triggers the host's runc, no CA artifacts end up in the built image.
+
 The wrapper fails open: if injection fails, runc still runs normally. If a container image pre-sets CA-related env vars, the wrapper does not override them but logs a warning with the image name (queried from Docker API).
+
+To disable container cert injection entirely (e.g., when the runc wrapper conflicts with a container runtime), set `container-certs: false`:
+
+```yaml
+- uses: gregclermont/egress-filter@v1
+  with:
+    container-certs: false
+```
 
 For containers that reject the proxy CA (certificate pinning, embedded trust stores), use the `passthrough` keyword to skip TLS interception:
 
@@ -128,7 +138,7 @@ For containers that reject the proxy CA (certificate pinning, embedded trust sto
 - `src/bpf/conn_tracker.bpf.c`: `kprobe/tcp_connect` for TCP, `kprobe/udp_sendmsg` for UDP, cgroup hooks for IPv6 blocking
 - `src/proxy/bpf.py`: Attaches BPF programs to kprobes and root cgroup
 - `src/setup/iptables.sh`: PREROUTING rules for docker0
-- `src/runc_wrapper.py`: Wraps runc to inject CA cert into container rootfs
+- `src/runc_wrapper.py`: Wraps runc to inject CA cert into containers via bind mounts
 - `tests/connection_tests/`: Python test framework with Docker tests
 
 ## IPv6 Blocking
