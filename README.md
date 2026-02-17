@@ -56,7 +56,7 @@ The system operates at multiple layers to prevent bypass:
 
 3. **PID lookup** — The proxy queries the BPF map to find which process initiated each connection, then walks `/proc` to extract the executable path, command line, cgroup, and GitHub Actions context (step, action repository). For Docker containers, it queries the Docker socket to resolve the container image name.
 
-4. **Container TLS MITM** — A runc wrapper (`src/runc_wrapper.py`) intercepts container creation to inject the proxy's CA certificate into the container rootfs. It appends the cert to system CA bundles and sets environment variables (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, etc.), enabling full HTTP-level inspection (URL/path matching, method filtering, Socket.dev scanning) for container traffic.
+4. **Container TLS MITM** — A runc wrapper (`src/runc_wrapper.py`) intercepts container creation to inject the proxy's CA certificate via OCI bind mounts. It bind-mounts merged CA bundles (original + proxy cert) over the container's system CA paths and sets environment variables (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, etc.), enabling full HTTP-level inspection (URL/path matching, method filtering, Socket.dev scanning) for container traffic. Bind mounts are runtime-only, so injected certs never appear in container image layers.
 
 5. **Policy enforcement** — Each connection is checked against the allowlist. Non-matching connections are blocked (or logged in audit mode).
 
@@ -284,6 +284,7 @@ Blocked packages appear in the connection log with `security_block: true` and th
 | `audit` | Log connections without blocking | `false` |
 | `allow-sudo` | Keep sudo enabled for runner user | `false` |
 | `socket-security` | Check package downloads against Socket.dev | `false` |
+| `container-certs` | Inject proxy CA certificate into containers | `true` |
 | `upload-log` | Upload connection log as artifact | conditional |
 
 ### Connection Log Upload
@@ -319,7 +320,7 @@ The `enable-sudo` sub-action can re-enable it later if needed.
 ## Limitations
 
 - **`action=` requires JavaScript actions** — Docker actions, composite actions, and `run:` steps don't have `GITHUB_ACTION_REPOSITORY` in their environment. Use `image=` for Docker containers, or `step=`/`exe=` for other cases.
-- **Container CA injection is best-effort** — The runc wrapper injects the proxy CA cert into containers via system CA bundles and environment variables. Runtimes that don't use the system store or the injected env vars (e.g., Java without keytool import, certificate pinning) will see TLS failures. If a container image pre-sets CA-related env vars (e.g., `NODE_EXTRA_CA_CERTS`), the wrapper won't override them and will log a warning. Use the `passthrough` keyword to skip MITM for hosts that reject the proxy CA.
+- **Container CA injection is best-effort** — The runc wrapper injects the proxy CA cert into containers via bind-mounted CA bundles and environment variables. Runtimes that don't use the system store or the injected env vars (e.g., Java without keytool import, certificate pinning) will see TLS failures. If a container image pre-sets CA-related env vars (e.g., `NODE_EXTRA_CA_CERTS`), the wrapper won't override them and will log a warning. Use the `passthrough` keyword to skip MITM for hosts that reject the proxy CA, or set `container-certs: false` to disable container cert injection entirely.
 - **Detached daemons lose GitHub context** — Background processes that daemonize lose their parent relationship to Runner.Worker. Use `exe=` to scope their traffic.
 - **No WebSocket inspection** — WebSocket connections are logged but not inspected after the upgrade handshake.
 
