@@ -1,9 +1,12 @@
 #!/usr/bin/python3
-"""runc wrapper that injects mitmproxy CA cert into container rootfs.
+"""runc wrapper that injects mitmproxy CA cert into containers via bind mounts.
 
 Intercepts runc create/run to inject the CA certificate, enabling
 TLS MITM for container HTTPS traffic. Fails open: if injection
 fails for any reason, runc is still executed normally.
+
+Uses OCI bind mounts instead of rootfs modifications so that injected
+certs never appear in container image layers (safe for docker build).
 
 Standalone script — uses only Python stdlib (no venv required).
 """
@@ -12,7 +15,6 @@ import http.client
 import json
 import os
 import re
-import shutil
 import socket
 import sys
 
@@ -98,12 +100,14 @@ def parse_runc_args(args):
 
 
 def inject_ca_cert(bundle_path):
-    """Inject CA cert into container rootfs and config.json.
+    """Inject CA cert into container via OCI bind mounts and env vars.
 
-    Modifies the container's filesystem and OCI config to trust the
-    mitmproxy CA certificate:
-    1. Copies cert into /tmp/ in the rootfs
-    2. Appends cert to system CA bundles (supports multiple distros)
+    Uses bind mounts (not rootfs modifications) so that injected certs
+    never appear in container image layers. This is safe for docker build.
+
+    1. Bind-mounts the cert into /tmp/ in the container
+    2. For each system CA bundle found in the rootfs, creates a merged
+       copy on the host and bind-mounts it over the original
     3. Injects environment variables into config.json for runtimes
        that use env vars rather than the system store
     """
@@ -117,26 +121,52 @@ def inject_ca_cert(bundle_path):
     if not os.path.isabs(rootfs):
         rootfs = os.path.join(bundle_path, rootfs)
 
-    # Copy cert into container's /tmp/
-    tmp_dir = os.path.join(rootfs, "tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-    cert_dest = os.path.join(tmp_dir, "mitmproxy-ca-cert.pem")
-    shutil.copy2(CA_CERT_FILE, cert_dest)
-    os.chmod(cert_dest, 0o444)
-
     # Read the CA cert content
     with open(CA_CERT_FILE) as f:
         ca_cert_content = f.read()
 
-    # Append to system CA bundles that exist in the container.
-    # Track the first one found — used for env vars that replace the bundle.
+    mounts = config.setdefault("mounts", [])
+
+    # Bind-mount the standalone cert into the container's /tmp/.
+    # Read-only: container cannot tamper with the host cert file.
+    mounts.append({
+        "destination": "/tmp/mitmproxy-ca-cert.pem",
+        "type": "bind",
+        "source": os.path.abspath(CA_CERT_FILE),
+        "options": ["bind", "ro"],
+    })
+
+    # For each system CA bundle that exists in the container, create a
+    # merged copy (original + our cert) on the host and bind-mount it
+    # over the in-container path. The merged files are placed in the
+    # bundle directory, which the container runtime cleans up automatically.
+    # Track the first bundle found — used for env vars below.
     system_ca_bundle = None
     for ca_path in CA_BUNDLE_PATHS:
         container_bundle = os.path.join(rootfs, ca_path.lstrip("/"))
         if os.path.isfile(container_bundle):
-            with open(container_bundle, "a") as f:
-                f.write("\n")
+            # Read original bundle from rootfs (read-only, no modification)
+            with open(container_bundle) as f:
+                original = f.read()
+
+            # Write merged bundle to host (in bundle dir, cleaned up by runtime)
+            safe_name = ca_path.replace("/", "_").lstrip("_")
+            merged_path = os.path.join(bundle_path, f".egress-ca-{safe_name}")
+            with open(merged_path, "w") as f:
+                f.write(original)
+                if not original.endswith("\n"):
+                    f.write("\n")
                 f.write(ca_cert_content)
+            os.chmod(merged_path, 0o444)
+
+            # Bind-mount merged bundle over the container's original
+            mounts.append({
+                "destination": ca_path,
+                "type": "bind",
+                "source": os.path.abspath(merged_path),
+                "options": ["bind", "ro"],
+            })
+
             if system_ca_bundle is None:
                 system_ca_bundle = ca_path
 
