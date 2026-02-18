@@ -1004,3 +1004,119 @@ tests:
         can_mitm: true
         verdict: allow
         passthrough: true
+
+  # =============================================================================
+  # Insecure (skip upstream TLS cert validation, keep MITM)
+  # =============================================================================
+
+  - name: Insecure rule sets decision.insecure when allowed and can_mitm
+    policy: |
+      internal.example.com insecure
+    checks:
+      - type: https
+        sni: internal.example.com
+        dst_ip: 10.0.0.1
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        insecure: true
+
+  - name: Insecure without can_mitm does not set insecure
+    policy: |
+      internal.example.com insecure
+    checks:
+      - type: https
+        sni: internal.example.com
+        dst_ip: 10.0.0.1
+        dst_port: 443
+        verdict: allow
+        insecure: false
+
+  - name: Allowed but no insecure rule means insecure is false
+    policy: |
+      github.com
+    checks:
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        insecure: false
+
+  - name: Insecure rule implicitly allows
+    policy: |
+      internal.example.com insecure
+    checks:
+      - type: https
+        sni: internal.example.com
+        dst_ip: 10.0.0.1
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        insecure: true
+
+  - name: Insecure with scoped cgroup attr matches
+    policy: |
+      internal.example.com
+      internal.example.com insecure cgroup=@docker
+    checks:
+      # Docker process - insecure applies
+      - type: https
+        sni: internal.example.com
+        dst_ip: 10.0.0.1
+        dst_port: 443
+        can_mitm: true
+        proc:
+          cgroup: /docker/abc123
+        verdict: allow
+        insecure: true
+
+      # Host process - insecure does not apply (cgroup doesn't match)
+      - type: https
+        sni: internal.example.com
+        dst_ip: 10.0.0.1
+        dst_port: 443
+        can_mitm: true
+        proc:
+          cgroup: /user.slice/user-1000.slice
+        verdict: allow
+        insecure: false
+
+  - name: Insecure wildcard rule
+    policy: |
+      *.internal.corp insecure
+    checks:
+      - type: https
+        sni: app.internal.corp
+        dst_ip: 10.0.0.2
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        insecure: true
+
+  - name: Insecure URL rule uses hostname-only match for TLS decision
+    policy: |
+      https://internal.example.com/api/* insecure
+    checks:
+      - type: https
+        sni: internal.example.com
+        dst_ip: 10.0.0.1
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        insecure: true
+
+  - name: Passthrough takes precedence over insecure
+    policy: |
+      internal.example.com passthrough
+      internal.example.com insecure
+    checks:
+      - type: https
+        sni: internal.example.com
+        dst_ip: 10.0.0.1
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        passthrough: true
+        insecure: false

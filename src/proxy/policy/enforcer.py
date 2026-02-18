@@ -40,6 +40,7 @@ class Decision:
     matched_rule: int | None = None
     hostname: str | None = None
     passthrough: bool = False
+    insecure: bool = False
 
     @property
     def allowed(self) -> bool:
@@ -213,11 +214,15 @@ class PolicyEnforcer:
                 decision = self._make_decision(
                     True, rule_idx, f"Matched rule {rule_idx}", hostname=sni
                 )
-                # Phase 2: check passthrough rules
+                # Phase 2: check passthrough and insecure rules
                 if can_mitm:
                     is_passthrough, _ = self.matcher.match_passthrough(event)
                     if is_passthrough:
                         decision.passthrough = True
+                    else:
+                        is_insecure, _ = self.matcher.match_insecure(event)
+                        if is_insecure:
+                            decision.insecure = True
                 return decision
             else:
                 return self._make_decision(
@@ -240,12 +245,17 @@ class PolicyEnforcer:
             allowed, rule_idx = self.matcher.match(event)
 
             if allowed:
-                return self._make_decision(
+                decision = self._make_decision(
                     True,
                     rule_idx,
                     f"Matched rule {rule_idx} via DNS cache",
                     hostname=cached_hostname,
                 )
+                if can_mitm:
+                    is_insecure, _ = self.matcher.match_insecure(event)
+                    if is_insecure:
+                        decision.insecure = True
+                return decision
 
         # No SNI and no DNS cache hit - try IP-based rules only
         event = ConnectionEvent(
@@ -257,7 +267,12 @@ class PolicyEnforcer:
         allowed, rule_idx = self.matcher.match(event)
 
         if allowed:
-            return self._make_decision(True, rule_idx, f"Matched IP rule {rule_idx}")
+            decision = self._make_decision(True, rule_idx, f"Matched IP rule {rule_idx}")
+            if can_mitm:
+                is_insecure, _ = self.matcher.match_insecure(event)
+                if is_insecure:
+                    decision.insecure = True
+            return decision
         else:
             return self._make_decision(
                 False, None, f"No rule matches {dst_ip}:{dst_port} (no SNI)"
