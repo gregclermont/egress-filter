@@ -1293,3 +1293,202 @@ tests:
         url_base: null
         attrs: {}
         passthrough: true
+
+  # =============================================================================
+  # Insecure rules (skip upstream TLS cert validation, keep MITM)
+  # =============================================================================
+
+  - name: Per-rule insecure on hostname
+    policy: |
+      internal.example.com insecure
+    rules:
+      - type: host
+        target: internal.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Per-rule insecure on wildcard with attrs
+    policy: |
+      *.internal.corp insecure cgroup=@docker
+    rules:
+      - type: wildcard_host
+        target: "*.internal.corp"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: "@docker"
+        insecure: true
+
+  - name: Insecure header context with hostname rules
+    policy: |
+      [insecure]
+      internal.example.com
+      *.internal.corp
+    rules:
+      - type: host
+        target: internal.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+      - type: wildcard_host
+        target: "*.internal.corp"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Insecure header with attrs
+    policy: |
+      [insecure cgroup=@docker]
+      internal.example.com
+      *.internal.corp
+    rules:
+      - type: host
+        target: internal.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: "@docker"
+        insecure: true
+      - type: wildcard_host
+        target: "*.internal.corp"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: "@docker"
+        insecure: true
+
+  - name: Header reset clears insecure
+    policy: |
+      [insecure]
+      internal.example.com
+      []
+      normal.example.com
+    rules:
+      - type: host
+        target: internal.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+      - type: host
+        target: normal.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Insecure rejected on dns rule (skipped)
+    policy: |
+      dns:example.com insecure
+    rules: []
+
+  - name: Insecure rejected when combined with passthrough (skipped)
+    policy: |
+      github.com passthrough insecure
+    rules: []
+
+  - name: Mixed insecure and normal rules
+    policy: |
+      github.com
+      internal.example.com insecure
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+      - type: host
+        target: internal.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Per-rule insecure with port
+    policy: |
+      internal.example.com:8443 insecure
+    rules:
+      - type: host
+        target: internal.example.com
+        port: [8443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Insecure on URL rule
+    policy: |
+      https://internal.example.com/api/* insecure
+    rules:
+      - type: url
+        target: "https://internal.example.com/api/*"
+        port: [443]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Insecure on path rule under URL header
+    policy: |
+      [https://internal.example.com]
+      /api/* insecure
+    rules:
+      - type: path
+        target: "/api/*"
+        port: [443]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: "https://internal.example.com"
+        attrs: {}
+        insecure: true
+
+  - name: Insecure on IP rule
+    policy: |
+      10.0.0.1 insecure
+    rules:
+      - type: ip
+        target: "10.0.0.1"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Insecure on CIDR rule
+    policy: |
+      10.0.0.0/8 insecure
+    rules:
+      - type: cidr
+        target: "10.0.0.0/8"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
