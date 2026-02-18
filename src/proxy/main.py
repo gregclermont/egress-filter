@@ -201,16 +201,24 @@ async def async_main():
     policy_errors = validate_policy(policy_text)
     if policy_errors:
         for line_num, line, error in policy_errors:
-            proxy_logging.logger.error(f"Invalid policy line {line_num}: {line}")
-        # Emit GitHub Actions annotation
-        print(f"::warning::Policy has {len(policy_errors)} invalid line(s) that will be skipped")
+            proxy_logging.logger.error(f"Invalid policy line {line_num}: {line!r} — {error}")
         if not audit_mode:
             # In enforcement mode, fail on invalid policy to prevent surprises
+            lines_summary = "; ".join(
+                f"line {n}: {l!r}" for n, l, _ in policy_errors
+            )
             proxy_logging.logger.error(
-                "Refusing to start with invalid policy in enforcement mode. "
+                f"Refusing to start: policy has {len(policy_errors)} invalid line(s) "
+                f"({lines_summary}). "
                 "Fix the policy or use audit-mode: true to continue with warnings."
             )
+            print(
+                f"::error::Policy has {len(policy_errors)} invalid line(s) that prevent startup. "
+                "Fix the policy or use audit-mode: true."
+            )
             sys.exit(1)
+        else:
+            print(f"::warning::Policy has {len(policy_errors)} invalid line(s) that will be skipped")
 
     enforcer = PolicyEnforcer.for_runner(
         policy_text,
