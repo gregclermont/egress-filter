@@ -150,6 +150,69 @@ normal-host.com
 - Only `host` and `wildcard_host` rules support passthrough. IP, CIDR, URL, path, and DNS-only rules with `passthrough` are rejected at validation time and silently dropped at runtime.
 - Passthrough only applies at the TLS stage (`tls_clienthello`). Since TLS is not decrypted, URL path matching and HTTP method filtering are not available for passthrough connections.
 
+### TLS Insecure
+
+The `insecure` keyword skips upstream TLS certificate validation while keeping MITM active. Unlike `passthrough` which skips TLS interception entirely, `insecure` still decrypts traffic so URL/path filtering continues to work. Use this for upstream servers with self-signed certificates or internal CAs:
+
+```yaml
+# Per-rule insecure
+internal.example.com insecure
+
+# Insecure with scope constraints
+*.internal.corp insecure cgroup=@docker
+
+# Insecure with explicit port
+internal.example.com:8443 insecure
+
+# Header context for multiple insecure rules
+[insecure]
+internal-api.example.com
+internal-auth.example.com
+
+# Insecure header with attributes
+[insecure cgroup=@docker]
+registry.internal.corp
+auth.internal.corp
+
+# Reset back to normal rules
+[]
+normal-host.com
+
+# Insecure on URL rules (cert validation is per-host)
+https://internal.example.com/api/* insecure
+
+# Insecure on path rules under URL header
+[https://internal.example.com]
+/api/* insecure
+
+# Insecure on IP/CIDR rules
+10.0.0.1 insecure
+10.0.0.0/8 insecure
+```
+
+**How it works:**
+
+1. An insecure rule implicitly allows the connection — no separate allow rule is needed
+2. TLS interception (MITM) is still active, so URL path and method filtering work normally
+3. The proxy skips upstream certificate validation, accepting self-signed or untrusted certs
+4. The connection is logged with `insecure: true`
+
+**Restrictions:**
+
+- `dns_host` and `dns_wildcard_host` rules do not support `insecure` (DNS-only rules have no TLS connection)
+- `passthrough` and `insecure` cannot be combined on the same rule (passthrough skips MITM entirely, making insecure meaningless)
+- Certificate validation is per-host at TLS time — if any rule for a host has `insecure`, all connections to that host skip cert validation
+
+**Comparison with passthrough:**
+
+| | `passthrough` | `insecure` |
+|---|---|---|
+| TLS MITM | Skipped | Active |
+| URL/path filtering | Not available | Works normally |
+| Upstream cert validation | N/A (no MITM) | Skipped |
+| Rule types | `host`, `wildcard_host` only | All except `dns_host`, `dns_wildcard_host` |
+| Use case | Cert pinning, sensitive traffic | Self-signed certs, internal CAs |
+
 ### Placeholders
 
 Policy text supports `{owner}` and `{repo}` placeholders, substituted from the `GITHUB_REPOSITORY` environment variable at runtime:

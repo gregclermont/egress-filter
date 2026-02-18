@@ -121,6 +121,8 @@ Attributes: `exe=`, `cgroup=`, `step=`, `action=`, `image=`, `arg=`, `arg[N]=`. 
 
 TLS passthrough: `passthrough` keyword on host/wildcard rules (`github.com passthrough`) or in header context (`[passthrough]`). Passthrough rules implicitly allow the connection and skip MITM — no separate allow rule needed. Only host/wildcard types supported (IP/CIDR/URL/dns: rejected). In `tls_clienthello`, sets `ignore_connection=True` and logs with `passthrough=True`.
 
+TLS insecure: `insecure` keyword on any rule except dns: (`internal.example.com insecure`) or in header context (`[insecure]`). Insecure rules implicitly allow the connection but keep MITM active — URL/path filtering still works. Skips upstream TLS cert validation via `SSL.VERIFY_NONE` in `tls_start_server`. Cannot be combined with `passthrough`. Cert validation is per-host at TLS time. Logged with `insecure=True` in `request()`.
+
 The `for_runner` factory prepends infrastructure defaults and injects `cgroup=/system.slice/hosted-compute-agent.service` on all rules.
 
 ## Supported Runners
