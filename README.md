@@ -227,7 +227,7 @@ Fields:
 | Field | Description | Present |
 |-------|-------------|---------|
 | `ts` | Timestamp (ISO 8601) | Always |
-| `type` | Protocol: `http`, `https`, `tcp`, `udp`, `dns` | Always |
+| `type` | Protocol: `http`, `https`, `tcp`, `udp`, `dns`, `sudo` | Always |
 | `dst_ip` | Destination IP address | Always |
 | `dst_port` | Destination port | Always |
 | `policy` | Policy match result: `allow`, `deny` | When policy evaluated |
@@ -248,6 +248,8 @@ Fields:
 | `security_block` | Socket.dev blocked this package | When `socket-security` blocks |
 | `purl` | Package URL (e.g., `pkg:npm/evil@1.0`) | When `socket-security` blocks |
 | `reasons` | Alert reasons (e.g., `["critical:malware"]`) | When `socket-security` blocks |
+| `pwd` | Working directory | `sudo` |
+| `target_user` | User sudo ran as | `sudo` |
 
 ## Package Security (Socket.dev)
 
@@ -294,6 +296,12 @@ By default, the connection log is only uploaded as an artifact when `audit: true
 ### sudo Behavior
 
 By default, sudo is disabled because root access can bypass egress controls (e.g., flush iptables rules, create network namespaces, kill the proxy). Set `allow-sudo: true` if your workflow requires it.
+
+When `allow-sudo: true` is set, all sudo invocations are logged and included in the connection log as `"type": "sudo"` events with the command, working directory, and target user. This helps assess which steps actually need sudo and what they use it for:
+
+```json
+{"ts":"2026-02-18T00:43:46.000+00:00","type":"sudo","cmdline":["/usr/bin/apt-get","update","-qq"],"pwd":"/home/runner/work/repo/repo","target_user":"root"}
+```
 
 For workflows that only need sudo temporarily (e.g., Tailscale setup), you can disable it after:
 
