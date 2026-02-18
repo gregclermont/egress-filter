@@ -28,7 +28,7 @@ jobs:
             []
 
             # Normal rule (no insecure) - for negative test
-            example.com
+            github.com
 
             # DNS
             [:53/udp]
@@ -75,8 +75,8 @@ jobs:
 
       - name: Test non-insecure HTTPS (should succeed without insecure in log)
         run: |
-          echo "Testing HTTPS to example.com (no insecure flag, valid cert)..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://example.com/)
+          echo "Testing HTTPS to github.com (no insecure flag, valid cert)..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://github.com/)
           echo "HTTP status: $HTTP_CODE"
           if [ "$HTTP_CODE" = "200" ]; then
             echo "PASS: Request succeeded (valid cert, no insecure needed)"
@@ -113,12 +113,12 @@ jobs:
           done
 
           echo ""
-          echo "=== Verifying example.com is NOT insecure ==="
-          if grep 'example.com' ${{ runner.temp }}/connections.jsonl | grep -q '"insecure":true'; then
-            echo "FAIL: example.com should NOT be logged as insecure"
+          echo "=== Verifying github.com is NOT insecure ==="
+          if grep 'github.com' ${{ runner.temp }}/connections.jsonl | grep -q '"insecure":true'; then
+            echo "FAIL: github.com should NOT be logged as insecure"
             exit 1
           else
-            echo "PASS: example.com is not marked insecure"
+            echo "PASS: github.com is not marked insecure"
           fi
 
       - name: Show proxy logs
