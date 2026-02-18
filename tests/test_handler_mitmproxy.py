@@ -267,28 +267,34 @@ class TestTlsClienthello:
         assert log_conn.call_args.kwargs["policy"] == "deny"
 
     def test_noncontainer_no_sni_defers(self, bpf, enforcer):
-        """Non-container + no SNI -> no enforcement (defers to request())."""
+        """Non-container + no SNI -> no block/passthrough (defers to request()).
+
+        check_https IS called to probe for insecure IP rules, but the
+        result only affects _insecure_conns — no blocking or logging.
+        """
+        enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, is_container=False)
         addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni=None)
         addon.tls_clienthello(data)
 
-        # No enforcement at TLS stage
-        enforcer.check_https.assert_not_called()
+        # Called for insecure probe, but no logging or blocking
+        enforcer.check_https.assert_called_once()
         log_conn.assert_not_called()
         assert data.ignore_connection is False
 
     def test_container_no_sni_defers(self, bpf, enforcer):
         """Container + no SNI -> defers to request() (same as non-container)."""
+        enforcer.check_https.return_value = _make_decision(True)
         gen = _make_addon(bpf, enforcer, is_container=True)
         addon, log_conn, _, _ = next(gen)
 
         data = make_tls_clienthello_data(sni=None)
         addon.tls_clienthello(data)
 
-        # No enforcement at TLS stage — defers to request() for MITM
-        enforcer.check_https.assert_not_called()
+        # Called for insecure probe, but no logging or blocking
+        enforcer.check_https.assert_called_once()
         log_conn.assert_not_called()
         assert data.ignore_connection is False
 
@@ -1005,3 +1011,154 @@ class TestGitHubTokenTagging:
 
         assert flow.response.status_code == 403
         assert log_conn.call_args.kwargs["github_token"] is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: insecure (skip upstream TLS cert validation)
+# ---------------------------------------------------------------------------
+
+class TestInsecure:
+    """Tests for insecure flag handling in tls_clienthello, tls_start_server, and request."""
+
+    def test_insecure_stashed_in_tls_clienthello(self, bpf, enforcer):
+        """Insecure decision -> stashed in _insecure_conns, no log, no passthrough."""
+        decision = _make_decision(True)
+        decision.insecure = True
+        enforcer.check_https.return_value = decision
+        gen = _make_addon(bpf, enforcer, is_container=False)
+        addon, log_conn, _, _ = next(gen)
+
+        data = make_tls_clienthello_data(sni="internal.example.com",
+                                          dst_ip="10.0.0.1", dst_port=443,
+                                          src_port=54321)
+        addon.tls_clienthello(data)
+
+        # Should NOT passthrough (MITM continues)
+        assert data.ignore_connection is False
+        # Should NOT log (deferred to request())
+        log_conn.assert_not_called()
+        # Should stash the connection
+        assert (54321, "10.0.0.1", 443) in addon._insecure_conns
+
+    def test_insecure_stashed_without_sni(self, bpf, enforcer):
+        """No SNI + insecure IP rule -> stashed in _insecure_conns."""
+        decision = _make_decision(True)
+        decision.insecure = True
+        enforcer.check_https.return_value = decision
+        gen = _make_addon(bpf, enforcer, is_container=False)
+        addon, log_conn, _, _ = next(gen)
+
+        data = make_tls_clienthello_data(sni=None,
+                                          dst_ip="10.0.0.1", dst_port=443,
+                                          src_port=54321)
+        addon.tls_clienthello(data)
+
+        # No SNI path: should NOT block/passthrough/log
+        assert data.ignore_connection is False
+        log_conn.assert_not_called()
+        # Should still stash the insecure connection
+        assert (54321, "10.0.0.1", 443) in addon._insecure_conns
+
+    def test_no_sni_non_insecure_not_stashed(self, bpf, enforcer):
+        """No SNI + non-insecure rule -> NOT stashed."""
+        decision = _make_decision(True)  # allowed but not insecure
+        enforcer.check_https.return_value = decision
+        gen = _make_addon(bpf, enforcer, is_container=False)
+        addon, log_conn, _, _ = next(gen)
+
+        data = make_tls_clienthello_data(sni=None,
+                                          dst_ip="10.0.0.1", dst_port=443,
+                                          src_port=54321)
+        addon.tls_clienthello(data)
+
+        assert (54321, "10.0.0.1", 443) not in addon._insecure_conns
+
+    def test_tls_start_server_sets_verify_none(self, bpf, enforcer):
+        """tls_start_server with insecure conn -> replaces ssl_conn with VERIFY_NONE."""
+        decision = _make_decision(True)
+        decision.insecure = True
+        enforcer.check_https.return_value = decision
+        gen = _make_addon(bpf, enforcer)
+        addon, _, _, _ = next(gen)
+
+        # Stash insecure connection
+        addon._insecure_conns[(54321, "10.0.0.1", 443)] = True
+
+        # Create tls_start_server data with real-ish SSL objects
+        mock_ctx = MagicMock()
+        mock_new_conn = MagicMock()
+        original_ssl_conn = MagicMock()
+        original_ssl_conn.get_context.return_value = mock_ctx
+        tls_start = SimpleNamespace(
+            context=SimpleNamespace(
+                client=SimpleNamespace(peername=("127.0.0.1", 54321), sni="internal.example.com"),
+                server=SimpleNamespace(address=("10.0.0.1", 443)),
+            ),
+            ssl_conn=original_ssl_conn,
+        )
+
+        with patch("OpenSSL.SSL.Connection", return_value=mock_new_conn) as MockConn:
+            addon.tls_start_server(tls_start)
+
+            # Should have called set_verify on the context
+            mock_ctx.set_verify.assert_called_once()
+
+            # Should have created a new Connection from the modified context
+            MockConn.assert_called_once_with(mock_ctx)
+
+            # Should have set SNI and connect state on the new connection
+            mock_new_conn.set_tlsext_host_name.assert_called_once_with(b"internal.example.com")
+            mock_new_conn.set_connect_state.assert_called_once()
+
+            # Should have replaced ssl_conn
+            assert tls_start.ssl_conn is mock_new_conn
+
+    def test_tls_start_server_no_insecure_noop(self, bpf, enforcer):
+        """tls_start_server without insecure conn -> no-op."""
+        gen = _make_addon(bpf, enforcer)
+        addon, _, _, _ = next(gen)
+
+        tls_start = SimpleNamespace(
+            context=SimpleNamespace(
+                client=SimpleNamespace(peername=("127.0.0.1", 54321)),
+                server=SimpleNamespace(address=("10.0.0.1", 443)),
+            ),
+            ssl_conn=MagicMock(),
+        )
+
+        addon.tls_start_server(tls_start)
+
+        # Should NOT have modified ssl_conn
+        tls_start.ssl_conn.get_context.assert_not_called()
+
+    def test_request_pops_insecure_and_logs(self, bpf, enforcer):
+        """request() for insecure conn -> pops from _insecure_conns, logs with insecure=True."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer)
+        addon, log_conn, _, _ = next(gen)
+
+        # Stash insecure connection
+        addon._insecure_conns[(54321, "10.0.0.1", 443)] = True
+
+        flow = make_http_flow(url="https://internal.example.com/api/data",
+                              method="GET", dst_ip="10.0.0.1", dst_port=443,
+                              src_port=54321)
+        addon.request(flow)
+
+        # Should have popped the connection
+        assert (54321, "10.0.0.1", 443) not in addon._insecure_conns
+        # Should log with insecure=True
+        log_conn.assert_called_once()
+        assert log_conn.call_args.kwargs["insecure"] is True
+
+    def test_request_normal_no_insecure_kwarg(self, bpf, enforcer):
+        """Normal request (not insecure) -> no insecure kwarg in log."""
+        enforcer.check_http.return_value = _make_decision(True)
+        gen = _make_addon(bpf, enforcer)
+        addon, log_conn, _, _ = next(gen)
+
+        flow = make_http_flow(url="https://example.com/path", method="GET",
+                              dst_port=443)
+        addon.request(flow)
+
+        assert "insecure" not in log_conn.call_args.kwargs
