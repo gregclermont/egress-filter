@@ -173,6 +173,15 @@ def test_policy_enforcer(scenario):
                 f"Expected passthrough: {expected_passthrough}, Got: {decision.passthrough}"
             )
 
+        # Check insecure flag if specified in fixture
+        if "insecure" in check:
+            expected_insecure = check["insecure"]
+            assert decision.insecure == expected_insecure, (
+                f"Scenario '{scenario['name']}', check {i} ({check_type}):\n"
+                f"Check: {check}\n"
+                f"Expected insecure: {expected_insecure}, Got: {decision.insecure}"
+            )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

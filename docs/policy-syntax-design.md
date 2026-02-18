@@ -160,6 +160,21 @@ Design document for the egress filter allowlist/blocklist syntax.
     - Connection is logged with `passthrough: true` for observability since `request()` won't log it
     - Use cases: certificate pinning, embedded trust stores (Java without keytool), sensitive traffic
 
+27. **TLS insecure via `insecure` keyword** - Skip upstream cert validation while keeping MITM:
+    - `internal.example.com insecure` - per-rule insecure
+    - `[insecure]` - header context for multiple rules
+    - `[insecure cgroup=@docker]` - header context with attributes
+    - `https://internal.example.com/api/* insecure` - on URL rules
+    - `/api/* insecure` - on path rules under URL header
+    - `10.0.0.1 insecure` - on IP/CIDR rules
+    - Insecure rules implicitly allow the connection — no separate allow rule needed
+    - Supported on all rule types except `dns_host`/`dns_wildcard_host` (DNS has no TLS)
+    - `passthrough` + `insecure` on the same rule is contradictory and rejected
+    - Cert validation is per-host at TLS time: even for URL/path rules, `match_insecure()` uses hostname-only matching
+    - In `tls_start_server`, sets `SSL.VERIFY_NONE` on the upstream SSL context via `set_verify()`
+    - Connection is logged with `insecure: true` in `request()` (not at TLS stage, since MITM continues)
+    - Use cases: self-signed certificates, internal CAs, development environments
+
 ## Future Considerations
 
 ### VS Code extension for syntax highlighting

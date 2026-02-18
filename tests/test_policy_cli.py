@@ -263,6 +263,72 @@ class TestValidatePolicy:
         assert "overlaps" in message
 
 
+class TestValidateInsecure:
+    """Tests for insecure flag validation."""
+
+    def test_insecure_on_dns_returns_error(self):
+        """Insecure on dns: rule is reported as error."""
+        errors = validate_policy("dns:example.com insecure")
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "insecure" in message
+        assert "dns" in message.lower()
+
+    def test_insecure_with_passthrough_returns_error(self):
+        """Insecure + passthrough on same rule is reported as error."""
+        errors = validate_policy("github.com passthrough insecure")
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "passthrough" in message
+        assert "insecure" in message
+
+    def test_insecure_on_hostname_is_valid(self):
+        """Insecure on hostname rule is valid."""
+        errors = validate_policy("internal.example.com insecure")
+        assert len(errors) == 0
+
+    def test_insecure_on_wildcard_is_valid(self):
+        """Insecure on wildcard rule is valid."""
+        errors = validate_policy("*.internal.corp insecure")
+        assert len(errors) == 0
+
+    def test_insecure_on_url_is_valid(self):
+        """Insecure on URL rule is valid."""
+        errors = validate_policy("https://internal.example.com/api/* insecure")
+        assert len(errors) == 0
+
+    def test_insecure_on_ip_is_valid(self):
+        """Insecure on IP rule is valid."""
+        errors = validate_policy("10.0.0.1 insecure")
+        assert len(errors) == 0
+
+    def test_insecure_passthrough_overlap_warning(self):
+        """Passthrough host overlapping insecure rule warns."""
+        policy = "internal.example.com insecure\ninternal.example.com passthrough"
+        errors = validate_policy(policy)
+        # The passthrough+insecure on same rule is an error, but separate rules
+        # produce an overlap warning
+        has_overlap_warning = any("no effect" in msg for _, _, msg in errors)
+        assert has_overlap_warning
+
+    def test_insecure_partial_url_coverage_warning(self):
+        """Insecure on some but not all URL rules for a host warns."""
+        policy = (
+            "https://internal.example.com/api/* insecure\n"
+            "https://internal.example.com/public/*"
+        )
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        _, _, message = errors[0]
+        assert "per-host" in message
+
+    def test_insecure_header_context(self):
+        """Insecure header context applies to subsequent rules."""
+        policy = "[insecure]\ninternal.example.com\n*.internal.corp"
+        errors = validate_policy(policy)
+        assert len(errors) == 0
+
+
 class TestAnalyzeConnections:
     """Tests for connection log analysis."""
 

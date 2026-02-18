@@ -27,6 +27,7 @@ class Rule:
     url_base: str | None  # Base URL for path rules, None for others
     attrs: dict[str, str | AttrValue] = field(default_factory=dict)
     passthrough: bool = False
+    insecure: bool = False
 
 
 @dataclass
@@ -68,6 +69,7 @@ class HeaderContext:
     url_base: str | None = None
     attrs: dict[str, str | AttrValue] = field(default_factory=dict)
     passthrough: bool = False
+    insecure: bool = False
     _defaults: DefaultContext = field(default_factory=lambda: SECURE_DEFAULTS)
 
     def reset(self) -> None:
@@ -82,3 +84,4 @@ class HeaderContext:
         self.url_base = None
         self.attrs = dict(self._defaults.attrs)
         self.passthrough = False
+        self.insecure = False

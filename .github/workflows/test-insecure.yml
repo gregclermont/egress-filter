@@ -1,0 +1,126 @@
+name: Test insecure flag
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          policy: |
+            # Per-rule insecure syntax
+            self-signed.badssl.com insecure
+
+            # Header context insecure syntax
+            [insecure]
+            expired.badssl.com
+            wrong.host.badssl.com
+            []
+
+            # Normal rule (no insecure) - for negative test
+            example.com
+
+            # DNS
+            [:53/udp]
+            168.63.129.16
+
+      - name: Test insecure to self-signed cert (per-rule syntax)
+        run: |
+          echo "Testing HTTPS to self-signed.badssl.com (insecure per-rule)..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://self-signed.badssl.com/)
+          echo "HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "PASS: Request succeeded with insecure flag"
+          else
+            echo "FAIL: Expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          sleep 1
+
+      - name: Test insecure to expired cert (header context syntax)
+        run: |
+          echo "Testing HTTPS to expired.badssl.com (insecure header context)..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://expired.badssl.com/)
+          echo "HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "PASS: Request succeeded with insecure flag"
+          else
+            echo "FAIL: Expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          sleep 1
+
+      - name: Test insecure to wrong-host cert (header context syntax)
+        run: |
+          echo "Testing HTTPS to wrong.host.badssl.com (insecure header context)..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://wrong.host.badssl.com/)
+          echo "HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "PASS: Request succeeded with insecure flag"
+          else
+            echo "FAIL: Expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          sleep 1
+
+      - name: Test non-insecure HTTPS (should succeed without insecure in log)
+        run: |
+          echo "Testing HTTPS to example.com (no insecure flag, valid cert)..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://example.com/)
+          echo "HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "PASS: Request succeeded (valid cert, no insecure needed)"
+          else
+            echo "FAIL: Expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          sleep 1
+
+      - name: Verify insecure flag in connection log
+        run: |
+          echo "=== Connection log ==="
+          cat ${{ runner.temp }}/connections.jsonl
+          echo ""
+
+          echo "=== Checking for insecure=true entries ==="
+          INSECURE_COUNT=$(grep -c '"insecure":true' ${{ runner.temp }}/connections.jsonl || echo "0")
+          echo "Found $INSECURE_COUNT connections with insecure=true"
+
+          if [ "$INSECURE_COUNT" -lt 3 ]; then
+            echo "FAIL: Expected at least 3 insecure connections, found $INSECURE_COUNT"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== Verifying each insecure host ==="
+          for host in self-signed.badssl.com expired.badssl.com wrong.host.badssl.com; do
+            if grep "$host" ${{ runner.temp }}/connections.jsonl | grep -q '"insecure":true'; then
+              echo "PASS: $host logged with insecure=true"
+            else
+              echo "FAIL: $host not logged with insecure=true"
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "=== Verifying example.com is NOT insecure ==="
+          if grep 'example.com' ${{ runner.temp }}/connections.jsonl | grep -q '"insecure":true'; then
+            echo "FAIL: example.com should NOT be logged as insecure"
+            exit 1
+          else
+            echo "PASS: example.com is not marked insecure"
+          fi
+
+      - name: Show proxy logs
+        if: always()
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"

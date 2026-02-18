@@ -187,6 +187,29 @@ policy: |
 
 A passthrough rule implicitly allows the connection and skips TLS interception. Only hostname and wildcard rules support passthrough; IP, CIDR, URL, and DNS-only rules do not.
 
+### TLS Insecure
+
+Some upstream servers use self-signed certificates or internal CAs. The `insecure` keyword keeps MITM active (so URL/path filtering still works) but skips upstream certificate validation:
+
+```yaml
+policy: |
+  # Skip cert validation for internal server
+  internal.example.com insecure
+
+  # Insecure on URL rules (cert validation is per-host)
+  https://internal.example.com/api/* insecure
+
+  # Insecure scoped to Docker containers
+  *.internal.corp insecure cgroup=@docker
+
+  # Header context for multiple insecure rules
+  [insecure]
+  internal-api.example.com
+  internal-auth.example.com
+```
+
+An insecure rule implicitly allows the connection. Unlike passthrough, MITM is still active so URL path and method filtering work. Cannot be combined with `passthrough`. Not supported on DNS-only rules.
+
 ### Process Scope Constraints
 
 Rules can be restricted to specific processes:
@@ -244,6 +267,7 @@ Fields:
 | `host` | Hostname (SNI) | `https` (TLS-layer) |
 | `name` | DNS query name | `dns` |
 | `passthrough` | TLS passthrough (MITM skipped) | When `passthrough` rule matched |
+| `insecure` | Upstream TLS cert validation skipped | When `insecure` rule matched |
 | `error` | Connection error type | On failure (e.g., `tls_client_rejected_ca`) |
 | `security_block` | Socket.dev blocked this package | When `socket-security` blocks |
 | `purl` | Package URL (e.g., `pkg:npm/evil@1.0`) | When `socket-security` blocks |

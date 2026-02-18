@@ -36,6 +36,10 @@ class MitmproxyAddon:
         # Stash allowed DNS request context for dns_response to log with answers.
         # Keyed by flow.id (a UUID string assigned at flow creation).
         self._pending_dns: dict[str, dict] = {}
+        # Track connections where upstream TLS cert validation should be skipped.
+        # Keyed by (src_port, dst_ip, dst_port) tuple, set in tls_clienthello,
+        # consumed by tls_start_server and request.
+        self._insecure_conns: dict[tuple, bool] = {}
 
     def _is_github_token(self, flow: http.HTTPFlow) -> bool:
         """Check if this request uses the workflow's GITHUB_TOKEN or OIDC token."""
@@ -125,7 +129,63 @@ class MitmproxyAddon:
                     pid=pid,
                 )
                 data.ignore_connection = True
-        # else: No SNI - defer to request() hook
+            elif decision.insecure:
+                # Track for tls_start_server to skip upstream cert validation.
+                # Don't log here — request() will log with full URL.
+                self._insecure_conns[(src_port, dst_ip, dst_port)] = True
+        else:
+            # No SNI — still check if dst_ip matches an insecure rule so
+            # tls_start_server can skip upstream cert validation.  The full
+            # policy decision is deferred to request() after MITM.
+            pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+            proc_dict = get_proc_info(pid)
+            decision = self.enforcer.check_https(
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                sni=None,
+                proc=ProcessInfo.from_dict(proc_dict),
+                can_mitm=True,
+            )
+            if decision.insecure:
+                self._insecure_conns[(src_port, dst_ip, dst_port)] = True
+
+    @log_errors
+    def tls_start_server(self, tls_start: tls.TlsData) -> None:
+        """Handle TLS connection to upstream server — skip cert validation if insecure.
+
+        When a connection was marked insecure in tls_clienthello, we set
+        SSL.VERIFY_NONE on the upstream TLS context so mitmproxy doesn't
+        reject self-signed or untrusted upstream certificates.
+        """
+        src_port = (
+            tls_start.context.client.peername[1]
+            if tls_start.context.client.peername
+            else 0
+        )
+        dst_ip, dst_port = (
+            tls_start.context.server.address
+            if tls_start.context.server.address
+            else ("unknown", 0)
+        )
+
+        conn_key = (src_port, dst_ip, dst_port)
+        if conn_key in self._insecure_conns and tls_start.ssl_conn:
+            from OpenSSL import SSL
+
+            # Modify context to skip certificate verification
+            ctx = tls_start.ssl_conn.get_context()
+            ctx.set_verify(SSL.VERIFY_NONE, lambda *a: True)
+
+            # Re-create the SSL connection so that VERIFY_NONE is applied.
+            # OpenSSL copies verify_mode from context at SSL_new() time;
+            # modifying the context afterwards has no effect on existing
+            # SSL objects.
+            sni = tls_start.context.client.sni
+            new_conn = SSL.Connection(ctx)
+            if sni:
+                new_conn.set_tlsext_host_name(sni.encode("ascii"))
+            new_conn.set_connect_state()
+            tls_start.ssl_conn = new_conn
 
     @log_errors
     def request(self, flow: http.HTTPFlow) -> None:
@@ -144,6 +204,12 @@ class MitmproxyAddon:
 
         # Determine connection type from URL scheme
         conn_type = "https" if url.startswith("https://") else "http"
+
+        # Check if this connection was marked insecure at TLS time
+        insecure_kwargs = {}
+        conn_key = (src_port, dst_ip, dst_port)
+        if self._insecure_conns.pop(conn_key, False):
+            insecure_kwargs["insecure"] = True
 
         # Detect if this request uses the workflow's GITHUB_TOKEN or OIDC token
         token_kwargs = {}
@@ -169,6 +235,7 @@ class MitmproxyAddon:
                 url=url,
                 method=method,
                 policy=decision.policy,
+                **insecure_kwargs,
                 **token_kwargs,
                 **proc_dict,
                 src_port=src_port,
@@ -198,6 +265,7 @@ class MitmproxyAddon:
                         security_block=True,
                         purl=pkg.purl,
                         reasons=result.reasons,
+                        **insecure_kwargs,
                         **token_kwargs,
                         **proc_dict,
                         src_port=src_port,
@@ -217,6 +285,7 @@ class MitmproxyAddon:
             url=url,
             method=method,
             policy=decision.policy,
+            **insecure_kwargs,
             **token_kwargs,
             **proc_dict,
             src_port=src_port,

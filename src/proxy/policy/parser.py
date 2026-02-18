@@ -37,8 +37,9 @@ newline         = "\n" / "\r\n"
 ws              = " " / "\t"
 
 header          = ws* "[" header_content? "]" inline_comment? ws*
-header_content  = passthrough_header / url_base_header / method_header / port_proto_header / kv_only_header
+header_content  = passthrough_header / insecure_header / url_base_header / method_header / port_proto_header / kv_only_header
 passthrough_header = "passthrough" kv_attrs?
+insecure_header = "insecure" kv_attrs?
 url_base_header = url_base kv_attrs?
 method_header   = method_attr kv_attrs?
 port_proto_header = port_proto_attr kv_attrs?
@@ -48,17 +49,18 @@ port_proto_attr = port_attr proto_attr?
 
 rule            = ws* (url_rule / path_rule / network_rule) inline_comment? ws*
 
-url_rule        = (method_attr ws+)? scheme "://" url_host url_port? url_path kv_attrs?
+url_rule        = (method_attr ws+)? scheme "://" url_host url_port? url_path insecure_flag? kv_attrs?
 url_host        = ipv4 / wildcard_host / hostname
 scheme          = "https" / "http"
 url_port        = ":" ~"[0-9]+"
 url_path        = "/" path_rest
 path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
-path_rule       = (method_attr ws+)? "/" path_rest kv_attrs?
+path_rule       = (method_attr ws+)? "/" path_rest insecure_flag? kv_attrs?
 
-network_rule    = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? kv_attrs?
+network_rule    = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? insecure_flag? kv_attrs?
 passthrough_flag = ws+ "passthrough"
+insecure_flag   = ws+ "insecure"
 
 dns_host_rule   = "dns:" (wildcard_host / exact_host)
 
@@ -215,9 +217,11 @@ class PolicyVisitor(NodeVisitor):
                             self.ctx.protocol = attr["protocol"]
                         if "passthrough" in attr:
                             self.ctx.passthrough = True
+                        if "insecure" in attr:
+                            self.ctx.insecure = True
                         # Handle kv_attrs in headers (exe=, cgroup=, etc.)
                         for key in list(attr.keys()):
-                            if key not in ("url_base", "methods", "port", "protocol", "passthrough"):
+                            if key not in ("url_base", "methods", "port", "protocol", "passthrough", "insecure"):
                                 self.ctx.attrs[key] = attr[key]
         return None
 
@@ -228,6 +232,17 @@ class PolicyVisitor(NodeVisitor):
         # "passthrough" kv_attrs?
         _, kv_attrs = visited_children
         result = {"passthrough": True}
+        if not _is_empty(kv_attrs):
+            flat_kv = _flatten([kv_attrs])
+            for item in flat_kv:
+                if isinstance(item, dict):
+                    result.update(item)
+        return result
+
+    def visit_insecure_header(self, node, visited_children):
+        # "insecure" kv_attrs?
+        _, kv_attrs = visited_children
+        result = {"insecure": True}
         if not _is_empty(kv_attrs):
             flat_kv = _flatten([kv_attrs])
             for item in flat_kv:
@@ -412,6 +427,9 @@ class PolicyVisitor(NodeVisitor):
         # Determine passthrough from rule-level flag or header context
         is_passthrough = rule_info.get("passthrough", False) or self.ctx.passthrough
 
+        # Determine insecure from rule-level flag or header context
+        is_insecure = rule_info.get("insecure", False) or self.ctx.insecure
+
         # Validate: passthrough only applies to host/wildcard_host rules
         if is_passthrough and rule_type not in ("host", "wildcard_host"):
             self.warnings.append(
@@ -424,6 +442,25 @@ class PolicyVisitor(NodeVisitor):
             )
             return None
 
+        # Validate: insecure not supported on dns_host/dns_wildcard_host
+        if is_insecure and rule_type in ("dns_host", "dns_wildcard_host"):
+            self.warnings.append(
+                f"insecure is not supported on DNS-only rules, not {rule_type}"
+            )
+            logger.debug(
+                "Skipping insecure on unsupported rule type %r: %s",
+                rule_type,
+                target,
+            )
+            return None
+
+        # Validate: passthrough + insecure is contradictory
+        if is_passthrough and is_insecure:
+            self.warnings.append(
+                "passthrough and insecure cannot be combined on the same rule"
+            )
+            return None
+
         rule = Rule(
             type=rule_type,
             target=target,
@@ -433,13 +470,14 @@ class PolicyVisitor(NodeVisitor):
             url_base=url_base,
             attrs=attrs,
             passthrough=is_passthrough,
+            insecure=is_insecure,
         )
         self.rules.append(rule)
         return rule
 
     def visit_url_rule(self, node, visited_children):
-        # url_rule = (method_attr ws+)? scheme "://" url_host url_port? url_path kv_attrs?
-        method_part, scheme, _, url_host, url_port, url_path, kv_attrs = (
+        # url_rule = (method_attr ws+)? scheme "://" url_host url_port? url_path insecure_flag? kv_attrs?
+        method_part, scheme, _, url_host, url_port, url_path, insecure_flag, kv_attrs = (
             visited_children
         )
 
@@ -478,13 +516,18 @@ class PolicyVisitor(NodeVisitor):
                 if isinstance(attr, dict):
                     attrs.update(attr)
 
-        return {
+        is_insecure = not _is_empty(insecure_flag)
+
+        result = {
             "type": "url",
             "target": target,
             "methods": methods,
             "port": port,
             "attrs": attrs,
         }
+        if is_insecure:
+            result["insecure"] = True
+        return result
 
     def visit_url_host(self, node, visited_children):
         # url_host = ipv4 / wildcard_host / hostname
@@ -497,8 +540,8 @@ class PolicyVisitor(NodeVisitor):
         return node.text
 
     def visit_path_rule(self, node, visited_children):
-        # path_rule = (method_attr ws+)? "/" path_rest kv_attrs?
-        method_part, slash, path_rest, kv_attrs = visited_children
+        # path_rule = (method_attr ws+)? "/" path_rest insecure_flag? kv_attrs?
+        method_part, slash, path_rest, insecure_flag, kv_attrs = visited_children
 
         methods = None
         if not _is_empty(method_part):
@@ -524,20 +567,28 @@ class PolicyVisitor(NodeVisitor):
                 if isinstance(attr, dict):
                     attrs.update(attr)
 
-        return {
+        is_insecure = not _is_empty(insecure_flag)
+
+        result = {
             "type": "path",
             "target": target,
             "methods": methods,
             "url_base": None,
             "attrs": attrs,
         }
+        if is_insecure:
+            result["insecure"] = True
+        return result
 
     def visit_passthrough_flag(self, node, visited_children):
         return {"passthrough": True}
 
+    def visit_insecure_flag(self, node, visited_children):
+        return {"insecure": True}
+
     def visit_network_rule(self, node, visited_children):
-        # network_rule = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? kv_attrs?
-        rule_data, port_proto, passthrough_flag, kv_attrs = visited_children
+        # network_rule = (cidr_rule / ip_rule / dns_host_rule / host_rule) port_proto_attr? passthrough_flag? insecure_flag? kv_attrs?
+        rule_data, port_proto, passthrough_flag, insecure_flag, kv_attrs = visited_children
 
         # Extract base rule info
         rule_info = None
@@ -566,6 +617,13 @@ class PolicyVisitor(NodeVisitor):
             for item in flat_pt:
                 if isinstance(item, dict) and "passthrough" in item:
                     rule_info["passthrough"] = True
+
+        # Apply insecure flag
+        if not _is_empty(insecure_flag):
+            flat_ins = _flatten([insecure_flag])
+            for item in flat_ins:
+                if isinstance(item, dict) and "insecure" in item:
+                    rule_info["insecure"] = True
 
         # Apply kv attrs
         attrs = {}
@@ -913,6 +971,8 @@ def rule_to_dict(rule: Rule) -> dict:
     }
     if rule.passthrough:
         result["passthrough"] = True
+    if rule.insecure:
+        result["insecure"] = True
     return result
 
 
@@ -946,6 +1006,9 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
 
     # Cross-rule validation: warn if passthrough overlaps with URL/path rules
     errors.extend(_check_passthrough_url_overlap(all_rules))
+
+    # Cross-rule validation: warn about insecure interactions
+    errors.extend(_check_insecure_warnings(all_rules))
 
     return errors
 
@@ -1007,3 +1070,81 @@ def _check_passthrough_url_overlap(
                     f"because passthrough skips TLS interception",
                 ))
     return warnings
+
+
+def _check_insecure_warnings(
+    rules: list[Rule],
+) -> list[tuple[int, str, str]]:
+    """Warn about insecure rule interactions.
+
+    1. Passthrough + insecure overlap: unscoped passthrough host overlapping
+       insecure rule → warn insecure has no effect.
+    2. Partial URL coverage: insecure on some but not all URL/path rules for
+       a host → warn cert validation is per-host.
+    """
+    from .matcher import match_hostname
+
+    insecure_rules = [r for r in rules if r.insecure]
+    if not insecure_rules:
+        return []
+
+    warnings = []
+
+    # Check 1: passthrough overlaps insecure
+    passthrough_rules = [r for r in rules if r.passthrough]
+    for pt_rule in passthrough_rules:
+        pt_is_wildcard = pt_rule.type == "wildcard_host"
+        for ins_rule in insecure_rules:
+            ins_hostname = _extract_insecure_hostname(ins_rule)
+            if not ins_hostname:
+                continue
+            ins_is_wildcard = "*" in ins_hostname
+            overlaps = (
+                match_hostname(
+                    pt_rule.target,
+                    ins_hostname,
+                    is_wildcard=pt_is_wildcard,
+                )
+                or (not pt_is_wildcard and ins_is_wildcard and match_hostname(
+                    ins_hostname,
+                    pt_rule.target,
+                    is_wildcard=True,
+                ))
+            )
+            if overlaps:
+                warnings.append((
+                    0,
+                    f"{ins_hostname} insecure",
+                    f"insecure has no effect on '{ins_hostname}' because "
+                    f"passthrough rule '{pt_rule.target}' skips TLS interception",
+                ))
+
+    # Check 2: partial URL coverage — insecure on some but not all URL/path rules for a host
+    insecure_url_rules = [r for r in insecure_rules if r.type in ("url", "path")]
+    non_insecure_url_rules = [r for r in rules if r.type in ("url", "path") and not r.insecure]
+    for ins_rule in insecure_url_rules:
+        ins_hostname = _extract_url_rule_hostname(ins_rule)
+        if not ins_hostname:
+            continue
+        for other_rule in non_insecure_url_rules:
+            other_hostname = _extract_url_rule_hostname(other_rule)
+            if not other_hostname:
+                continue
+            if ins_hostname.lower() == other_hostname.lower():
+                warnings.append((
+                    0,
+                    f"{ins_hostname} insecure",
+                    f"insecure on '{ins_rule.target}' but not on '{other_rule.target}' — "
+                    f"cert validation is per-host, so insecure affects all connections "
+                    f"to {ins_hostname}",
+                ))
+                break  # One warning per insecure rule is enough
+
+    return warnings
+
+
+def _extract_insecure_hostname(rule: Rule) -> str | None:
+    """Extract the hostname from an insecure rule's target."""
+    if rule.type in ("host", "wildcard_host"):
+        return rule.target
+    return _extract_url_rule_hostname(rule)
