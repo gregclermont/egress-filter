@@ -21,7 +21,7 @@ from mitmproxy.tools.dump import DumpMaster
 
 from .bpf import BPFState
 from .control import ControlServer
-from .sudo import disable_sudo, enable_sudo
+from .sudo import configure_sudo_logging, disable_sudo, enable_sudo, parse_sudo_log
 from .handlers import MitmproxyAddon, NfqueueHandler
 from .policy import PolicyEnforcer, validate_policy
 from .policy.gha import validate_runner_environment
@@ -177,7 +177,11 @@ async def async_main():
         else:
             proxy_logging.logger.warning(f"Failed to disable sudo: {message}")
     else:
-        proxy_logging.logger.info("Sudo left enabled (allow-sudo: true)")
+        success, message = configure_sudo_logging()
+        if success:
+            proxy_logging.logger.info(f"Sudo left enabled (allow-sudo: true), {message}")
+        else:
+            proxy_logging.logger.info(f"Sudo left enabled (allow-sudo: true), logging not configured: {message}")
 
     # Load policy and create enforcer
     policy_file = os.environ.get("EGRESS_POLICY_FILE", "")
@@ -255,6 +259,16 @@ async def async_main():
         # Always cleanup, even on exception
         proxy_logging.logger.info("Shutting down...")
         stop_task.cancel()  # Cancel the stop_event.wait() task
+
+        # Flush sudo log events before the slow task shutdown, since
+        # proxy.sh stop may force-kill us before shutdown_tasks completes
+        if allow_sudo:
+            sudo_events = parse_sudo_log()
+            for event in sudo_events:
+                proxy_logging.log_connection(**event)
+            if sudo_events:
+                proxy_logging.logger.info(f"Flushed {len(sudo_events)} sudo event(s) to connections log")
+
         await shutdown_tasks(tasks)
 
         # Stop control socket

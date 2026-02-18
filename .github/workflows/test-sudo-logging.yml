@@ -1,0 +1,45 @@
+name: Test sudo logging
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+jobs:
+  test-sudo-logging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          allow-sudo: true
+          audit: true
+          upload-log: true
+
+      - name: Run some sudo commands
+        run: |
+          sudo whoami
+          sudo ls /root
+          sudo apt-get update -qq
+
+      - name: Verify sudo.log was created with entries
+        run: |
+          echo "=== sudo.log ==="
+          sudo cat ${{ runner.temp }}/sudo.log
+          echo ""
+          LINES=$(sudo cat ${{ runner.temp }}/sudo.log | wc -l)
+          echo "Found $LINES sudo log entries"
+          if [ "$LINES" -lt 3 ]; then
+            echo "::error::Expected at least 3 sudo log entries, got $LINES"
+            exit 1
+          fi
+
+      - name: Show proxy log and stdout
+        if: always()
+        run: |
+          echo "=== proxy.log ==="
+          cat ${{ runner.temp }}/proxy.log | tail -50 || echo "No proxy.log"
+          echo ""
+          echo "=== proxy-stdout.log ==="
+          cat ${{ runner.temp }}/proxy-stdout.log || echo "No proxy-stdout.log"
