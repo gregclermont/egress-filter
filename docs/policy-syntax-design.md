@@ -153,8 +153,7 @@ Design document for the egress filter allowlist/blocklist syntax.
     - `github.com passthrough` - per-rule passthrough
     - `[passthrough]` - header context for multiple rules
     - `[passthrough cgroup=@docker]` - header context with attributes
-    - Two-phase evaluation: connection must match an allow rule first, then passthrough rules are checked independently
-    - Passthrough-only rules (without a matching allow rule) do not allow the connection
+    - Passthrough rules implicitly allow the connection — no separate allow rule needed
     - Only valid on `host` and `wildcard_host` rule types — IP, CIDR, URL, path, and dns: rules with passthrough are rejected at validation time and silently dropped at runtime (logged at DEBUG)
     - Rationale: passthrough operates at the TLS layer (SNI only), so it can only match hostnames. URL/path rules require MITM to inspect, which contradicts passthrough's purpose
     - In `tls_clienthello`, `data.ignore_connection = True` tells mitmproxy to skip interception — `request()` never fires
