@@ -166,7 +166,7 @@ policy: |
 
 ### TLS Passthrough
 
-Some services use certificate pinning or embedded trust stores that reject the MITM proxy's CA certificate. The `passthrough` keyword skips TLS interception for matching connections while still enforcing the allow policy:
+Some services use certificate pinning or embedded trust stores that reject the MITM proxy's CA certificate. The `passthrough` keyword allows the connection and skips TLS interception — no separate allow rule is needed:
 
 ```yaml
 policy: |
@@ -185,7 +185,7 @@ policy: |
   auth.example.com
 ```
 
-Passthrough is evaluated as a separate phase — a connection must first match an allow rule, then passthrough rules are checked independently. This means you need both an allow rule and a passthrough rule (or use the same hostname for both). Only hostname and wildcard rules support passthrough; IP, CIDR, URL, and DNS-only rules do not.
+A passthrough rule implicitly allows the connection and skips TLS interception. Only hostname and wildcard rules support passthrough; IP, CIDR, URL, and DNS-only rules do not.
 
 ### Process Scope Constraints
 

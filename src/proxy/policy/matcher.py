@@ -588,7 +588,7 @@ class PolicyMatcher:
             defaults: Optional DefaultContext to override security defaults.
         """
         all_rules = parse_policy(policy_text, defaults=defaults)
-        self.rules = [r for r in all_rules if not r.passthrough]
+        self.rules = list(all_rules)
         self.passthrough_rules = [r for r in all_rules if r.passthrough]
 
     def match(self, event: ConnectionEvent | dict) -> tuple[bool, int | None]:

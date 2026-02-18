@@ -921,7 +921,6 @@ tests:
 
   - name: Passthrough rule sets decision.passthrough when allowed and can_mitm
     policy: |
-      github.com
       github.com passthrough
     checks:
       - type: https
@@ -934,7 +933,6 @@ tests:
 
   - name: Passthrough without can_mitm does not set passthrough
     policy: |
-      github.com
       github.com passthrough
     checks:
       - type: https
@@ -956,7 +954,7 @@ tests:
         verdict: allow
         passthrough: false
 
-  - name: Passthrough-only rule without allow rule means blocked
+  - name: Passthrough rule implicitly allows
     policy: |
       example.com passthrough
     checks:
@@ -965,7 +963,8 @@ tests:
         dst_ip: 93.184.216.34
         dst_port: 443
         can_mitm: true
-        verdict: block
+        verdict: allow
+        passthrough: true
 
   - name: Passthrough with scoped cgroup attr matches
     policy: |
@@ -996,7 +995,6 @@ tests:
 
   - name: Passthrough wildcard rule
     policy: |
-      *.docker.io
       *.docker.io passthrough
     checks:
       - type: https

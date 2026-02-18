@@ -141,15 +141,14 @@ normal-host.com
 
 **How it works:**
 
-1. A connection must first match an allow rule (hostname, wildcard, IP, etc.)
-2. Passthrough rules are evaluated as a separate phase — if the allowed connection also matches a passthrough rule, TLS interception is skipped
+1. A passthrough rule implicitly allows the connection — no separate allow rule is needed
+2. If the connection also matches a passthrough rule, TLS interception is skipped
 3. The connection is still logged (with `passthrough: true`) but the proxy does not decrypt it
 
 **Restrictions:**
 
 - Only `host` and `wildcard_host` rules support passthrough. IP, CIDR, URL, path, and DNS-only rules with `passthrough` are rejected at validation time and silently dropped at runtime.
 - Passthrough only applies at the TLS stage (`tls_clienthello`). Since TLS is not decrypted, URL path matching and HTTP method filtering are not available for passthrough connections.
-- A passthrough-only rule (without a matching allow rule) does not allow the connection — the connection must be allowed first.
 
 ### Placeholders
 

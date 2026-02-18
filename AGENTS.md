@@ -119,7 +119,7 @@ Rule types: hostname (`github.com`), wildcard (`*.github.com`, `derp*.tailscale.
 
 Attributes: `exe=`, `cgroup=`, `step=`, `action=`, `image=`, `arg=`, `arg[N]=`. Port: `:443`, `:80|443`, `:*`. Protocol: `/tcp`, `/udp`. Methods: `GET|POST`.
 
-TLS passthrough: `passthrough` keyword on host/wildcard rules (`github.com passthrough`) or in header context (`[passthrough]`). Evaluated as a separate phase after allow/deny — connection must be allowed first, then passthrough rules skip MITM. Only host/wildcard types supported (IP/CIDR/URL/dns: rejected). In `tls_clienthello`, sets `ignore_connection=True` and logs with `passthrough=True`.
+TLS passthrough: `passthrough` keyword on host/wildcard rules (`github.com passthrough`) or in header context (`[passthrough]`). Passthrough rules implicitly allow the connection and skip MITM — no separate allow rule needed. Only host/wildcard types supported (IP/CIDR/URL/dns: rejected). In `tls_clienthello`, sets `ignore_connection=True` and logs with `passthrough=True`.
 
 The `for_runner` factory prepends infrastructure defaults and injects `cgroup=/system.slice/hosted-compute-agent.service` on all rules.
 
