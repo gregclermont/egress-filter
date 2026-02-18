@@ -986,6 +986,10 @@ def validate_policy(policy_text: str) -> list[tuple[int, str, str]]:
         List of (line_num, line_text, error_message) tuples for invalid lines.
         Empty list if all lines are valid.
     """
+    # Substitute placeholders with dummy values so {owner}/{repo} don't
+    # cause parse errors.  The actual values aren't needed for validation.
+    policy_text = substitute_placeholders(policy_text, owner="_owner", repo="_repo")
+
     errors = []
     visitor = PolicyVisitor()
     all_rules: list[Rule] = []

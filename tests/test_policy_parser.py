@@ -475,6 +475,18 @@ class TestValidatePolicy:
         assert msg != "None"
         assert len(msg) > 0
 
+    def test_placeholders_do_not_cause_errors(self):
+        """Unsubstituted {owner}/{repo} placeholders must not cause parse errors."""
+        policy = "https://github.com/{owner}/{repo}/*"
+        errors = validate_policy(policy)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_placeholders_in_mixed_policy(self):
+        """Placeholders mixed with normal rules should not cause errors."""
+        policy = "github.com\nhttps://github.com/{owner}/{repo}/info/refs"
+        errors = validate_policy(policy)
+        assert errors == [], f"Unexpected errors: {errors}"
+
 
 class TestExtractUrlRuleHostname:
     """Tests for _extract_url_rule_hostname."""
