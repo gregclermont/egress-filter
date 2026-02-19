@@ -1492,3 +1492,57 @@ tests:
         url_base: null
         attrs: {}
         insecure: true
+
+  # =============================================================================
+  # URL rules with wildcard and multi-port
+  # =============================================================================
+
+  - name: URL with wildcard port
+    policy: |
+      https://example.com:*/api/*
+    rules:
+      - type: url
+        target: "https://example.com:*/api/*"
+        port: "*"
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+
+  - name: URL with multi-port
+    policy: |
+      http://example.com:80|8080/path
+    rules:
+      - type: url
+        target: "http://example.com:80|8080/path"
+        port: [80, 8080]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+
+  - name: URL base header with wildcard port
+    policy: |
+      [https://example.com:*]
+      GET /api/*
+    rules:
+      - type: path
+        target: "/api/*"
+        port: "*"
+        protocol: tcp
+        methods: ["GET"]
+        url_base: "https://example.com:*"
+        attrs: {}
+
+  - name: URL base header with multi-port
+    policy: |
+      [http://example.com:80|8080]
+      GET /api/*
+    rules:
+      - type: path
+        target: "/api/*"
+        port: [80, 8080]
+        protocol: tcp
+        methods: ["GET"]
+        url_base: "http://example.com:80|8080"
+        attrs: {}

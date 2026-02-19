@@ -1660,3 +1660,67 @@ tests:
           host: github.com
           image: "ghcr.io/other/myapp:latest"
         verdict: block
+
+  # =============================================================================
+  # URL rules with wildcard and multi-port
+  # =============================================================================
+
+  - name: URL rule with wildcard port matches any port
+    policy: |
+      https://example.com:*/api/*
+    connections:
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 443
+          url: https://example.com/api/data
+          method: GET
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 8080
+          url: https://example.com:8080/api/data
+          method: GET
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 9999
+          url: https://example.com:9999/api/data
+          method: GET
+        verdict: allow
+      # POST not allowed (default methods are GET|HEAD)
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 443
+          url: https://example.com/api/data
+          method: POST
+        verdict: block
+
+  - name: URL rule with multi-port matches listed ports only
+    policy: |
+      http://example.com:80|8080/api/*
+    connections:
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 80
+          url: http://example.com/api/data
+          method: GET
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 8080
+          url: http://example.com:8080/api/data
+          method: GET
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 9090
+          url: http://example.com:9090/api/data
+          method: GET
+        verdict: block
