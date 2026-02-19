@@ -52,7 +52,7 @@ rule            = ws* (url_rule / path_rule / network_rule) inline_comment? ws*
 url_rule        = (method_attr ws+)? scheme "://" url_host url_port? url_path insecure_flag? kv_attrs?
 url_host        = ipv4 / wildcard_host / hostname
 scheme          = "https" / "http"
-url_port        = ":" ~"[0-9]+"
+url_port        = ":" port_list
 url_path        = "/" path_rest
 path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
@@ -198,12 +198,9 @@ class PolicyVisitor(NodeVisitor):
                     if isinstance(attr, dict):
                         if "url_base" in attr:
                             self.ctx.url_base = attr["url_base"]
-                            # Extract port from URL if present, else use scheme default
                             url_base = attr["url_base"]
-                            # Check for explicit port (e.g., http://host:8080)
-                            parsed = urlparse(url_base)
-                            if parsed.port:
-                                self.ctx.port = [parsed.port]
+                            if attr.get("url_base_port"):
+                                self.ctx.port = attr["url_base_port"]
                             elif url_base.startswith("https://"):
                                 self.ctx.port = [443]
                             else:
@@ -221,7 +218,7 @@ class PolicyVisitor(NodeVisitor):
                             self.ctx.insecure = True
                         # Handle kv_attrs in headers (exe=, cgroup=, etc.)
                         for key in list(attr.keys()):
-                            if key not in ("url_base", "methods", "port", "protocol", "passthrough", "insecure"):
+                            if key not in ("url_base", "url_base_port", "methods", "port", "protocol", "passthrough", "insecure"):
                                 self.ctx.attrs[key] = attr[key]
         return None
 
@@ -330,6 +327,8 @@ class PolicyVisitor(NodeVisitor):
         for item in flat_base:
             if isinstance(item, dict) and "url_base" in item:
                 result["url_base"] = item["url_base"]
+                if item.get("url_base_port") is not None:
+                    result["url_base_port"] = item["url_base_port"]
                 break
 
         # Process kv attrs
@@ -342,7 +341,22 @@ class PolicyVisitor(NodeVisitor):
         return result
 
     def visit_url_base(self, node, visited_children):
-        return {"url_base": node.text}
+        # url_base = scheme "://" url_host url_port? url_path?
+        _scheme, _, _url_host, url_port, _url_path = visited_children
+        port = None
+        if not _is_empty(url_port):
+            flat = _flatten([url_port])
+            for item in flat:
+                if isinstance(item, dict) and "port" in item:
+                    port_val = item["port"]
+                    if port_val == "*":
+                        port = "*"
+                    elif isinstance(port_val, list):
+                        port = port_val
+                    elif isinstance(port_val, int):
+                        port = [port_val]
+                    break
+        return {"url_base": node.text, "url_base_port": port}
 
     def visit_port_proto_attr(self, node, visited_children):
         # port_attr proto_attr?
@@ -475,6 +489,11 @@ class PolicyVisitor(NodeVisitor):
         self.rules.append(rule)
         return rule
 
+    def visit_url_port(self, node, visited_children):
+        # ":" port_list
+        _, port_list = visited_children
+        return {"port_text": node.text, "port": port_list}
+
     def visit_url_rule(self, node, visited_children):
         # url_rule = (method_attr ws+)? scheme "://" url_host url_port? url_path insecure_flag? kv_attrs?
         method_part, scheme, _, url_host, url_port, url_path, insecure_flag, kv_attrs = (
@@ -498,15 +517,26 @@ class PolicyVisitor(NodeVisitor):
         # Build full URL as target (without method prefix)
         scheme_text = _get_text(scheme)
         host_text = _get_text(url_host)  # Can be hostname or IP address
-        port_text = _get_text(url_port)
         path_text = _get_text(url_path)
-
-        target = f"{scheme_text}://{host_text}{port_text}{path_text}"
 
         # Extract explicit port if present
         port = None
-        if port_text:
-            port = [int(port_text[1:])]  # Strip leading ":"
+        port_text = ""
+        if not _is_empty(url_port):
+            flat = _flatten([url_port])
+            for item in flat:
+                if isinstance(item, dict) and "port" in item:
+                    port_text = item["port_text"]
+                    port_val = item["port"]
+                    if port_val == "*":
+                        port = "*"
+                    elif isinstance(port_val, list):
+                        port = port_val
+                    elif isinstance(port_val, int):
+                        port = [port_val]
+                    break
+
+        target = f"{scheme_text}://{host_text}{port_text}{path_text}"
 
         # Extract kv attrs
         attrs = {}

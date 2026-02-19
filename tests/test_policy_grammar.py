@@ -36,7 +36,7 @@ rule            = ws* (url_rule / path_rule / cidr_rule / ip_rule / host_rule) p
 url_rule        = (method_attr ws+)? scheme "://" url_host url_port? url_path
 url_host        = ipv4 / wildcard_host / hostname
 scheme          = "https" / "http"
-url_port        = ":" port_value
+url_port        = ":" port_list
 url_path        = "/" path_rest
 path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
@@ -161,6 +161,8 @@ VALID_RULES = [
     "* https://example.com/*",
     # URLs with ports
     "https://example.com:8080/api/*",
+    "https://example.com:*/api/*",
+    "https://example.com:80|443/api/*",
     # Headers
     "[:443]",
     "[:22]",
