@@ -4,6 +4,7 @@
 d588b5127609fe5bf98f0765d3a75a5eaf61a2d79c568d8b1ddf9fc52271db2b  https://archive.ubuntu.com/ubuntu/pool/main/libn/libnfnetlink/libnfnetlink-dev_1.0.2-2build1_amd64.deb
 3393e6d3d1579968de966f102179f3720cef6b02ae71cb86fb89563fdcb969f6  https://archive.ubuntu.com/ubuntu/pool/universe/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-4build1_amd64.deb
 565072d702f7c4ceca06832d2d7dcbd0e6c29aa5ee9349b92ea49460f1d2accc  https://archive.ubuntu.com/ubuntu/pool/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb
+6d32a4c4618eb7d6c0d989591d28637a9acdfa86dfe22e42e9ac9cc25d882a97  https://archive.ubuntu.com/ubuntu/pool/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.0.9-6build1_amd64.deb
 
 # Installers
 f0a9da374c8eee3989acba54839184a053f94b9fbe55cf8505bcf0b5fe45e418  https://astral.sh/uv/0.10.2/install.sh

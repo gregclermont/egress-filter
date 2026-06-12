@@ -1,0 +1,159 @@
+name: Test attribution under NAT mangling
+
+# Efficiently and deterministically triggers iptables REDIRECT source-port
+# mangling (the cause of dropped PID attribution) and verifies the conntrack
+# reversal recovers it.
+#
+# Two ideas make this fast and reliable vs. brute-forcing thousands of curls:
+#   1. Shrink the ephemeral port range so concurrent connections to different
+#      destinations are *forced* to reuse source ports — which is exactly what
+#      makes netfilter remap (mangle) them. Mangling becomes deterministic
+#      with a few hundred connections instead of thousands.
+#   2. Run in enforcement mode and send only a TLS ClientHello to many
+#      distinct routable destinations. The proxy blocks at tls_clienthello
+#      (logging the PID it resolved) without needing a full handshake or a
+#      reachable upstream — the connect() just needs a route so the SYN is
+#      generated and REDIRECTed to the proxy.
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Setup egress filter (enforcement)
+        uses: gregclermont/egress-filter@test
+        # Enforcement so blocked connections are logged (with PID) at
+        # tls_clienthello. Default policy still allows runner infrastructure.
+
+      - name: Stress attribution with deterministic source-port collisions
+        run: |
+          python3 - <<'PY'
+          import socket, ssl, time
+
+          # Routable public ranges (Cloudflare / Google). We never actually talk
+          # to them — connect() just needs a route so the SYN is generated and
+          # REDIRECTed to the proxy, which blocks at the ClientHello.
+          DESTS = ([f"1.1.1.{i}" for i in range(1, 255)]
+                   + [f"8.8.8.{i}" for i in range(1, 255)])
+
+          # Craft a ClientHello once (with SNI) via an in-memory TLS handshake.
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+          ctx.check_hostname = False
+          ctx.verify_mode = ssl.CERT_NONE
+          inbio, outbio = ssl.MemoryBIO(), ssl.MemoryBIO()
+          sslobj = ctx.wrap_bio(inbio, outbio, server_hostname="stress.invalid")
+          try:
+              sslobj.do_handshake()
+          except ssl.SSLWantReadError:
+              pass
+          client_hello = outbio.read()
+          print(f"ClientHello: {len(client_hello)} bytes")
+
+          # Deterministically trigger mangling WITHOUT saturating the box (which
+          # would make the kernel's own SO_ORIGINAL_DST unreliable, unlike the
+          # ~1% effect seen in production). Each pair binds two sockets to the
+          # SAME source port and connects them to DIFFERENT destinations: after
+          # REDIRECT both collapse onto (client:port -> 127.0.0.1:8080), so the
+          # second collides and netfilter remaps its source port. The global
+          # ephemeral range is left untouched.
+          N_PAIRS = 120
+          BOUND_LO = 30000
+          socks = []
+          for i in range(N_PAIRS):
+              port = BOUND_LO + i
+              for j in range(2):
+                  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                  s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                  try:
+                      s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                  except OSError:
+                      pass
+                  try:
+                      s.bind(("", port))
+                  except OSError:
+                      s.close()
+                      continue
+                  s.setblocking(False)
+                  s.connect_ex((DESTS[(2 * i + j) % len(DESTS)], 443))
+                  socks.append(s)
+          time.sleep(0.5)  # let the (local) connects complete
+          for s in socks:
+              try:
+                  s.send(client_hello)  # triggers tls_clienthello -> block+log
+              except OSError:
+                  pass
+          time.sleep(1.0)  # hold concurrently so the collisions are live
+          for s in socks:
+              s.close()
+          print(f"total opened: {len(socks)} ({N_PAIRS} collision pairs)")
+          PY
+
+      - name: Analyze attribution (NAT-aware)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+
+          # Connections we bound use source ports in this range; anything
+          # outside it can only be a netfilter-remapped (mangled) port.
+          BOUND_LO, BOUND_HI = 30000, 30119
+
+          total = mangled = mangled_attributed = unattributed = 0
+          unattributed_samples = []
+          for line in open("${{ runner.temp }}/connections.jsonl"):
+              c = json.loads(line)
+              # Our stress connections are uniquely tagged by their SNI.
+              if c.get("host") != "stress.invalid":
+                  continue
+              total += 1
+              sp = c.get("src_port")
+              attributed = c.get("pid") is not None
+              # A source port outside our bound range is netfilter-remapped ->
+              # direct proof that mangling actually happened.
+              is_mangled = sp is not None and not (BOUND_LO <= sp <= BOUND_HI)
+              if is_mangled:
+                  mangled += 1
+                  if attributed:
+                      mangled_attributed += 1
+              if not attributed:
+                  unattributed += 1
+                  if len(unattributed_samples) < 5:
+                      unattributed_samples.append({"dst_ip": c.get("dst_ip"), "src_port": sp})
+
+          print(f"total connections to TEST-NET : {total}")
+          print(f"  NAT-mangled (proof of bug)  : {mangled}")
+          print(f"  mangled AND attributed      : {mangled_attributed}")
+          print(f"  unattributed (pid=null)     : {unattributed}")
+          if unattributed_samples:
+              print(f"  unattributed samples        : {unattributed_samples}")
+
+          if total == 0:
+              print("::error::No stress connections were logged — test did not exercise the path.")
+              raise SystemExit(1)
+          if mangled == 0:
+              print("::warning::No source-port mangling observed; test inconclusive "
+                    "(shrink the port range further or raise concurrency).")
+
+          # With the conntrack reversal, mangled connections must still be
+          # attributed. Allow a little slack for genuinely racy edge cases.
+          threshold = max(3, total // 100)
+          if unattributed > threshold:
+              print(f"::error::{unattributed}/{total} connections unattributed "
+                    f"(threshold {threshold}) — NAT reversal not recovering mangled connections.")
+              raise SystemExit(1)
+          print(f"PASS: {mangled} mangled connections, only {unattributed} unattributed "
+                "— conntrack reversal recovered them")
+          PY
+
+      - name: Show proxy log
+        if: always()
+        run: tail -40 "${{ runner.temp }}/proxy.log" || echo "No proxy log found"

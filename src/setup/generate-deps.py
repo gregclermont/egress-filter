@@ -18,6 +18,8 @@ APT_PACKAGES = [
     "libnfnetlink-dev",
     "libnetfilter-queue1",
     "libnetfilter-queue-dev",
+    # NAT reversal for PID attribution (conntrack source-port un-mangling).
+    "libnetfilter-conntrack3",
 ]
 
 # GitHub releases to fetch install scripts from

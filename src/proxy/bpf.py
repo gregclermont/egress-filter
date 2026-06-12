@@ -36,6 +36,8 @@ class BPFState:
         # DNS 4-tuple cache: (src_port, txid) -> (pid, dst_ip, dst_port)
         # Populated by nfqueue (before NAT), consumed by mitmproxy (after NAT)
         self.dns_cache = {}
+        # Conntrack reverser for NAT source-port mangling (created in setup()).
+        self.conntrack = None
 
     def setup(self):
         """Load and attach BPF programs."""
@@ -65,11 +67,19 @@ class BPFState:
 
         self.map_v4 = self.bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
 
+        # NAT reversal for the transparent-proxy miss path (fail-safe if the
+        # library is unavailable).
+        from .conntrack import ConntrackReverser
+        self.conntrack = ConntrackReverser()
+
         proxy_logging.logger.info("BPF loaded and attached")
 
     def cleanup(self):
         """Cleanup BPF resources."""
         proxy_logging.logger.info("Cleaning up BPF...")
+        if self.conntrack:
+            self.conntrack.close()
+            self.conntrack = None
         for link in self.bpf_links:
             try:
                 link.destroy()
@@ -80,7 +90,7 @@ class BPFState:
             self.bpf_obj.__exit__(None, None, None)
 
     def lookup_pid(self, dst_ip: str, src_port: int, dst_port: int, protocol: int = IPPROTO_TCP) -> int | None:
-        """Look up PID from BPF map."""
+        """Look up PID from BPF map by 4-tuple."""
         if not self.map_v4:
             return None
         try:
@@ -93,3 +103,36 @@ class BPFState:
             return self.map_v4.get(key)
         except Exception:
             return None
+
+    def lookup_pid_nat_aware(
+        self,
+        dst_ip: str,
+        dst_port: int,
+        peername: tuple[str, int] | None,
+        protocol: int = IPPROTO_TCP,
+    ) -> int | None:
+        """Look up PID for a transparently-proxied connection, reversing NAT.
+
+        The kprobe records the original (pre-NAT) source port, but iptables
+        REDIRECT can remap the source port under load, so `peername` (what the
+        proxy sees) may not match. We first try the port the proxy sees; on a
+        miss we ask conntrack for the original source port and retry.
+
+        Args:
+            dst_ip, dst_port: original destination (from SO_ORIGINAL_DST).
+            peername: accepted socket's peer address (client_ip, src_port).
+        """
+        src_port = peername[1] if peername else 0
+        pid = self.lookup_pid(dst_ip, src_port, dst_port, protocol)
+        if pid is not None:
+            return pid
+
+        # Miss: the source port was likely NAT-remapped. Recover the original
+        # from conntrack (identified by client address + original destination).
+        if self.conntrack and peername:
+            orig_port = self.conntrack.original_src_port(
+                client=peername, orig_dst=(dst_ip, dst_port), protocol=protocol
+            )
+            if orig_port is not None and orig_port != src_port:
+                return self.lookup_pid(dst_ip, orig_port, dst_port, protocol)
+        return None

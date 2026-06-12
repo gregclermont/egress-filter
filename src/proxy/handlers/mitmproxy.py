@@ -81,9 +81,8 @@ class MitmproxyAddon:
         If no SNI, defer the policy decision to request() where we'll
         have access to the Host header after TLS decryption.
         """
-        src_port = (
-            data.context.client.peername[1] if data.context.client.peername else 0
-        )
+        peername = data.context.client.peername
+        src_port = peername[1] if peername else 0
         dst_ip, dst_port = (
             data.context.server.address
             if data.context.server.address
@@ -92,7 +91,7 @@ class MitmproxyAddon:
         sni = data.client_hello.sni
 
         if sni:
-            pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+            pid = self.bpf.lookup_pid_nat_aware(dst_ip, dst_port, peername)
             proc_dict = get_proc_info(pid)
 
             decision = self.enforcer.check_https(
@@ -137,7 +136,7 @@ class MitmproxyAddon:
             # No SNI — still check if dst_ip matches an insecure rule so
             # tls_start_server can skip upstream cert validation.  The full
             # policy decision is deferred to request() after MITM.
-            pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+            pid = self.bpf.lookup_pid_nat_aware(dst_ip, dst_port, peername)
             proc_dict = get_proc_info(pid)
             decision = self.enforcer.check_https(
                 dst_ip=dst_ip,
@@ -195,7 +194,8 @@ class MitmproxyAddon:
         TLS ClientHello had no SNI, this is where we enforce the policy using
         the Host header from the decrypted request.
         """
-        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
+        peername = flow.client_conn.peername
+        src_port = peername[1] if peername else 0
         dst_ip, dst_port = (
             flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
         )
@@ -216,7 +216,7 @@ class MitmproxyAddon:
         if self._is_github_token(flow):
             token_kwargs["github_token"] = True
 
-        pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+        pid = self.bpf.lookup_pid_nat_aware(dst_ip, dst_port, peername)
         proc_dict = get_proc_info(pid)
 
         decision = self.enforcer.check_http(
@@ -295,12 +295,13 @@ class MitmproxyAddon:
     @log_errors
     def tcp_start(self, flow: tcp.TCPFlow) -> None:
         """Handle raw TCP connection - log and optionally enforce policy."""
-        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
+        peername = flow.client_conn.peername
+        src_port = peername[1] if peername else 0
         dst_ip, dst_port = (
             flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
         )
 
-        pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+        pid = self.bpf.lookup_pid_nat_aware(dst_ip, dst_port, peername)
         proc_dict = get_proc_info(pid)
 
         decision = self.enforcer.check_tcp(
@@ -463,7 +464,8 @@ class MitmproxyAddon:
         - Host process with a custom/embedded trust store
         - Certificate pinning
         """
-        src_port = data.context.client.peername[1] if data.context.client.peername else 0
+        peername = data.context.client.peername
+        src_port = peername[1] if peername else 0
         dst_ip, dst_port = (
             data.context.server.address
             if data.context.server.address
@@ -471,7 +473,7 @@ class MitmproxyAddon:
         )
         sni = data.context.client.sni
 
-        pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+        pid = self.bpf.lookup_pid_nat_aware(dst_ip, dst_port, peername)
         proc_dict = get_proc_info(pid)
 
         decision = self.enforcer.check_https(

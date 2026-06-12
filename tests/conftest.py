@@ -5,12 +5,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# Skip handler tests when proxy extra dependencies (mitmproxy, etc.) are missing.
+# Skip tests needing proxy extra dependencies (mitmproxy, tinybpf, ...) when absent.
 collect_ignore_glob = []
+collect_ignore = []
 try:
     import mitmproxy  # noqa: F401
 except ImportError:
     collect_ignore_glob.append("test_handler_*.py")
+try:
+    import tinybpf  # noqa: F401
+except ImportError:
+    # BPFState (proxy.bpf) imports tinybpf at module load.
+    collect_ignore.append("test_nat_reversal.py")
 
 from proxy.policy.enforcer import Decision, Verdict
 
@@ -23,6 +29,9 @@ class MockBPFState:
         self.dns_cache = {}
 
     def lookup_pid(self, dst_ip, src_port, dst_port, protocol=6):
+        return self._pid
+
+    def lookup_pid_nat_aware(self, dst_ip, dst_port, peername, protocol=6):
         return self._pid
 
 
