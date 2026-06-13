@@ -1,0 +1,66 @@
+name: Canary (runner / kernel compatibility)
+
+# Early warning that a GitHub-hosted runner image, kernel, or BTF update hasn't
+# broken the eBPF load+attach or core enforcement — BEFORE users hit it.
+#
+# Starting the proxy loads and attaches *every* BPF program against the live
+# kernel, so a verifier rejection, a removed/renamed helper, or a BTF/CO-RE
+# change makes this job go red. The smoke test then confirms enforcement still
+# works end to end. The fingerprint step records what we ran against so a
+# failure tells you which layer moved (kernel / BTF / our pinned loader).
+#
+# Runs the released action (@main) on the latest runner image, on a schedule.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily, 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: canary
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Runner / kernel / BTF fingerprint
+        run: |
+          echo "image:  ${ImageOS:-?} ${ImageVersion:-?}"
+          echo "kernel: $(uname -r)"
+          # /sys/kernel/btf/vmlinux is world-readable (no sudo); fingerprint it
+          # so a BTF/CO-RE change is visible when this canary goes red.
+          btf=$(sha256sum /sys/kernel/btf/vmlinux 2>/dev/null | cut -c1-16)
+          echo "btf:    ${btf:-unavailable}"
+
+      - name: Start egress filter (enforcement — loads + attaches all BPF)
+        uses: gregclermont/egress-filter@main
+        with:
+          policy: |
+            github.com
+
+      - name: Smoke test — allowed flows, disallowed is blocked
+        run: |
+          allowed=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://github.com/ || echo 000)
+          echo "github.com  (allowed)    -> $allowed"
+          if [ "$allowed" -lt 200 ] || [ "$allowed" -ge 400 ]; then
+            echo "::error::allowed host github.com returned $allowed (expected 2xx/3xx) — proxy/BPF likely degraded"
+            exit 1
+          fi
+          if curl -s -o /dev/null --max-time 20 https://example.com/; then
+            echo "::error::disallowed host example.com was NOT blocked — enforcement is off"
+            exit 1
+          fi
+          echo "example.com (disallowed) -> blocked as expected"
+
+      - name: Proxy log + loader version (diagnostics)
+        if: always()
+        run: |
+          venv=/home/runner/work/_actions/gregclermont/egress-filter/main/.venv/bin/python
+          [ -x "$venv" ] && "$venv" -c "import tinybpf; print('tinybpf libbpf:', tinybpf.libbpf_version)" 2>/dev/null || true
+          echo "=== proxy.log ==="
+          cat "${{ runner.temp }}/proxy.log" 2>/dev/null || echo "No proxy log (proxy may have failed to start)"
